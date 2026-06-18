@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-18
+
 ### Added
 - **Server actions: reboot + service restarts.** Press `a` on a server (Servers
   tab or a Search result) to reboot it (`POST /servers/{id}/reboot`) or restart a
@@ -123,7 +125,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mwender/spinupwp-tui/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mwender/spinupwp-tui/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mwender/spinupwp-tui/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mwender/spinupwp-tui/releases/tag/v0.1.0
