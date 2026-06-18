@@ -1,12 +1,12 @@
 // Generates the README banner SVG — a recreation of the app's boot/splash
-// screen (the block-font SPINUP logo on a terminal window) using the app's own
-// theme colors. Regenerate the SVG + PNG with:
+// screen using the app's own theme colors. Regenerate the SVG + PNG with:
 //
 //   bun run .github/assets/_generate-banner.ts
 //   rsvg-convert -w 1600 .github/assets/banner.svg -o .github/assets/banner.png
 //
-// The PNG (rasterized once) is what the README references, so the box-drawing
-// glyphs render identically for everyone regardless of their installed fonts.
+// The "SPINUP" wordmark is drawn as a vector block-font (filled <rect> cells),
+// NOT as text — box-drawing glyphs don't rasterize reliably across fonts, so we
+// render the blocks ourselves for a crisp, identical result everywhere.
 
 const C = {
   bg: "#0d1117",
@@ -23,38 +23,59 @@ const C = {
   bad: "#f85149",
 }
 
-// The SPINUP logo exactly as the OpenTUI "block" font renders it on the splash.
-const LOGO = [
-  "███████╗ ██████╗  ██╗ ███╗   ██╗ ██╗   ██╗ ██████╗",
-  "██╔════╝ ██╔══██╗ ██║ ████╗  ██║ ██║   ██║ ██╔══██╗",
-  "███████╗ ██████╔╝ ██║ ██╔██╗ ██║ ██║   ██║ ██████╔╝",
-  "╚════██║ ██╔═══╝  ██║ ██║╚██╗██║ ██║   ██║ ██╔═══╝ ",
-  "███████║ ██║      ██║ ██║ ╚████║ ╚██████╔╝ ██║     ",
-  "╚══════╝ ╚═╝      ╚═╝ ╚═╝  ╚═══╝  ╚═════╝  ╚═╝     ",
-]
-const width = Math.max(...LOGO.map((l) => l.length))
-const logo = LOGO.map((l) => l.padEnd(width, " "))
+// 5-row block font. "1" = filled cell. Columns vary per letter.
+const GLYPHS: Record<string, string[]> = {
+  S: ["11111", "10000", "11111", "00001", "11111"],
+  P: ["11111", "10001", "11111", "10000", "10000"],
+  I: ["111", "010", "010", "010", "111"],
+  N: ["10001", "11001", "10101", "10011", "10001"],
+  U: ["10001", "10001", "10001", "10001", "11111"],
+}
+const WORD = "SPINUP"
 
 const W = 1000
 const H = 360
 const MONO = "'SFMono-Regular','SF Mono','Menlo','DejaVu Sans Mono','Liberation Mono',monospace"
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+// --- Lay out the block logo --------------------------------------------------
+const CELL = 22 // px per block cell
+const LETTER_GAP = 1 // cells between letters
+const rows = 5
+const colsFor = (ch: string) => GLYPHS[ch][0].length
+const totalCols = WORD.split("").reduce((n, ch, i) => n + colsFor(ch) + (i > 0 ? LETTER_GAP : 0), 0)
+const logoW = totalCols * CELL
+const logoH = rows * CELL
+const logoX = Math.round((W - logoW) / 2)
+const logoY = 84
 
-const logoFont = 24
-const logoLine = 25
-const logoTop = 96
-const logoTspans = logo
-  .map((line, i) => `<tspan x="500" dy="${i === 0 ? 0 : logoLine}">${esc(line)}</tspan>`)
-  .join("")
+const rects: string[] = []
+{
+  let colCursor = 0
+  for (let li = 0; li < WORD.length; li++) {
+    const ch = WORD[li]
+    const glyph = GLYPHS[ch]
+    if (li > 0) colCursor += LETTER_GAP
+    for (let r = 0; r < rows; r++) {
+      const rowBits = glyph[r]
+      for (let c = 0; c < rowBits.length; c++) {
+        if (rowBits[c] === "1") {
+          const x = logoX + (colCursor + c) * CELL
+          const y = logoY + r * CELL
+          rects.push(`<rect x="${x}" y="${y}" width="${CELL}" height="${CELL}" rx="2" fill="url(#logoGrad)"/>`)
+        }
+      }
+    }
+    colCursor += colsFor(ch)
+  }
+}
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${MONO}">
   <defs>
-    <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="logoGrad" gradientUnits="userSpaceOnUse" x1="${logoX}" y1="${logoY}" x2="${logoX + logoW}" y2="${logoY + logoH}">
       <stop offset="0" stop-color="${C.brand}"/>
       <stop offset="1" stop-color="${C.accent}"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.6">
+    <radialGradient id="glow" cx="0.5" cy="0.4" r="0.6">
       <stop offset="0" stop-color="${C.brand}" stop-opacity="0.16"/>
       <stop offset="1" stop-color="${C.brand}" stop-opacity="0"/>
     </radialGradient>
@@ -74,13 +95,12 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" 
     <circle cx="66" cy="20" r="6" fill="${C.good}"/>
     <text x="90" y="25" font-size="13" fill="${C.textDim}">spinup — SpinupWP control center</text>
 
-    <!-- logo -->
-    <text y="${logoTop}" font-size="${logoFont}" font-weight="700" text-anchor="middle"
-          fill="url(#logoGrad)" xml:space="preserve" letter-spacing="0">${logoTspans}</text>
+    <!-- logo (vector block font) -->
+    ${rects.join("\n    ")}
 
     <!-- tagline + pulse -->
-    <text x="500" y="278" font-size="17" text-anchor="middle" fill="${C.text}">Terminal control center for your SpinupWP fleet</text>
-    <text x="500" y="300" font-size="13" text-anchor="middle" fill="${C.brandDim}" letter-spacing="2">· · • ● • · · · · · · ·</text>
+    <text x="500" y="248" font-size="17" text-anchor="middle" fill="${C.text}">Terminal control center for your SpinupWP fleet</text>
+    <text x="500" y="272" font-size="13" text-anchor="middle" fill="${C.brandDim}" letter-spacing="2">· · • ● • · · · · · · ·</text>
 
     <!-- faux status bar (mirrors the real app chrome) -->
     <rect x="0" y="${H - 30}" width="${W}" height="30" fill="${C.bgAlt}"/>
@@ -92,4 +112,4 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" 
 `
 
 await Bun.write(new URL("./banner.svg", import.meta.url), svg)
-console.log("wrote banner.svg")
+console.log(`wrote banner.svg (logo ${totalCols} cols × ${rows} rows, ${logoW}×${logoH}px)`)
