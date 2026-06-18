@@ -226,17 +226,17 @@ export function Search({ rows }: { rows: number }) {
               if (r.kind === "server") {
                 return (
                   <>
-                    <text content="SRV " fg={theme.purple} style={{ flexShrink: 0 }} />
+                    <text content="SRV " fg={sel ? theme.text : theme.purple} style={{ flexShrink: 0 }} />
                     <text content={statusDot(r.server.connection_status) + " "} fg={statusColor(r.server.connection_status)} style={{ flexShrink: 0 }} />
                     <text content={truncate(r.server.name, 44)} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1, marginRight: 1 }} />
                     {r.server.reboot_required && <text content="↻rbt " fg={sel ? theme.text : theme.warn} style={{ flexShrink: 0 }} />}
-                    <text content={r.server.provider_name ?? ""} fg={theme.textFaint} style={{ flexShrink: 0 }} />
+                    <text content={r.server.provider_name ?? ""} fg={sel ? theme.text : theme.textFaint} style={{ flexShrink: 0 }} />
                   </>
                 )
               }
               return (
                 <>
-                  <text content="SITE" fg={theme.accent} style={{ flexShrink: 0 }} />
+                  <text content="SITE" fg={sel ? theme.text : theme.accent} style={{ flexShrink: 0 }} />
                   <text content={" " + statusDot(r.site.status) + " "} fg={statusColor(r.site.status)} style={{ flexShrink: 0 }} />
                   <text content={truncate(r.site.domain, 44)} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1, marginRight: 1 }} />
                   <text content={stackTag(classifyStack(r.site))} fg={stackColor(classifyStack(r.site), sel)} style={{ flexShrink: 0 }} />

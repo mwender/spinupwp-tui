@@ -22,7 +22,7 @@ export function ServerDetail({ server, siteCount }: { server: Server; siteCount:
         : server.reboot_required
           ? rb?.present
             ? `required · ${rb.kernel ? "kernel update" : "pkg updates"} (${rb.packages.length})`
-            : "required — press a"
+            : "required"
           : "not needed"
   const rebootColor =
     op?.status === "failed" ? theme.bad : server.reboot_required || (op && isServerOpInFlight(op)) ? theme.warn : theme.good
