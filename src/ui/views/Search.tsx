@@ -32,7 +32,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, accountSlug } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -149,6 +149,17 @@ export function Search({ rows }: { rows: number }) {
         if (srv) setHealthServer(srv)
         return
       }
+      case "a": {
+        // Server actions (reboot / restart) — on the server, or a site's server.
+        const srv =
+          current?.kind === "server"
+            ? current.server
+            : current?.kind === "site"
+              ? serverById(current.site.server_id)
+              : undefined
+        if (srv) setServerActionsServer(srv)
+        return
+      }
     }
   })
 
@@ -164,6 +175,7 @@ export function Search({ rows }: { rows: number }) {
         ? [
             { key: "↑↓", label: "select" },
             { key: "w", label: "SpinupWP" },
+            { key: "a", label: "actions" },
             { key: "h", label: "health" },
             { key: "←/esc", label: "back" },
           ]
@@ -172,6 +184,7 @@ export function Search({ rows }: { rows: number }) {
             { key: "o", label: "open" },
             { key: "w", label: "SpinupWP" },
             { key: "u", label: "upgrade PHP" },
+            { key: "a", label: "server actions" },
             { key: "h", label: "health" },
             { key: "←/esc", label: "back" },
           ]
@@ -265,10 +278,12 @@ function ActionsCard({ result, serverName }: { result: Result; serverName: strin
         ["o", "Open site in browser"],
         ["w", "Open in SpinupWP"],
         ["u", "Upgrade PHP version"],
+        ["a", "Server actions (reboot / restart)"],
         ["h", "Server health"],
       ]
     : [
         ["w", "Open in SpinupWP"],
+        ["a", "Server actions (reboot / restart)"],
         ["h", "Server health"],
       ]
   return (

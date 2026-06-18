@@ -10,19 +10,19 @@ import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel, PhpVersionCell } from "../components.tsx"
+import { Panel, PhpVersionCell, Spinner } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { ServerDetail, SiteDetail } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl, siteWebUrl } from "../../lib/spinupweb.ts"
-import { useStore } from "../store.tsx"
+import { useStore, isServerOpInFlight } from "../store.tsx"
 
 type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -101,6 +101,11 @@ export function Browser({ rows }: { rows: number }) {
         // Upgrade the selected site's PHP version (first write action).
         if (focus === "sites" && sites[siteIndex]) setPhpUpgradeSite(sites[siteIndex])
         return
+      case "a":
+        // Open the server-actions overlay (reboot / service restart) for the
+        // focused server — works from either pane.
+        if (server) setServerActionsServer(server)
+        return
       case "h":
         // Open the live health view for the current server (works from either pane).
         if (server) setHealthServer(server)
@@ -128,14 +133,16 @@ export function Browser({ rows }: { rows: number }) {
       ? [
           { key: "↑↓/jk", label: "select" },
           { key: "→/⏎", label: "view sites" },
+          { key: "a", label: "actions" },
           { key: "h", label: "health" },
-          { key: "w", label: "open in SpinupWP" },
+          { key: "w", label: "SpinupWP" },
         ]
       : [
           { key: "↑↓/jk", label: "select site" },
           { key: "←/esc", label: "back" },
           { key: "d", label: "detect" },
           { key: "u", label: "upgrade PHP" },
+          { key: "a", label: "server actions" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
           { key: "h", label: "health" },
@@ -155,10 +162,21 @@ export function Browser({ rows }: { rows: number }) {
             emptyText="No servers"
             renderRow={(s, selected) => {
               const count = sitesForServer(s.id).length
+              const op = serverOps.get(s.id)
               return (
                 <>
                   <text content={statusDot(s.connection_status) + " "} fg={statusColor(s.connection_status)} style={{ flexShrink: 0 }} />
                   <text content={truncate(s.name, 22)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+                  {op && isServerOpInFlight(op) ? (
+                    <box style={{ flexDirection: "row", flexShrink: 0 }}>
+                      <Spinner color={selected ? theme.text : theme.brand} interval={120} />
+                      <text content={`${op.label} `} fg={selected ? theme.text : theme.warn} wrapMode="none" />
+                    </box>
+                  ) : op?.status === "failed" ? (
+                    <text content="op! " fg={selected ? theme.text : theme.bad} style={{ flexShrink: 0 }} />
+                  ) : (
+                    s.reboot_required && <text content="↻rbt " fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />
+                  )}
                   {s.upgrade_required && <text content="⬆upg " fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />}
                   <text content={" " + count} fg={selected ? theme.text : theme.textFaint} style={{ flexShrink: 0 }} />
                 </>

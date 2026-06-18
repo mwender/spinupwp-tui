@@ -86,6 +86,66 @@ const SSH_OPTS = [
   "-o", "ControlPersist=30s",
 ]
 
+// Why a server needs a reboot. SpinupWP's `reboot_required` boolean tracks
+// Ubuntu's /var/run/reboot-required (written by unattended-upgrades), which a
+// fleet-wide check confirmed 1:1; the companion .pkgs file lists the packages
+// awaiting a restart. We surface that as accurate OS-level context — labeled as
+// what it is, not as SpinupWP's internal logic. Read-only, like the health view.
+export interface RebootInfo {
+  present: boolean // /var/run/reboot-required exists
+  packages: string[] // de-duplicated package names from .pkgs
+  kernel: boolean // any linux-image* package present (the security-relevant case)
+}
+
+export type RebootInfoResult =
+  | { ok: true; target: string; info: RebootInfo }
+  | { ok: false; target: string; error: string }
+
+const REBOOT_SCRIPT = [
+  "echo ===PRESENT; test -e /var/run/reboot-required && echo yes || echo no",
+  "echo ===PKGS; cat /var/run/reboot-required.pkgs 2>/dev/null",
+  "echo ===END",
+].join("; ")
+
+export async function fetchRebootInfo(
+  server: Server,
+  sites: Site[],
+  sshUser: string | null,
+): Promise<RebootInfoResult> {
+  const target = resolveSshTarget(server, sites, sshUser)
+  if (!target) return { ok: false, target: "(no IP)", error: "Server has no IP address." }
+
+  let proc: ReturnType<typeof Bun.spawn>
+  try {
+    proc = Bun.spawn(["ssh", ...SSH_OPTS, target, REBOOT_SCRIPT], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+  } catch (err) {
+    return { ok: false, target, error: `Failed to launch ssh: ${(err as Error).message}` }
+  }
+  const timeout = setTimeout(() => {
+    try {
+      proc.kill()
+    } catch {
+      /* already gone */
+    }
+  }, 12000)
+  const exitCode = await proc.exited
+  clearTimeout(timeout)
+  const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text()
+  const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text()
+
+  if (exitCode !== 0 || !stdout.includes("===END")) {
+    const reason = stderr.trim().split("\n").slice(-2).join(" ") || `ssh exited with code ${exitCode}`
+    return { ok: false, target, error: reason }
+  }
+
+  const s = splitSections(stdout)
+  const present = (s.PRESENT?.[0] || "").trim() === "yes"
+  // .pkgs has duplicate lines in practice; de-dupe while preserving order.
+  const packages = [...new Set((s.PKGS || []).map((l) => l.trim()).filter(Boolean))]
+  const kernel = packages.some((p) => p.startsWith("linux-image"))
+  return { ok: true, target, info: { present, packages, kernel } }
+}
+
 export async function fetchServerHealth(
   server: Server,
   sites: Site[],

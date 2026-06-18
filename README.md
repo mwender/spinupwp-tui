@@ -51,10 +51,15 @@ Once you're in, the dashboard looks like this:
 - **Upgrade a site's PHP version** — press `u` on a site to pick a new PHP
   version and apply it (`PUT /sites/{id}/php`), then watch the upgrade event run
   to completion. (See "Upgrading PHP" below.)
+- **Server actions** — press `a` on a server to reboot it or restart a service
+  (Nginx / PHP-FPM / MySQL / Redis). Servers needing a reboot show a `↻rbt`
+  badge, and the overlay reads the box over SSH to show *why* (the pending
+  kernel/security packages). (See "Server actions" below.)
 
 > The tool is **read-only by default** and works great with a Read Only API
-> token. The one write action — upgrading a site's PHP version — needs a
-> **Read/Write** token; everything else keeps working without one.
+> token. The write actions — upgrading a site's PHP version and rebooting /
+> restarting services — need a **Read/Write** token; everything else keeps
+> working without one.
 
 ## Requirements
 
@@ -153,6 +158,7 @@ Both can be set in `config.json` or via an environment variable:
 | `d` | Detect a site's stack via SSH (Servers / Stacks tabs) |
 | `D` | Detect every site in the selected stack (Stacks tab) |
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
+| `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `r` | Refresh data from the API |
@@ -229,6 +235,28 @@ it finishes.
   spinner and the target version (`→8.3`) until it settles, then refreshes to the
   new version (or flags `⬆!` if it failed). The SiteDetail "PHP" field shows the
   same in-progress state. You can launch upgrades on several sites at once.
+
+## Server actions
+
+Press `a` on a selected server (in the **Servers** tab, or a result in **Search**)
+to open the server-actions overlay: **reboot** the server, or **restart** a single
+service (Nginx / PHP-FPM / MySQL / Redis). Pick → confirm → the app calls
+`POST /servers/{id}/reboot` or `/services/{svc}/restart` and tracks the event to
+completion — same background behavior as PHP upgrades (close the overlay and the
+server's row keeps a spinner).
+
+- **Needs a Read/Write token** (like PHP upgrades).
+- **Reboot visibility.** Servers with a pending reboot show a `↻rbt` badge in the
+  Servers list and on the Dashboard's "Needs attention" panel.
+- **Why a reboot is pending.** The API only exposes a `reboot_required` boolean —
+  no reason. So when you open the overlay on a flagged server, the app reads
+  Ubuntu's `/var/run/reboot-required` + `.pkgs` over SSH (read-only, reusing the
+  health view's connection) and shows the pending packages — typically a
+  **kernel/security update**. This is labeled as OS-level context, not as
+  SpinupWP's internal logic (a fleet-wide check confirmed the boolean tracks that
+  file 1:1).
+- **Reboot is the big one** — its confirmation calls out that it takes the whole
+  server down briefly (every site on it); a service restart is a brief blip.
 
 ## Development
 

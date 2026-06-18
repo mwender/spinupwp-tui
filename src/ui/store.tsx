@@ -6,10 +6,11 @@
 // trigger a refresh.
 
 import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { SpinupWPClient, ApiError } from "../api/client.ts"
+import { SpinupWPClient, ApiError, type ServerService } from "../api/client.ts"
 import type { Server, Site, Event } from "../api/types.ts"
 import { loadConfig } from "../config.ts"
 import { probeSite } from "../lib/probe.ts"
+import { fetchRebootInfo, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 
@@ -30,6 +31,21 @@ const UPGRADE_FAIL = "failed"
 const UPGRADE_POLL_MS = 2500
 
 export function isUpgradeInFlight(p: PhpUpgradeProgress | undefined): boolean {
+  return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
+}
+
+// A server-level operation (reboot or a service restart), tracked in the store
+// so progress survives closing the Server-actions overlay (same model as
+// PhpUpgradeProgress, keyed by server id). `label` is a short display verb.
+export type ServerOpKind = "reboot" | ServerService
+export interface ServerOpProgress {
+  kind: ServerOpKind
+  label: string
+  status: string
+  error?: string
+}
+
+export function isServerOpInFlight(p: ServerOpProgress | undefined): boolean {
   return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
 }
 
@@ -69,6 +85,19 @@ interface StoreValue extends DataState {
   startPhpUpgrade: (site: Site, version: string) => void
   // Drop a terminal (deployed/failed) entry — e.g. when the modal is dismissed.
   clearPhpUpgrade: (siteId: number) => void
+  // The server whose actions overlay (reboot / service restart) is open, or null.
+  serverActionsServer: Server | null
+  setServerActionsServer: (s: Server | null) => void
+  // In-flight (and just-failed) server operations, keyed by server id.
+  serverOps: Map<number, ServerOpProgress>
+  // Fire a server op (reboot or service restart) and poll its event in the background.
+  startServerOp: (server: Server, kind: ServerOpKind, label: string) => void
+  clearServerOp: (serverId: number) => void
+  // Reboot "why" — SSH-probed Ubuntu reboot-required detail, keyed by server id.
+  rebootInfo: Map<number, RebootInfo>
+  rebootInfoLoading: Set<number>
+  rebootInfoErrors: Map<number, string>
+  loadRebootInfo: (server: Server) => void
   // Optional SSH user override for the health view (from env/config).
   sshUser: string | null
   // SpinupWP account slug (from env/config) for building web deep links.
@@ -120,6 +149,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [healthServer, setHealthServer] = useState<Server | null>(null)
   const [phpUpgradeSite, setPhpUpgradeSite] = useState<Site | null>(null)
   const [phpUpgrades, setPhpUpgrades] = useState<Map<number, PhpUpgradeProgress>>(new Map())
+  const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
+  const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
+  const [rebootInfo, setRebootInfo] = useState<Map<number, RebootInfo>>(new Map())
+  const [rebootInfoLoading, setRebootInfoLoading] = useState<Set<number>>(new Set())
+  const [rebootInfoErrors, setRebootInfoErrors] = useState<Map<number, string>>(new Map())
 
   // Tier-2 stack-probe cache: hydrate from disk once (read-only at startup; no
   // SSH). Probes run lazily on demand and write through to disk.
@@ -302,6 +336,90 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [client, refresh, clearPhpUpgrade, phpUpgrades],
   )
 
+  // ---- Server operations (reboot / service restart) ---------------------
+
+  const setOp = (serverId: number, progress: ServerOpProgress) =>
+    setServerOps((prev) => new Map(prev).set(serverId, progress))
+
+  const clearServerOp = useCallback(
+    (serverId: number) =>
+      setServerOps((prev) => {
+        if (!prev.has(serverId)) return prev
+        const next = new Map(prev)
+        next.delete(serverId)
+        return next
+      }),
+    [],
+  )
+
+  const startServerOp = useCallback(
+    (server: Server, kind: ServerOpKind, label: string) => {
+      const existing = serverOps.get(server.id)
+      if (existing && existing.status !== UPGRADE_DONE && existing.status !== UPGRADE_FAIL) return
+
+      const run = async () => {
+        setOp(server.id, { kind, label, status: "queued" })
+        let eventId: number
+        try {
+          const res = kind === "reboot" ? await client.rebootServer(server.id) : await client.restartService(server.id, kind)
+          eventId = res.event_id
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setOp(server.id, { kind, label, status: UPGRADE_FAIL, error: msg })
+          return
+        }
+
+        const poll = async () => {
+          try {
+            const ev = await client.getEvent(eventId)
+            if (ev.status === UPGRADE_DONE) {
+              await refresh() // reboot clears reboot_required; status may flip too
+              clearServerOp(server.id)
+            } else if (ev.status === UPGRADE_FAIL) {
+              setOp(server.id, { kind, label, status: UPGRADE_FAIL, error: ev.output?.trim() || "The operation failed on SpinupWP." })
+            } else {
+              setOp(server.id, { kind, label, status: ev.status })
+              setTimeout(() => void poll(), UPGRADE_POLL_MS)
+            }
+          } catch (err) {
+            const msg = err instanceof ApiError ? err.message : (err as Error).message
+            setOp(server.id, { kind, label, status: UPGRADE_FAIL, error: msg })
+          }
+        }
+        setTimeout(() => void poll(), UPGRADE_POLL_MS)
+      }
+      void run()
+    },
+    [client, refresh, clearServerOp, serverOps],
+  )
+
+  // SSH-probe a server's Ubuntu reboot-required detail (the "why"). On-demand,
+  // cached in memory for the session (read-only; reuses the health SSH path).
+  const loadRebootInfo = useCallback(
+    (server: Server) => {
+      if (rebootInfoLoading.has(server.id)) return
+      const run = async () => {
+        setRebootInfoLoading((prev) => new Set(prev).add(server.id))
+        setRebootInfoErrors((prev) => {
+          if (!prev.has(server.id)) return prev
+          const next = new Map(prev)
+          next.delete(server.id)
+          return next
+        })
+        const res = await fetchRebootInfo(server, sites, cfgRef.current.sshUser)
+        if (res.ok) setRebootInfo((prev) => new Map(prev).set(server.id, res.info))
+        else setRebootInfoErrors((prev) => new Map(prev).set(server.id, res.error))
+        setRebootInfoLoading((prev) => {
+          const next = new Set(prev)
+          next.delete(server.id)
+          return next
+        })
+      }
+      void run()
+    },
+    [rebootInfoLoading, sites],
+  )
+
   const value: StoreValue = {
     servers,
     sites,
@@ -325,6 +443,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     phpUpgrades,
     startPhpUpgrade,
     clearPhpUpgrade,
+    serverActionsServer,
+    setServerActionsServer,
+    serverOps,
+    startServerOp,
+    clearServerOp,
+    rebootInfo,
+    rebootInfoLoading,
+    rebootInfoErrors,
+    loadRebootInfo,
     sshUser: cfgRef.current.sshUser,
     accountSlug: cfgRef.current.accountSlug,
     sitesForServer,

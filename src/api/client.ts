@@ -6,6 +6,9 @@
 
 import type { ApiList, ApiSingle, Server, Site, Event } from "./types.ts"
 
+// The restartable services SpinupWP exposes (POST /servers/{id}/services/{svc}/restart).
+export type ServerService = "nginx" | "php" | "mysql" | "redis"
+
 export class ApiError extends Error {
   status: number
   body?: string
@@ -199,5 +202,16 @@ export class SpinupWPClient {
   // it isn't already present. Needs a Read/Write token (see mutate()).
   upgradeSitePhp(siteId: number, phpVersion: string): Promise<{ event_id: number }> {
     return this.mutate<{ event_id: number }>(`/sites/${siteId}/php`, "PUT", { php_version: phpVersion })
+  }
+
+  // Reboot a server. Async → returns an event_id to poll via getEvent().
+  rebootServer(serverId: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/servers/${serverId}/reboot`, "POST")
+  }
+
+  // Restart a single service on a server (nginx / php / mysql / redis). Async →
+  // returns an event_id to poll via getEvent().
+  restartService(serverId: number, service: ServerService): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/servers/${serverId}/services/${service}/restart`, "POST")
   }
 }

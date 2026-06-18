@@ -5,12 +5,27 @@ import { formatBytes, diskUsedPct, bar, formatDate, timeAgo, truncate } from "..
 import { Field, StatusBadge } from "./components.tsx"
 import { classifyStack, stackColor } from "../lib/stack.ts"
 import { probeKindColor } from "../lib/probe.ts"
-import { useStore, isUpgradeInFlight } from "./store.tsx"
+import { useStore, isUpgradeInFlight, isServerOpInFlight } from "./store.tsx"
 import type { Server, Site } from "../api/types.ts"
 
 export function ServerDetail({ server, siteCount }: { server: Server; siteCount: number }) {
+  const { rebootInfo, serverOps } = useStore()
   const ds = server.disk_space
   const pct = diskUsedPct(ds?.used, ds?.total)
+  const op = serverOps.get(server.id)
+  const rb = rebootInfo.get(server.id)
+  const rebootValue =
+    op && isServerOpInFlight(op)
+      ? `${op.label}…`
+      : op?.status === "failed"
+        ? "action failed"
+        : server.reboot_required
+          ? rb?.present
+            ? `required · ${rb.kernel ? "kernel update" : "pkg updates"} (${rb.packages.length})`
+            : "required — press a"
+          : "not needed"
+  const rebootColor =
+    op?.status === "failed" ? theme.bad : server.reboot_required || (op && isServerOpInFlight(op)) ? theme.warn : theme.good
   return (
     <box style={{ flexDirection: "column" }}>
       <box style={{ flexDirection: "row" }}>
@@ -43,11 +58,7 @@ export function ServerDetail({ server, siteCount }: { server: Server; siteCount:
       <Field label="Available" value={formatBytes(ds?.available)} />
       <box style={{ height: 1 }} />
 
-      <Field
-        label="Reboot"
-        value={server.reboot_required ? "required" : "not needed"}
-        valueColor={server.reboot_required ? theme.warn : theme.good}
-      />
+      <Field label="Reboot" value={rebootValue} valueColor={rebootColor} />
       <Field
         label="SpinupWP upgrade"
         value={server.upgrade_required ? "required — press w to open" : "up to date"}
