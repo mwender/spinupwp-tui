@@ -18,11 +18,15 @@ export interface AppConfig {
   token: string
   baseUrl: string
   tokenSource: "env" | "file" | "none"
+  // Optional override for the SSH user used by the server health view. When unset,
+  // the health view derives the user from a site on the server (its `site_user`).
+  sshUser: string | null
 }
 
 export interface StoredConfig {
   token?: string
   baseUrl?: string
+  sshUser?: string
 }
 
 export function configDir(): string {
@@ -57,6 +61,7 @@ export function loadConfig(): AppConfig {
     token,
     baseUrl: (stored.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ""),
     tokenSource,
+    sshUser: process.env.SPINUPWP_SSH_USER?.trim() || stored.sshUser?.trim() || null,
   }
 }
 
