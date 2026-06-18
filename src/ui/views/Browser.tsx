@@ -102,9 +102,10 @@ export function Browser({ rows }: { rows: number }) {
         if (focus === "sites" && sites[siteIndex]) setPhpUpgradeSite(sites[siteIndex])
         return
       case "a":
-        // Open the server-actions overlay (reboot / service restart) for the
-        // focused server — works from either pane.
-        if (server) setServerActionsServer(server)
+        // Server actions (reboot / restart) are server-scoped, so only offered
+        // when the Servers pane is focused — when you've drilled into a site,
+        // the context is the site (server actions are dropped there).
+        if (focus === "servers" && server) setServerActionsServer(server)
         return
       case "h":
         // Open the live health view for the current server (works from either pane).
@@ -133,7 +134,7 @@ export function Browser({ rows }: { rows: number }) {
       ? [
           { key: "↑↓/jk", label: "select" },
           { key: "→/⏎", label: "view sites" },
-          { key: "a", label: "actions" },
+          { key: "a", label: "server actions" },
           { key: "h", label: "health" },
           { key: "w", label: "SpinupWP" },
         ]
@@ -142,7 +143,6 @@ export function Browser({ rows }: { rows: number }) {
           { key: "←/esc", label: "back" },
           { key: "d", label: "detect" },
           { key: "u", label: "upgrade PHP" },
-          { key: "a", label: "server actions" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
           { key: "h", label: "health" },
