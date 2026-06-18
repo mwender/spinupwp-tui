@@ -15,6 +15,7 @@
 // probe that inspects the filesystem) is the authoritative correction layer.
 
 import type { Site } from "../api/types.ts"
+import type { ProbeKind } from "./probe.ts"
 import { theme } from "./theme.ts"
 
 export type Stack = "Standard WP" | "Bedrock" | "Non-WP"
@@ -26,6 +27,26 @@ export function classifyStack(site: Site): Stack {
   if (!site.is_wordpress) return "Non-WP"
   if (site.public_folder === "/web/") return "Bedrock"
   return "Standard WP"
+}
+
+// The bucket a site actually belongs in once Tier-2 is considered. A CONCLUSIVE
+// probe (positive identification) overrides the Tier-1 heuristic; an
+// inconclusive ("unknown"), failed, or absent probe falls back to Tier-1. This
+// is how an API-mislabeled site (is_wordpress=false but really WordPress) moves
+// into its true bucket after `d`.
+export function effectiveStack(site: Site, probeKind?: ProbeKind | null): Stack {
+  switch (probeKind) {
+    case "wordpress":
+      return "Standard WP"
+    case "bedrock":
+      return "Bedrock"
+    case "whmcs":
+    case "laravel":
+    case "static":
+      return "Non-WP"
+    default:
+      return classifyStack(site)
+  }
 }
 
 // `onSelection` brightens the colors that read poorly on the focused

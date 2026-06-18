@@ -21,7 +21,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -48,7 +48,10 @@ export function Browser({ rows }: { rows: number }) {
 
   useKeyboard((key) => {
     if (!isActive) return
-    const name = key.name
+    // OpenTUI lowercases letters and sets a shift flag; normalize so capital
+    // shortcuts (e.g. G = jump to bottom) match.
+    const raw = key.name ?? ""
+    const name = key.shift && raw.length === 1 ? raw.toUpperCase() : raw
 
     const moveBy = (delta: number) => {
       if (focus === "servers") setServerIndex((i) => moveSelection(i, delta, sortedServers.length))
@@ -84,6 +87,15 @@ export function Browser({ rows }: { rows: number }) {
           setTimeout(() => setFlash(null), 1500)
         }
         return
+      case "d":
+        // Detect the selected site's stack via SSH (Tier 2); shows in Details.
+        if (focus === "sites" && sites[siteIndex]) {
+          const s = sites[siteIndex]
+          runProbe(s)
+          setFlash(`Probing ${s.domain}…`)
+          setTimeout(() => setFlash(null), 1500)
+        }
+        return
       case "h":
         // Open the live health view for the current server (works from either pane).
         if (server) setHealthServer(server)
@@ -104,6 +116,7 @@ export function Browser({ rows }: { rows: number }) {
       : [
           { key: "↑↓/jk", label: "select site" },
           { key: "←/esc", label: "back" },
+          { key: "d", label: "detect" },
           { key: "o", label: "open" },
           { key: "h", label: "health" },
         ]

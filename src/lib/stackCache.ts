@@ -41,6 +41,9 @@ export function siteSignature(site: { is_wordpress: boolean; public_folder: stri
 
 export class StackCache {
   private entries = new Map<number, CachedProbe>()
+  // Serializes disk writes so concurrent probes (batch mode) can't tear the
+  // file or drop each other's updates. Each persist() runs after the previous.
+  private writeChain: Promise<void> = Promise.resolve()
 
   // Read the cache file into memory. Never throws — a missing or corrupt file
   // simply yields an empty cache.
@@ -86,7 +89,16 @@ export class StackCache {
     return this.entries.size
   }
 
-  private async persist(): Promise<void> {
+  // Queue this write behind any in-flight one. Each write serializes the
+  // current entries map (which already includes all sets so far), so ordering
+  // only needs to prevent overlapping file writes, not preserve per-set diffs.
+  private persist(): Promise<void> {
+    // `.catch` keeps the chain alive if one write fails (cache is best-effort).
+    this.writeChain = this.writeChain.then(() => this.writeFile()).catch(() => {})
+    return this.writeChain
+  }
+
+  private async writeFile(): Promise<void> {
     await mkdir(configDir(), { recursive: true })
     const file: CacheFile = { version: CACHE_VERSION, entries: {} }
     for (const [id, entry] of this.entries) file.entries[String(id)] = entry

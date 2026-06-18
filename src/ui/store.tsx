@@ -49,6 +49,8 @@ interface StoreValue extends DataState {
   probeErrors: Map<number, string> // last error per site id
   // Probe a single site over SSH (fire-and-forget); write-through to the cache.
   runProbe: (site: Site) => void
+  // Probe many sites with a bounded concurrency pool (skips in-flight sites).
+  runProbeMany: (sites: Site[]) => void
   // Whether a cached probe for this site is stale (site shape changed since).
   isProbeStale: (site: Site) => boolean
 }
@@ -129,10 +131,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [servers],
   )
 
-  const runProbe = useCallback(
-    (site: Site) => {
+  // Probe one site and reconcile state + cache. Concurrency-safe (all state
+  // updates are functional), so the batch runner can pool several at once.
+  const probeOne = useCallback(
+    async (site: Site) => {
       const cache = cacheRef.current!
-      if (probingIds.has(site.id)) return // already in flight
       setProbingIds((prev) => new Set(prev).add(site.id))
       setProbeErrors((prev) => {
         if (!prev.has(site.id)) return prev
@@ -140,23 +143,48 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         next.delete(site.id)
         return next
       })
-      void (async () => {
-        const server = servers.find((s) => s.id === site.server_id)
-        const outcome = await probeSite(site, server, cfgRef.current.sshUser)
-        if (outcome.ok) {
-          await cache.set(site.id, outcome.result, siteSignature(site))
-          setProbes(cache.snapshot())
-        } else {
-          setProbeErrors((prev) => new Map(prev).set(site.id, outcome.error))
-        }
-        setProbingIds((prev) => {
-          const next = new Set(prev)
-          next.delete(site.id)
-          return next
-        })
-      })()
+      const server = servers.find((s) => s.id === site.server_id)
+      const outcome = await probeSite(site, server, cfgRef.current.sshUser)
+      if (outcome.ok) {
+        await cache.set(site.id, outcome.result, siteSignature(site))
+        setProbes(cache.snapshot())
+      } else {
+        setProbeErrors((prev) => new Map(prev).set(site.id, outcome.error))
+      }
+      setProbingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(site.id)
+        return next
+      })
     },
-    [servers, probingIds],
+    [servers],
+  )
+
+  const runProbe = useCallback(
+    (site: Site) => {
+      if (probingIds.has(site.id)) return // already in flight
+      void probeOne(site)
+    },
+    [probeOne, probingIds],
+  )
+
+  // Probe many sites with a bounded SSH concurrency pool. Skips sites already
+  // in flight; callers decide whether to pass un-probed/stale sites only.
+  const runProbeMany = useCallback(
+    (sitesToProbe: Site[]) => {
+      const queue = sitesToProbe.filter((s) => !probingIds.has(s.id))
+      if (queue.length === 0) return
+      const CONCURRENCY = 5
+      let cursor = 0
+      const worker = async () => {
+        while (cursor < queue.length) {
+          const site = queue[cursor++]
+          await probeOne(site)
+        }
+      }
+      for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i++) void worker()
+    },
+    [probeOne, probingIds],
   )
 
   const isProbeStale = useCallback((site: Site) => cacheRef.current!.isStale(site.id, siteSignature(site)), [])
@@ -186,6 +214,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     probingIds,
     probeErrors,
     runProbe,
+    runProbeMany,
     isProbeStale,
   }
 
