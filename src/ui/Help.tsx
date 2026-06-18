@@ -25,8 +25,17 @@ const SECTIONS: { title: string; keys: [string, string][] }[] = [
       ["h", "Live server health (CPU/mem/disk over SSH)"],
       ["d", "Detect a site's stack via SSH (Servers / Stacks tabs)"],
       ["D", "Detect every site in the selected stack (Stacks tab)"],
+      ["u", "Upgrade a site's PHP version (needs a Read/Write token)"],
       ["w", "Open the selected server/site in the SpinupWP web app"],
       ["g / G", "Jump to top / bottom"],
+    ],
+  },
+  {
+    title: "Search tab",
+    keys: [
+      ["Tab / →", "Hand focus from the search box to the result's actions"],
+      ["o / w / u / h", "Act on the result: open · SpinupWP · PHP upgrade · health"],
+      ["← / Esc", "Return to the search box"],
     ],
   },
 ]
@@ -67,7 +76,7 @@ export function HelpOverlay({ onClose }: { onClose: () => void }) {
             <box style={{ height: 1 }} />
           </box>
         ))}
-        <text content="A read-only SpinupWP control center · built with OpenTUI" fg={theme.textFaint} />
+        <text content="A SpinupWP control center · built with OpenTUI" fg={theme.textFaint} />
       </box>
     </box>
   )

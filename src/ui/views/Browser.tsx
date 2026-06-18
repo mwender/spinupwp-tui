@@ -10,7 +10,7 @@ import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel } from "../components.tsx"
+import { Panel, PhpVersionCell } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { ServerDetail, SiteDetail } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -97,6 +97,10 @@ export function Browser({ rows }: { rows: number }) {
           setTimeout(() => setFlash(null), 1500)
         }
         return
+      case "u":
+        // Upgrade the selected site's PHP version (first write action).
+        if (focus === "sites" && sites[siteIndex]) setPhpUpgradeSite(sites[siteIndex])
+        return
       case "h":
         // Open the live health view for the current server (works from either pane).
         if (server) setHealthServer(server)
@@ -131,6 +135,7 @@ export function Browser({ rows }: { rows: number }) {
           { key: "↑↓/jk", label: "select site" },
           { key: "←/esc", label: "back" },
           { key: "d", label: "detect" },
+          { key: "u", label: "upgrade PHP" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
           { key: "h", label: "health" },
@@ -180,7 +185,7 @@ export function Browser({ rows }: { rows: number }) {
                   <text content={truncate(s.domain, 40)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
                   <text content={stackTag(stack) + " "} fg={stackColor(stack, selected)} style={{ flexShrink: 0 }} />
                   {updates > 0 && <text content={`↑${updates} `} fg={theme.warn} style={{ flexShrink: 0 }} />}
-                  <text content={s.php_version ?? ""} fg={selected ? theme.text : theme.textFaint} style={{ flexShrink: 0 }} />
+                  <PhpVersionCell version={s.php_version} upgrade={phpUpgrades.get(s.id)} selected={selected} />
                 </>
               )
             }}

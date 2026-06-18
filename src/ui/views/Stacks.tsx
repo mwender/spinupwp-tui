@@ -17,7 +17,7 @@ import { bar, truncate } from "../../lib/format.ts"
 import { STACKS, effectiveStack, stackColor, type Stack } from "../../lib/stack.ts"
 import { phpSortKey } from "../../lib/phpEol.ts"
 import { probeKindColor, type ProbeKind } from "../../lib/probe.ts"
-import { Panel, Spinner } from "../components.tsx"
+import { Panel, Spinner, PhpVersionCell } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
@@ -48,7 +48,7 @@ const NONWP_SUBS: { kind: ProbeKind | null; label: string }[] = [
 
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug } =
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
@@ -165,6 +165,10 @@ export function Stacks({ rows }: { rows: number }) {
           flashMsg(`Probing ${s.domain}…`)
         }
         return
+      case "u":
+        // Upgrade the selected site's PHP version (sites pane only).
+        if (focus === "sites" && groupSites[siteIndex]) setPhpUpgradeSite(groupSites[siteIndex])
+        return
       case "D":
         // Probe the ENTIRE selected group, in list order (top→down), regardless
         // of cursor or focus. runProbeMany skips any already in flight; target
@@ -191,7 +195,7 @@ export function Stacks({ rows }: { rows: number }) {
           { key: "↑↓/jk", label: "select site" },
           { key: "←/esc", label: "back" },
           { key: "d", label: "detect" },
-          { key: "D", label: "detect all" },
+          { key: "u", label: "upgrade PHP" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
         ]
@@ -285,11 +289,9 @@ export function Stacks({ rows }: { rows: number }) {
                     wrapMode="none"
                     style={{ flexShrink: 0, marginLeft: 1 }}
                   />
-                  <text
-                    content={" " + (s.php_version ?? "—")}
-                    fg={isPhpEol(s.php_version) ? theme.bad : faint}
-                    style={{ flexShrink: 0 }}
-                  />
+                  <box style={{ flexShrink: 0, marginLeft: 1 }}>
+                    <PhpVersionCell version={s.php_version} upgrade={phpUpgrades.get(s.id)} selected={selected} eol={isPhpEol(s.php_version)} />
+                  </box>
                 </>
               )
             }}

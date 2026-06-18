@@ -65,6 +65,23 @@ export function isPhpEol(version: string | null | undefined, dates: PhpEolDates,
   return Number.isFinite(t) && t < asOf.getTime()
 }
 
+// The PHP versions to offer in the upgrade picker. Derived dynamically from the
+// (network-refreshed) EOL schedule so it tracks new releases (8.5, 8.6, …) on its
+// own rather than rotting in a hard-coded list. We keep the modern major (8.x),
+// drop ancient 7.x, and always include the site's current version even if the
+// schedule no longer lists it. Not filtered to "installed on the server" —
+// SpinupWP installs a version on demand the first time a site is assigned it.
+export function offeredPhpVersions(dates: PhpEolDates, current?: string | null): string[] {
+  const set = new Set<string>()
+  for (const key of Object.keys(dates)) {
+    const maj = Number.parseInt(key.split(".")[0] ?? "", 10)
+    if (maj >= 8) set.add(key)
+  }
+  const cur = current ? majorMinor(current) : null
+  if (cur) set.add(cur)
+  return [...set].sort((a, b) => phpSortKey(a) - phpSortKey(b))
+}
+
 // Numeric sort key for "8.10" > "8.2" correctness (major*100 + minor).
 export function phpSortKey(version: string | null | undefined): number {
   if (!version) return -1

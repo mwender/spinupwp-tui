@@ -1,5 +1,8 @@
 // Thin typed wrapper around the SpinupWP REST API using fetch + Bearer auth.
-// Read-only by design for now (the configured token has read-only scope).
+// Reads (GET) work with any token. The handful of write methods (e.g.
+// upgradeSitePhp) need a Read/Write-scoped token; since the API exposes no
+// token-scope endpoint, a write that comes back 403 is treated as "token is
+// read-only" (see mutate()).
 
 import type { ApiList, ApiSingle, Server, Site, Event } from "./types.ts"
 
@@ -71,6 +74,50 @@ export class SpinupWPClient {
     return (await res.json()) as T
   }
 
+  // Write request (POST/PUT/PATCH/DELETE) with a JSON body. A 403 here almost
+  // always means the token lacks Read/Write scope — there's no scope endpoint to
+  // check up front, so we detect it by attempting the write and translating the
+  // 403 into an actionable message. All other statuses mirror request().
+  private async mutate<T>(path: string, method: string, body?: unknown): Promise<T> {
+    const url = this.baseUrl + path
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "User-Agent": "spinupwp-tui",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+    } catch (err) {
+      throw new ApiError(`Network error reaching the SpinupWP API: ${(err as Error).message}`, 0)
+    }
+
+    if (res.status === 401) {
+      throw new ApiError("Unauthorized — your access token was rejected (401).", 401)
+    }
+    if (res.status === 403) {
+      throw new ApiError(
+        "Your token is read-only — this action needs a Read/Write token. Run `spinup login` to set one.",
+        403,
+      )
+    }
+    if (res.status === 429) {
+      throw new ApiError("Rate limited by the SpinupWP API (429). Try again shortly.", 429)
+    }
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "")
+      throw new ApiError(`SpinupWP API error (HTTP ${res.status}).`, res.status, errBody)
+    }
+
+    // Some write endpoints (e.g. PHP upgrade) return a bare body, others 204.
+    if (res.status === 204) return undefined as T
+    return (await res.json().catch(() => undefined)) as T
+  }
+
   // Fetch a single page of a list resource.
   private listPage<T>(path: string, page: number, params?: Record<string, string | number | undefined>) {
     return this.request<ApiList<T>>(path, { page, limit: 100, ...params })
@@ -137,5 +184,20 @@ export class SpinupWPClient {
       page += 1
     }
     return all
+  }
+
+  // Fetch a single event by id — used to track an async write to completion.
+  async getEvent(id: number): Promise<Event> {
+    const res = await this.request<ApiSingle<Event>>(`/events/${id}`)
+    return res.data
+  }
+
+  // ---- Writes -----------------------------------------------------------
+
+  // Change a site's PHP version. Async on SpinupWP's side: returns an event_id
+  // to poll via getEvent(). SpinupWP installs the version on the server first if
+  // it isn't already present. Needs a Read/Write token (see mutate()).
+  upgradeSitePhp(siteId: number, phpVersion: string): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/php`, "PUT", { php_version: phpVersion })
   }
 }

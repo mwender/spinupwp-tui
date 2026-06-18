@@ -56,7 +56,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         <text content="Let's connect this tool to your SpinupWP account." fg={theme.text} />
         <box style={{ height: 1 }} />
         <text content="1. Open https://spinupwp.app/account/api/" fg={theme.textDim} />
-        <text content="2. Create a token (Read Only is enough to start)" fg={theme.textDim} />
+        <text content="2. Create a token (Read Only to browse; Read/Write to upgrade PHP)" fg={theme.textDim} />
         <text content="3. Paste it below and press Enter" fg={theme.textDim} />
         <box style={{ height: 1 }} />
 

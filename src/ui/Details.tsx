@@ -5,7 +5,7 @@ import { formatBytes, diskUsedPct, bar, formatDate, timeAgo, truncate } from "..
 import { Field, StatusBadge } from "./components.tsx"
 import { classifyStack, stackColor } from "../lib/stack.ts"
 import { probeKindColor } from "../lib/probe.ts"
-import { useStore } from "./store.tsx"
+import { useStore, isUpgradeInFlight } from "./store.tsx"
 import type { Server, Site } from "../api/types.ts"
 
 export function ServerDetail({ server, siteCount }: { server: Server; siteCount: number }) {
@@ -59,11 +59,12 @@ export function ServerDetail({ server, siteCount }: { server: Server; siteCount:
 }
 
 export function SiteDetail({ site, serverName }: { site: Site; serverName: string }) {
-  const { probes, probingIds, isProbeStale } = useStore()
+  const { probes, probingIds, isProbeStale, phpUpgrades } = useStore()
   const updates = (site.wp_plugin_updates || 0) + (site.wp_theme_updates || 0) + (site.wp_core_update ? 1 : 0)
   const stack = classifyStack(site)
   const probe = probes.get(site.id)
   const probing = probingIds.has(site.id)
+  const upgrade = phpUpgrades.get(site.id)
   return (
     <box style={{ flexDirection: "column" }}>
       <box style={{ flexDirection: "row" }}>
@@ -82,7 +83,19 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
         valueColor={probing ? theme.textDim : probe ? probeKindColor(probe.result.kind) : theme.textFaint}
       />
       <Field label="Type" value={site.is_wordpress ? "WordPress" : "Generic"} valueColor={site.is_wordpress ? theme.brand : theme.textDim} />
-      <Field label="PHP" value={site.php_version ?? "—"} />
+      <Field
+        label="PHP"
+        value={
+          upgrade && isUpgradeInFlight(upgrade)
+            ? `${site.php_version ?? "—"} → ${upgrade.target} (${upgrade.status}…)`
+            : upgrade?.status === "failed"
+              ? `${site.php_version ?? "—"} (upgrade failed)`
+              : (site.php_version ?? "—")
+        }
+        valueColor={
+          upgrade && isUpgradeInFlight(upgrade) ? theme.warn : upgrade?.status === "failed" ? theme.bad : theme.text
+        }
+      />
       <Field label="User" value={site.site_user ?? "—"} />
       <Field label="Public dir" value={site.public_folder ?? "/"} />
       <Field

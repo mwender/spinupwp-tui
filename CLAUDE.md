@@ -34,6 +34,13 @@ conflicts, the store exposes `route`, `inputMode`, and `overlayOpen`; each view'
 handler early-returns unless it is the active route and no input/overlay is
 capturing keys (`App.tsx` handles global keys + quit).
 
+Search has two focus states (query/actions): the search `<input>` is focused only
+in query mode (`inputMode` on, suppressing global shortcuts); pressing `Tab`/`→`
+blurs it and switches to "actions" focus, where the selected result's single-key
+actions (`o`/`w`/`u`/`h`) fire and the Details pane becomes an action menu. `←`/`Esc`
+returns to the box. (While the input is focused only `↑ ↓ Enter Esc` reliably reach
+the view; `Tab`/`→` are handled because the input doesn't consume them.)
+
 ## Visual testing without a TTY
 
 The harness has no interactive terminal. Drive the app through a PTY and
@@ -50,6 +57,9 @@ ST (`ESC \`), not BEL.
 
 ## API
 
-Read-only today (`SpinupWPClient` only implements GETs). The configured token has
-Read Only scope. If adding write actions, gate them behind a token-scope check and
-keep the read-only path working.
+Mostly reads, plus one write: `upgradeSitePhp` (`PUT /sites/{id}/php`). Writes go
+through `SpinupWPClient.mutate()`, which treats a `403` as "token is read-only"
+(the API exposes **no** token-scope endpoint, so attempt-and-handle-403 is the
+detection). Keep the read path fully working regardless of token scope. New write
+actions should reuse `mutate()` + the async-event pattern (`getEvent` polling) and
+the confirm-before-firing overlay (`ui/views/PhpUpgrade.tsx`).

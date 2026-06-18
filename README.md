@@ -40,16 +40,21 @@ Once you're in, the dashboard looks like this:
   WHMCS, Laravel, Static HTML, and WordPress versions the API can't tell you —
   or `D` to probe a whole stack at once. (See "Stack detection" below.)
 - **Global search** — fuzzy search across every server and site at once by name,
-  domain, or IP. Jump straight to anything.
+  domain, or IP. Tab onto a result to act on it (open, SpinupWP, PHP upgrade,
+  health) right from the results, without leaving the search.
 - **Events feed** — recent provisioning and operation activity, with per-event
   detail and output.
 - **Live server health** — press `h` on any server for a real-time view over
   SSH: CPU (aggregate + per-core + sparkline), load, memory/swap, disk mounts,
   and top processes. Polls every few seconds. (See "Server health" below.)
 - **Open in browser** — press `o` on any site to open it in your default browser.
+- **Upgrade a site's PHP version** — press `u` on a site to pick a new PHP
+  version and apply it (`PUT /sites/{id}/php`), then watch the upgrade event run
+  to completion. (See "Upgrading PHP" below.)
 
-> The tool is **read-only** today (it works great with a Read Only API token).
-> Write actions can be layered on later.
+> The tool is **read-only by default** and works great with a Read Only API
+> token. The one write action — upgrading a site's PHP version — needs a
+> **Read/Write** token; everything else keeps working without one.
 
 ## Requirements
 
@@ -59,7 +64,8 @@ Once you're in, the dashboard looks like this:
   ```
 - A SpinupWP API token — create one at
   [spinupwp.app/account/api](https://spinupwp.app/account/api/). **Read Only**
-  scope is enough.
+  scope is enough to browse; use **Read/Write** if you want to upgrade a site's
+  PHP version.
 
 ## Install & run
 
@@ -146,11 +152,17 @@ Both can be set in `config.json` or via an environment variable:
 | `h` | Live server health (CPU/mem/disk over SSH) |
 | `d` | Detect a site's stack via SSH (Servers / Stacks tabs) |
 | `D` | Detect every site in the selected stack (Stacks tab) |
+| `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `r` | Refresh data from the API |
 | `?` | Toggle the help overlay |
 | `q` / `Ctrl+C` | Quit |
+
+In the **Search** tab the box keeps keyboard focus while you type. Press **Tab**
+(or **→**) to hand focus to the selected result's **action menu** — `o` / `w` /
+`u` / `h` then act on that server or site — and **←** / **Esc** to return to the
+search box.
 
 ## Server health (SSH)
 
@@ -194,6 +206,30 @@ keys, `BatchMode`) and are **read-only**. Results are cached to
 `~/.config/spinupwp-tui/stack-cache.json`, hydrated at startup, so detections
 survive restarts without re-running SSH.
 
+## Upgrading PHP
+
+Press `u` on a selected site (in the **Servers** or **Stacks** tab) to change its
+PHP version. A picker lists the available versions — the current one is marked,
+end-of-life versions are flagged, and the list is sourced from the live PHP
+release schedule (so new versions like 8.5 appear automatically). After you
+confirm, the app calls `PUT /sites/{id}/php` and polls the resulting event until
+it finishes.
+
+- **Needs a Read/Write token.** SpinupWP exposes no token-scope endpoint, so a
+  read-only token is detected when the upgrade comes back `403` — you'll get a
+  clear "token is read-only" message and nothing changes. Swap in a Read/Write
+  token (`spinup login`) to actually apply upgrades.
+- **On-demand install.** If the chosen version isn't installed on the server yet,
+  SpinupWP installs it first; the event simply takes a little longer.
+- **Pending platform upgrade.** If the site's server has a pending SpinupWP
+  platform upgrade, it can't be managed via the API until that runs — the picker
+  is blocked and points you to open the server in the web app (`w`).
+- **Runs in the background.** The upgrade is tracked in the app's store, so you
+  can press `Esc` to close the modal and it keeps going — the site's row shows a
+  spinner and the target version (`→8.3`) until it settles, then refreshes to the
+  new version (or flags `⬆!` if it failed). The SiteDetail "PHP" field shows the
+  same in-progress state. You can launch upgrades on several sites at once.
+
 ## Development
 
 ```sh
@@ -208,19 +244,20 @@ src/
   index.tsx          entry — boots OpenTUI, routes onboarding vs app
   config.ts          token resolution + persistence
   api/
-    client.ts        typed fetch client (pagination, errors, validation)
+    client.ts        typed fetch client (reads + writes, errors, validation)
     types.ts         Server / Site / Event types
   lib/               formatting, theme, open-in-browser, SSH helpers
     stack.ts         Tier-1 stack classification + effective (probe-aware) bucket
     probe.ts         Tier-2 SSH stack probe (WHMCS / Bedrock / Laravel / WP / …)
     stackCache.ts    disk-backed probe cache (hydrate on start, write-through)
+    phpEol.ts        PHP EOL dates + the version set offered by the upgrade picker
   ui/
     App.tsx          shell: splash gating, key routing, layout
     store.tsx        React-context data store
     Splash / Onboarding / Header / StatusBar / Help
     List.tsx         generic windowed keyboard list
     Details.tsx      shared server/site detail panels
-    views/           Dashboard, Browser, Stacks, Search, Events
+    views/           Dashboard, Browser, Stacks, Search, Events, Health, PhpUpgrade
 ```
 
 ## License

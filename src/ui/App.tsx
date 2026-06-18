@@ -13,6 +13,7 @@ import { Stacks } from "./views/Stacks.tsx"
 import { Search } from "./views/Search.tsx"
 import { Events } from "./views/Events.tsx"
 import { Health } from "./views/Health.tsx"
+import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -30,7 +31,7 @@ export function App() {
   }, [])
 
   // Keep views aware that a modal is open so they pause their own key handling.
-  const overlayActive = showHelp || store.healthServer !== null
+  const overlayActive = showHelp || store.healthServer !== null || store.phpUpgradeSite !== null
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
   }, [overlayActive, store])
@@ -53,6 +54,9 @@ export function App() {
 
     // The health overlay owns the keyboard while open (it handles Esc/q/r/h).
     if (store.healthServer) return
+
+    // The PHP-upgrade overlay owns the keyboard while open.
+    if (store.phpUpgradeSite) return
 
     if (showHelp) {
       if (key.name === "escape" || key.name === "q" || key.name === "?") setShowHelp(false)
@@ -112,6 +116,7 @@ export function App() {
       </box>
       {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
       {store.healthServer && <Health />}
+      {store.phpUpgradeSite && <PhpUpgrade />}
     </box>
   )
 }

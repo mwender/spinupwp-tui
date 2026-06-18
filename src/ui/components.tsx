@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react"
 import { theme, statusColor, statusDot } from "../lib/theme.ts"
+import { isUpgradeInFlight, type PhpUpgradeProgress } from "./store.tsx"
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -88,6 +89,40 @@ export function StatusBadge({ status, label }: { status: string | null | undefin
 // A small inline pill, e.g. for "reboot required" warnings.
 export function Pill({ text, color }: { text: string; color: string }) {
   return <text content={` ${text} `} fg={theme.bg} bg={color} />
+}
+
+// Trailing PHP-version cell for a site row. Normally the version string; while a
+// PHP upgrade is in flight it shows a spinner + the target (e.g. "⠹→8.3"); a
+// failed upgrade flags the version with "⬆!". Shared by the Servers & Stacks rows.
+export function PhpVersionCell({
+  version,
+  upgrade,
+  selected,
+  eol = false,
+}: {
+  version: string | null | undefined
+  upgrade?: PhpUpgradeProgress
+  selected?: boolean
+  eol?: boolean
+}) {
+  if (upgrade && isUpgradeInFlight(upgrade)) {
+    return (
+      <box style={{ flexDirection: "row", flexShrink: 0 }}>
+        <Spinner color={selected ? theme.text : theme.brand} interval={120} />
+        <text content={`→${upgrade.target}`} fg={selected ? theme.text : theme.warn} wrapMode="none" />
+      </box>
+    )
+  }
+  if (upgrade?.status === "failed") {
+    return <text content={`${version ?? "—"} ⬆!`} fg={selected ? theme.text : theme.bad} style={{ flexShrink: 0 }} />
+  }
+  return (
+    <text
+      content={version ?? "—"}
+      fg={selected ? theme.text : eol ? theme.bad : theme.textFaint}
+      style={{ flexShrink: 0 }}
+    />
+  )
 }
 
 // Centered helper text, often for empty/loading states inside a panel.

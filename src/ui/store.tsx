@@ -11,9 +11,27 @@ import type { Server, Site, Event } from "../api/types.ts"
 import { loadConfig } from "../config.ts"
 import { probeSite } from "../lib/probe.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
-import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, type PhpEolDates } from "../lib/phpEol.ts"
+import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 
 export type Route = "dashboard" | "servers" | "stacks" | "search" | "events"
+
+// Progress of a PHP-version upgrade, tracked in the store so it survives the
+// modal being closed. `status` mirrors the SpinupWP event status
+// (queued/creating/updating/… → deployed | failed); non-terminal means in-flight.
+export interface PhpUpgradeProgress {
+  target: string
+  status: string
+  error?: string
+}
+
+// SpinupWP event statuses that mean the operation has settled.
+const UPGRADE_DONE = "deployed"
+const UPGRADE_FAIL = "failed"
+const UPGRADE_POLL_MS = 2500
+
+export function isUpgradeInFlight(p: PhpUpgradeProgress | undefined): boolean {
+  return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
+}
 
 export interface DataState {
   servers: Server[]
@@ -40,6 +58,17 @@ interface StoreValue extends DataState {
   // The server whose live health view is open, or null. Set by the Browser.
   healthServer: Server | null
   setHealthServer: (s: Server | null) => void
+  // The site whose PHP-upgrade overlay is open, or null. Set by site views.
+  phpUpgradeSite: Site | null
+  setPhpUpgradeSite: (s: Site | null) => void
+  // In-flight (and just-failed) PHP upgrades, keyed by site id. Tracked in the
+  // store — not the overlay — so progress survives closing the modal; site rows
+  // and detail panels read this to show a spinner/marker.
+  phpUpgrades: Map<number, PhpUpgradeProgress>
+  // Fire a PHP upgrade and poll its event to completion in the background.
+  startPhpUpgrade: (site: Site, version: string) => void
+  // Drop a terminal (deployed/failed) entry — e.g. when the modal is dismissed.
+  clearPhpUpgrade: (siteId: number) => void
   // Optional SSH user override for the health view (from env/config).
   sshUser: string | null
   // SpinupWP account slug (from env/config) for building web deep links.
@@ -58,6 +87,8 @@ interface StoreValue extends DataState {
   isProbeStale: (site: Site) => boolean
   // Whether a PHP version is past end-of-life (real dates vs today, refreshed).
   isPhpEol: (version: string | null | undefined) => boolean
+  // PHP versions to offer in the upgrade picker (dynamic; current always included).
+  offeredPhpVersions: (current?: string | null) => string[]
 }
 
 const StoreContext = createContext<StoreValue | null>(null)
@@ -87,6 +118,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [inputMode, setInputMode] = useState(false)
   const [overlayOpen, setOverlayOpen] = useState(false)
   const [healthServer, setHealthServer] = useState<Server | null>(null)
+  const [phpUpgradeSite, setPhpUpgradeSite] = useState<Site | null>(null)
+  const [phpUpgrades, setPhpUpgrades] = useState<Map<number, PhpUpgradeProgress>>(new Map())
 
   // Tier-2 stack-probe cache: hydrate from disk once (read-only at startup; no
   // SSH). Probes run lazily on demand and write through to disk.
@@ -204,6 +237,70 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const isProbeStale = useCallback((site: Site) => cacheRef.current!.isStale(site.id, siteSignature(site)), [])
 
   const isPhpEol = useCallback((version: string | null | undefined) => isPhpEolWith(version, phpEolDates), [phpEolDates])
+  const offeredPhpVersions = useCallback(
+    (current?: string | null) => offeredPhpVersionsWith(phpEolDates, current),
+    [phpEolDates],
+  )
+
+  const setUpgrade = (siteId: number, progress: PhpUpgradeProgress) =>
+    setPhpUpgrades((prev) => new Map(prev).set(siteId, progress))
+
+  const clearPhpUpgrade = useCallback(
+    (siteId: number) =>
+      setPhpUpgrades((prev) => {
+        if (!prev.has(siteId)) return prev
+        const next = new Map(prev)
+        next.delete(siteId)
+        return next
+      }),
+    [],
+  )
+
+  const startPhpUpgrade = useCallback(
+    (site: Site, version: string) => {
+      // Ignore a duplicate request while one is already running for this site.
+      const existing = phpUpgrades.get(site.id)
+      if (existing && existing.status !== UPGRADE_DONE && existing.status !== UPGRADE_FAIL) return
+
+      const run = async () => {
+        setUpgrade(site.id, { target: version, status: "queued" })
+        let eventId: number
+        try {
+          const res = await client.upgradeSitePhp(site.id, version)
+          eventId = res.event_id
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setUpgrade(site.id, { target: version, status: UPGRADE_FAIL, error: msg })
+          return
+        }
+
+        const poll = async () => {
+          try {
+            const ev = await client.getEvent(eventId)
+            if (ev.status === UPGRADE_DONE) {
+              await refresh() // pull the new php_version into the store…
+              clearPhpUpgrade(site.id) // …then the row reflects truth, no marker needed
+            } else if (ev.status === UPGRADE_FAIL) {
+              setUpgrade(site.id, {
+                target: version,
+                status: UPGRADE_FAIL,
+                error: ev.output?.trim() || "The upgrade event failed on SpinupWP.",
+              })
+            } else {
+              setUpgrade(site.id, { target: version, status: ev.status })
+              setTimeout(() => void poll(), UPGRADE_POLL_MS)
+            }
+          } catch (err) {
+            const msg = err instanceof ApiError ? err.message : (err as Error).message
+            setUpgrade(site.id, { target: version, status: UPGRADE_FAIL, error: msg })
+          }
+        }
+        setTimeout(() => void poll(), UPGRADE_POLL_MS)
+      }
+      void run()
+    },
+    [client, refresh, clearPhpUpgrade, phpUpgrades],
+  )
 
   const value: StoreValue = {
     servers,
@@ -223,6 +320,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setOverlayOpen,
     healthServer,
     setHealthServer,
+    phpUpgradeSite,
+    setPhpUpgradeSite,
+    phpUpgrades,
+    startPhpUpgrade,
+    clearPhpUpgrade,
     sshUser: cfgRef.current.sshUser,
     accountSlug: cfgRef.current.accountSlug,
     sitesForServer,
@@ -234,6 +336,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     runProbeMany,
     isProbeStale,
     isPhpEol,
+    offeredPhpVersions,
   }
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
