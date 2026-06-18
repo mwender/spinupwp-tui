@@ -1,5 +1,5 @@
 {
-  "name": "spinupwp-cli-dashboard",
+  "name": "spinupwp-tui",
   "version": "0.1.0",
   "description": "A cool terminal UI for browsing and monitoring your SpinupWP servers and sites.",
   "type": "module",
@@ -16,8 +16,8 @@
   },
   "keywords": [
     "spinupwp",
-    "cli",
     "tui",
+    "terminal-ui",
     "opentui",
     "wordpress",
     "devops"

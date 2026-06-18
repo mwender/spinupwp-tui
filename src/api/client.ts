@@ -44,7 +44,7 @@ export class SpinupWPClient {
         headers: {
           Authorization: `Bearer ${this.token}`,
           Accept: "application/json",
-          "User-Agent": "spinupwp-cli-dashboard",
+          "User-Agent": "spinupwp-tui",
         },
       })
     } catch (err) {
