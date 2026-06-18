@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="360" viewBox="0 0 1000 360" font-family="'SFMono-Regular','SF Mono','Menlo','DejaVu Sans Mono','Liberation Mono',monospace">
+  <defs>
+    <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00d18f"/>
+      <stop offset="1" stop-color="#5ec8ff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.6">
+      <stop offset="0" stop-color="#00d18f" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#00d18f" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="round"><rect x="0.5" y="0.5" width="999" height="359" rx="14"/></clipPath>
+  </defs>
+
+  <!-- window -->
+  <rect x="0.5" y="0.5" width="999" height="359" rx="14" fill="#0d1117" stroke="#232b36"/>
+  <g clip-path="url(#round)">
+    <rect x="0" y="0" width="1000" height="360" fill="url(#glow)"/>
+
+    <!-- titlebar -->
+    <rect x="0" y="0" width="1000" height="40" fill="#161b22"/>
+    <line x1="0" y1="40" x2="1000" y2="40" stroke="#232b36"/>
+    <circle cx="26" cy="20" r="6" fill="#f85149"/>
+    <circle cx="46" cy="20" r="6" fill="#d29922"/>
+    <circle cx="66" cy="20" r="6" fill="#3fb950"/>
+    <text x="90" y="25" font-size="13" fill="#8b949e">spinup — SpinupWP control center</text>
+
+    <!-- logo -->
+    <text y="96" font-size="24" font-weight="700" text-anchor="middle"
+          fill="url(#logoGrad)" xml:space="preserve" letter-spacing="0"><tspan x="500" dy="0">███████╗ ██████╗  ██╗ ███╗   ██╗ ██╗   ██╗ ██████╗ </tspan><tspan x="500" dy="25">██╔════╝ ██╔══██╗ ██║ ████╗  ██║ ██║   ██║ ██╔══██╗</tspan><tspan x="500" dy="25">███████╗ ██████╔╝ ██║ ██╔██╗ ██║ ██║   ██║ ██████╔╝</tspan><tspan x="500" dy="25">╚════██║ ██╔═══╝  ██║ ██║╚██╗██║ ██║   ██║ ██╔═══╝ </tspan><tspan x="500" dy="25">███████║ ██║      ██║ ██║ ╚████║ ╚██████╔╝ ██║     </tspan><tspan x="500" dy="25">╚══════╝ ╚═╝      ╚═╝ ╚═╝  ╚═══╝  ╚═════╝  ╚═╝     </tspan></text>
+
+    <!-- tagline + pulse -->
+    <text x="500" y="278" font-size="17" text-anchor="middle" fill="#e6edf3">Terminal control center for your SpinupWP fleet</text>
+    <text x="500" y="300" font-size="13" text-anchor="middle" fill="#0a8f64" letter-spacing="2">· · • ● • · · · · · · ·</text>
+
+    <!-- faux status bar (mirrors the real app chrome) -->
+    <rect x="0" y="330" width="1000" height="30" fill="#161b22"/>
+    <line x1="0" y1="330" x2="1000" y2="330" stroke="#232b36"/>
+    <text x="20" y="350" font-size="13" xml:space="preserve"><tspan fill="#00d18f">◆ SpinupWP</tspan><tspan fill="#8b949e">     1 Dashboard    2 Servers    3 Search    4 Events</tspan></text>
+    <text x="980" y="350" font-size="13" text-anchor="end" fill="#8b949e">20 servers · 171 sites</text>
+  </g>
+</svg>

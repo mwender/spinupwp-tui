@@ -1,8 +1,16 @@
-# SpinupWP TUI
+<p align="center">
+  <img src=".github/assets/banner.png" alt="SpinupWP TUI" width="100%">
+</p>
 
-A fast, keyboard-driven terminal dashboard for browsing and monitoring your
-[SpinupWP](https://spinupwp.com) servers and sites. Built with
-[OpenTUI](https://opentui.com) and [Bun](https://bun.sh).
+<h1 align="center">SpinupWP TUI</h1>
+
+<p align="center">
+  A fast, keyboard-driven terminal dashboard for browsing and monitoring your
+  <a href="https://spinupwp.com">SpinupWP</a> servers and sites.<br>
+  Built with <a href="https://opentui.com">OpenTUI</a> and <a href="https://bun.sh">Bun</a>.
+</p>
+
+Once you're in, the dashboard looks like this:
 
 ```
  ◆ SpinupWP   1 Dashboard   2 Servers   3 Search   4 Events    20 servers · 171 sites
