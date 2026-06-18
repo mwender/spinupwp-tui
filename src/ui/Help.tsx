@@ -1,0 +1,70 @@
+// Modal-style help overlay listing all keybindings. Rendered on top via zIndex.
+
+import { theme } from "../lib/theme.ts"
+
+const SECTIONS: { title: string; keys: [string, string][] }[] = [
+  {
+    title: "Global",
+    keys: [
+      ["1 / 2 / 3 / 4", "Switch tabs: Dashboard · Servers · Search · Events"],
+      ["r", "Refresh data from the API"],
+      ["/", "Jump to global search"],
+      ["?", "Toggle this help"],
+      ["q", "Quit"],
+      ["Ctrl+C", "Force quit"],
+    ],
+  },
+  {
+    title: "Lists & Panels",
+    keys: [
+      ["↑ / ↓  or  j / k", "Move selection"],
+      ["Enter / →", "Drill in (server → its sites, site → details)"],
+      ["← / Esc", "Go back / collapse"],
+      ["Tab", "Switch focus between columns"],
+      ["o", "Open the selected site's URL in your browser"],
+      ["g / G", "Jump to top / bottom"],
+    ],
+  },
+]
+
+export function HelpOverlay({ onClose }: { onClose: () => void }) {
+  return (
+    <box
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "100%",
+        height: "100%",
+        justifyContent: "center",
+        alignItems: "center",
+        zIndex: 100,
+      }}
+    >
+      <box
+        title=" Keyboard Shortcuts "
+        titleColor={theme.brand}
+        bottomTitle=" press ? or Esc to close "
+        bottomTitleAlignment="center"
+        border
+        borderColor={theme.borderActive}
+        backgroundColor={theme.bgPanel}
+        style={{ flexDirection: "column", width: 64, paddingLeft: 2, paddingRight: 2, paddingTop: 1, paddingBottom: 1 }}
+      >
+        {SECTIONS.map((section) => (
+          <box key={section.title} style={{ flexDirection: "column" }}>
+            <text content={section.title} fg={theme.accent} attributes={1} />
+            {section.keys.map(([k, desc]) => (
+              <box key={k} style={{ flexDirection: "row" }}>
+                <text content={k.padEnd(18)} fg={theme.brand} />
+                <text content={desc} fg={theme.text} />
+              </box>
+            ))}
+            <box style={{ height: 1 }} />
+          </box>
+        ))}
+        <text content="A read-only SpinupWP control center · built with OpenTUI" fg={theme.textFaint} />
+      </box>
+    </box>
+  )
+}
