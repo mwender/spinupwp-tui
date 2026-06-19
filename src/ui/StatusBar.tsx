@@ -11,6 +11,7 @@ export interface KeyHint {
 
 const GLOBAL_HINTS: KeyHint[] = [
   { key: "r", label: "refresh" },
+  { key: "i", label: "explain" },
   { key: "?", label: "help" },
   { key: "q", label: "quit" },
 ]

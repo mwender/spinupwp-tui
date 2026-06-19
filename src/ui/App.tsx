@@ -7,6 +7,7 @@ import { useStore } from "./store.tsx"
 import { Splash } from "./Splash.tsx"
 import { Header } from "./Header.tsx"
 import { HelpOverlay } from "./Help.tsx"
+import { ExplainOverlay } from "./Explain.tsx"
 import { Dashboard } from "./views/Dashboard.tsx"
 import { Browser } from "./views/Browser.tsx"
 import { Stacks } from "./views/Stacks.tsx"
@@ -15,6 +16,8 @@ import { Events } from "./views/Events.tsx"
 import { Health } from "./views/Health.tsx"
 import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
 import { ServerActions } from "./views/ServerActions.tsx"
+import { LocalLinkOverlay } from "./views/LocalLink.tsx"
+import { Discover } from "./views/Discover.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -24,6 +27,7 @@ export function App() {
   const { height } = useTerminalDimensions()
   const [splashDone, setSplashDone] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [showExplain, setShowExplain] = useState(false)
 
   // Enforce a minimum splash duration so the intro is visible even on fast loads.
   useEffect(() => {
@@ -33,7 +37,13 @@ export function App() {
 
   // Keep views aware that a modal is open so they pause their own key handling.
   const overlayActive =
-    showHelp || store.healthServer !== null || store.phpUpgradeSite !== null || store.serverActionsServer !== null
+    showHelp ||
+    showExplain ||
+    store.healthServer !== null ||
+    store.phpUpgradeSite !== null ||
+    store.serverActionsServer !== null ||
+    store.localLinkSite !== null ||
+    store.discoverOpen
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
   }, [overlayActive, store])
@@ -63,8 +73,19 @@ export function App() {
     // The server-actions overlay owns the keyboard while open.
     if (store.serverActionsServer) return
 
+    // The local-link overlay owns the keyboard while open.
+    if (store.localLinkSite) return
+
+    // The discovery overlay owns the keyboard while open.
+    if (store.discoverOpen) return
+
     if (showHelp) {
       if (key.name === "escape" || key.name === "q" || key.name === "?") setShowHelp(false)
+      return
+    }
+
+    if (showExplain) {
+      if (key.name === "escape" || key.name === "q" || key.name === "i") setShowExplain(false)
       return
     }
 
@@ -85,6 +106,8 @@ export function App() {
         return void store.refresh()
       case "?":
         return setShowHelp(true)
+      case "i":
+        return setShowExplain(true)
       case "/":
         return store.setRoute("search")
     }
@@ -100,9 +123,9 @@ export function App() {
     return <Splash status={status} />
   }
 
-  // Rows available to the content area: total minus the header row (and the
-  // error banner, when present). Each view renders its own status bar.
-  const contentRows = Math.max(3, height - 1 - (store.error ? 1 : 0))
+  // Rows available to the content area: total minus the header (nav + subtitle =
+  // 2 rows) and the error banner, when present. Each view renders its own status bar.
+  const contentRows = Math.max(3, height - 2 - (store.error ? 1 : 0))
 
   return (
     <box style={{ width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.bg }}>
@@ -120,9 +143,12 @@ export function App() {
         {store.route === "events" && <Events rows={contentRows} />}
       </box>
       {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
+      {showExplain && <ExplainOverlay route={store.route} />}
       {store.healthServer && <Health />}
       {store.phpUpgradeSite && <PhpUpgrade />}
       {store.serverActionsServer && <ServerActions />}
+      {store.localLinkSite && <LocalLinkOverlay />}
+      {store.discoverOpen && <Discover />}
     </box>
   )
 }

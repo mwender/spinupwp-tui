@@ -5,6 +5,7 @@ import { formatBytes, diskUsedPct, bar, formatDate, timeAgo, truncate } from "..
 import { Field, StatusBadge } from "./components.tsx"
 import { classifyStack, stackColor } from "../lib/stack.ts"
 import { probeKindColor } from "../lib/probe.ts"
+import { resolveLocalLink } from "../lib/local.ts"
 import { useStore, isUpgradeInFlight, isServerOpInFlight } from "./store.tsx"
 import type { Server, Site } from "../api/types.ts"
 
@@ -70,12 +71,20 @@ export function ServerDetail({ server, siteCount }: { server: Server; siteCount:
 }
 
 export function SiteDetail({ site, serverName }: { site: Site; serverName: string }) {
-  const { probes, probingIds, isProbeStale, phpUpgrades } = useStore()
+  const { probes, probingIds, isProbeStale, phpUpgrades, localLinks } = useStore()
   const updates = (site.wp_plugin_updates || 0) + (site.wp_theme_updates || 0) + (site.wp_core_update ? 1 : 0)
   const stack = classifyStack(site)
   const probe = probes.get(site.id)
   const probing = probingIds.has(site.id)
   const upgrade = phpUpgrades.get(site.id)
+  const link = localLinks.get(site.id)
+  const linkState = link ? resolveLocalLink(link) : null
+  const linkValue = !link
+    ? "not linked · L"
+    : !linkState!.exists
+      ? "missing — path not found"
+      : `${linkState!.label} · ${link.path}`
+  const linkColor = !link ? theme.textFaint : !linkState!.exists ? theme.bad : theme.good
   return (
     <box style={{ flexDirection: "column" }}>
       <box style={{ flexDirection: "row" }}>
@@ -90,7 +99,7 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       <Field label="Stack" value={stack} valueColor={stackColor(stack)} />
       <Field
         label="Detected"
-        value={probing ? "probing…" : probe ? probe.result.label + (isProbeStale(site) ? " (stale)" : "") : "not probed · d"}
+        value={probing ? "identifying…" : probe ? probe.result.label + (isProbeStale(site) ? " (stale)" : "") : "not identified · d"}
         valueColor={probing ? theme.textDim : probe ? probeKindColor(probe.result.kind) : theme.textFaint}
       />
       <Field label="Type" value={site.is_wordpress ? "WordPress" : "Generic"} valueColor={site.is_wordpress ? theme.brand : theme.textDim} />
@@ -109,6 +118,7 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       />
       <Field label="User" value={site.site_user ?? "—"} />
       <Field label="Public dir" value={site.public_folder ?? "/"} />
+      <Field label="Local" value={linkValue} valueColor={linkColor} />
       <Field
         label="HTTPS"
         value={site.https?.enabled ? "enabled" : "disabled"}
@@ -145,6 +155,89 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       {site.git?.repo && <Field label="Git" value={`${truncate(site.git.repo, 26)} (${site.git.branch ?? "?"})`} />}
       {site.basic_auth?.enabled && <Field label="Basic auth" value="enabled" valueColor={theme.warn} />}
       <Field label="Created" value={formatDate(site.created_at)} />
+    </box>
+  )
+}
+
+// Color for a resolved local stack label.
+function localLabelColor(kind: "bedrock" | "wp" | "unknown"): string {
+  return kind === "bedrock" ? theme.good : kind === "wp" ? theme.accent : theme.warn
+}
+
+// A single inline action token, e.g. "t terminal". Dimmed when not applicable.
+function Act({ keyName, label, on }: { keyName: string; label: string; on: boolean }) {
+  return (
+    <box style={{ flexDirection: "row", flexShrink: 0, marginRight: 3 }}>
+      <text content={keyName + " "} fg={on ? theme.brand : theme.textFaint} />
+      <text content={label} fg={on ? theme.textDim : theme.textFaint} wrapMode="none" />
+    </box>
+  )
+}
+
+// Height (incl. border) of the contextual strip — views subtract this from their
+// list viewport so the panes shrink to make room. Border eats 2 rows → 2 content
+// lines (status + actions).
+export const SITE_CONTEXT_STRIP_HEIGHT = 4
+
+// A full-width context strip for the selected site, sitting between the content
+// panes and the command drawer. Shows the local-link status and the inline
+// open-locally actions (which the host view's keyboard fires on the selection).
+// The space is always reserved (a placeholder when nothing is selected) so the
+// layout doesn't jump as the cursor moves.
+export function SiteContextStrip({ site }: { site: Site | null }) {
+  const { localLinks } = useStore()
+  const link = site ? localLinks.get(site.id) : undefined
+  const state = link ? resolveLocalLink(link) : null
+  const canOpen = !!state?.exists
+  const hasLocalUrl = !!link?.localUrl
+
+  return (
+    <box
+      title=" Local "
+      titleColor={theme.brand}
+      border
+      borderColor={link && !state!.exists ? theme.bad : theme.border}
+      style={{ height: SITE_CONTEXT_STRIP_HEIGHT, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
+    >
+      {/* Line 1 — status (or, with nothing selected, a legend for the row markers) */}
+      {!site ? (
+        <box style={{ flexDirection: "row" }}>
+          <text content="◆ " fg={theme.good} style={{ flexShrink: 0 }} />
+          <text content="linked locally    " fg={theme.textDim} style={{ flexShrink: 0 }} />
+          <text content="↑N " fg={theme.warn} style={{ flexShrink: 0 }} />
+          <text content="pending WordPress updates" fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+        </box>
+      ) : !link ? (
+        <box style={{ flexDirection: "row" }}>
+          <text content={truncate(site.domain, 44)} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+          <text content="  not linked" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+        </box>
+      ) : !state!.exists ? (
+        <box style={{ flexDirection: "row" }}>
+          <text content="missing  " fg={theme.bad} style={{ flexShrink: 0 }} />
+          <text content={link.path} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+        </box>
+      ) : (
+        <box style={{ flexDirection: "row" }}>
+          <text content={state!.label} fg={localLabelColor(state!.kind)} style={{ flexShrink: 0 }} />
+          <text content="  ·  " fg={theme.textFaint} style={{ flexShrink: 0 }} />
+          <text content={link.path} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+          {link.localUrl ? (
+            <text content={"   " + link.localUrl} fg={theme.accent} wrapMode="none" style={{ flexShrink: 1 }} />
+          ) : null}
+        </box>
+      )}
+
+      {/* Line 2 — inline actions (fired by the host view on the selection) */}
+      {site ? (
+        <box style={{ flexDirection: "row" }}>
+          <Act keyName="t" label="terminal" on={canOpen} />
+          <Act keyName="v" label="local URL" on={canOpen && hasLocalUrl} />
+          <Act keyName="L" label={link ? "edit / unlink" : "link a local copy"} on />
+        </box>
+      ) : (
+        <text content="Select a site to link a local copy and open it locally (t · v · L)" fg={theme.textFaint} wrapMode="none" />
+      )}
     </box>
   )
 }

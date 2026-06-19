@@ -125,6 +125,21 @@ export function PhpVersionCell({
   )
 }
 
+// Glanceable per-row meta for a site list, shared across the Servers, Stacks,
+// and Search rows so the convention is identical everywhere:
+//   ◆  = a local working copy is linked   (blank keeps columns aligned)
+//   ↑N = N pending WordPress updates
+// Presence-only by design — the inspector strip shows the full detail (path /
+// URL / on-disk validity) for the focused row.
+export function SiteMetaCell({ linked, updates, selected = false }: { linked: boolean; updates: number; selected?: boolean }) {
+  return (
+    <box style={{ flexDirection: "row", flexShrink: 0 }}>
+      <text content={linked ? "◆ " : "  "} fg={selected ? theme.text : theme.good} wrapMode="none" />
+      {updates > 0 ? <text content={`↑${updates} `} fg={selected ? theme.text : theme.warn} wrapMode="none" /> : null}
+    </box>
+  )
+}
+
 // Centered helper text, often for empty/loading states inside a panel.
 export function Centered({ children }: { children: ReactNode }) {
   return (

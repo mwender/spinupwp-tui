@@ -17,9 +17,10 @@ import { bar, truncate } from "../../lib/format.ts"
 import { STACKS, effectiveStack, stackColor, type Stack } from "../../lib/stack.ts"
 import { phpSortKey } from "../../lib/phpEol.ts"
 import { probeKindColor, type ProbeKind } from "../../lib/probe.ts"
-import { Panel, Spinner, PhpVersionCell } from "../components.tsx"
+import { Panel, Spinner, PhpVersionCell, SiteMetaCell } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { StatusBar } from "../StatusBar.tsx"
+import { SiteContextStrip, SITE_CONTEXT_STRIP_HEIGHT } from "../Details.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { siteWebUrl } from "../../lib/spinupweb.ts"
 import { useStore } from "../store.tsx"
@@ -48,7 +49,7 @@ const NONWP_SUBS: { kind: ProbeKind | null; label: string }[] = [
 
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades } =
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
@@ -162,26 +163,42 @@ export function Stacks({ rows }: { rows: number }) {
         if (focus === "sites" && groupSites[siteIndex]) {
           const s = groupSites[siteIndex]
           runProbe(s)
-          flashMsg(`Probing ${s.domain}…`)
+          flashMsg(`Identifying the app on ${s.domain}…`)
         }
         return
       case "u":
         // Upgrade the selected site's PHP version (sites pane only).
         if (focus === "sites" && groupSites[siteIndex]) setPhpUpgradeSite(groupSites[siteIndex])
         return
+      case "t":
+        // Open the selected site's local working copy in a terminal (inline; no
+        // modal — the sweep workflow). The strip below shows availability.
+        if (focus === "sites" && groupSites[siteIndex]) flashMsg(openLocalTerminal(groupSites[siteIndex].id))
+        return
+      case "v":
+        // Open the selected site's stored local URL in the browser.
+        if (focus === "sites" && groupSites[siteIndex]) flashMsg(openLocalUrl(groupSites[siteIndex].id))
+        return
+      case "L":
+        // Link / edit the selected site's local working copy (form overlay).
+        if (focus === "sites" && groupSites[siteIndex]) setLocalLinkSite(groupSites[siteIndex])
+        return
+      case "S":
+        // Scan configured roots to auto-discover & batch-link local copies.
+        return setDiscoverOpen(true)
       case "D":
         // Probe the ENTIRE selected group, in list order (top→down), regardless
         // of cursor or focus. runProbeMany skips any already in flight; target
         // only un-probed sites by selecting the "unprobed" sub-group first.
         if (selectedGroup && selectedGroup.sites.length > 0) {
           runProbeMany(selectedGroup.sites)
-          flashMsg(`Probing ${selectedGroup.label} (${selectedGroup.sites.length})…`)
+          flashMsg(`Identifying apps in ${selectedGroup.label} (${selectedGroup.sites.length})…`)
         }
         return
     }
   })
 
-  const listRows = Math.max(3, rows - 6)
+  const listRows = Math.max(3, rows - 6 - SITE_CONTEXT_STRIP_HEIGHT)
   const maxPhp = Math.max(1, ...php.map(([, n]) => n))
 
   const hints =
@@ -189,13 +206,14 @@ export function Stacks({ rows }: { rows: number }) {
       ? [
           { key: "↑↓/jk", label: "select" },
           { key: "→/⏎", label: "view sites" },
-          { key: "D", label: "detect all" },
+          { key: "D", label: "identify all" },
+          { key: "S", label: "find local copies" },
         ]
       : [
           { key: "↑↓/jk", label: "select site" },
           { key: "←/esc", label: "back" },
-          { key: "d", label: "detect" },
-          { key: "u", label: "upgrade PHP" },
+          { key: "d", label: "identify app" },
+          { key: "u", label: "change PHP" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
         ]
@@ -259,6 +277,7 @@ export function Stacks({ rows }: { rows: number }) {
               const probing = probingIds.has(s.id)
               const errored = probeErrors.has(s.id)
               const faint = selected ? theme.text : theme.textFaint
+              const updates = (s.wp_plugin_updates || 0) + (s.wp_theme_updates || 0) + (s.wp_core_update ? 1 : 0)
               return (
                 <>
                   <text content={statusDot(s.status) + " "} fg={statusColor(s.status)} style={{ flexShrink: 0 }} />
@@ -268,6 +287,9 @@ export function Stacks({ rows }: { rows: number }) {
                     wrapMode="none"
                     style={{ flexGrow: 1, flexShrink: 1 }}
                   />
+                  <box style={{ marginLeft: 1 }}>
+                    <SiteMetaCell linked={localLinks.has(s.id)} updates={updates} selected={selected} />
+                  </box>
                   <box style={{ flexShrink: 0, flexDirection: "row", marginLeft: 1 }}>
                     {probing ? (
                       <Spinner color={selected ? theme.text : theme.brand} />
@@ -315,6 +337,7 @@ export function Stacks({ rows }: { rows: number }) {
           </box>
         </Panel>
       </box>
+      <SiteContextStrip site={selectedSite ?? null} />
       <StatusBar hints={hints} message={statusMessage} messageColor={statusColorMsg} />
     </box>
   )

@@ -11,6 +11,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { mkdir, chmod } from "node:fs/promises"
 import { existsSync, readFileSync } from "node:fs"
+import type { LocalLink } from "./lib/local.ts"
 
 export const DEFAULT_BASE_URL = "https://api.spinupwp.app/v1"
 
@@ -25,6 +26,15 @@ export interface AppConfig {
   // deep links into the SpinupWP web app. The API doesn't expose it, so it's
   // configured. When unset, deep links fall back to the dashboard root.
   accountSlug: string | null
+  // macOS terminal app to open for local working copies (e.g. "iTerm", "Warp").
+  // When unset, inferred from $TERM_PROGRAM, falling back to Terminal.
+  terminalApp: string | null
+  // Directories to (eventually) scan for local working copies. Reserved for the
+  // Phase 2 auto-discovery pass; unused by Phase 1's manual linking.
+  localRoots: string[]
+  // Local working-copy links, keyed by SpinupWP site id (as a string, since
+  // JSON object keys are strings). See lib/local.ts for the link shape.
+  localSites: Record<string, LocalLink>
 }
 
 export interface StoredConfig {
@@ -32,6 +42,9 @@ export interface StoredConfig {
   baseUrl?: string
   sshUser?: string
   accountSlug?: string
+  terminalApp?: string
+  localRoots?: string[]
+  localSites?: Record<string, LocalLink>
 }
 
 export function configDir(): string {
@@ -68,6 +81,9 @@ export function loadConfig(): AppConfig {
     tokenSource,
     sshUser: process.env.SPINUPWP_SSH_USER?.trim() || stored.sshUser?.trim() || null,
     accountSlug: process.env.SPINUPWP_ACCOUNT_SLUG?.trim() || stored.accountSlug?.trim() || null,
+    terminalApp: process.env.SPINUPWP_TERMINAL_APP?.trim() || stored.terminalApp?.trim() || null,
+    localRoots: stored.localRoots ?? [],
+    localSites: stored.localSites ?? {},
   }
 }
 

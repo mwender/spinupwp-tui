@@ -9,7 +9,7 @@ import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel, Field, StatusBadge } from "../components.tsx"
+import { Panel, Field, StatusBadge, SiteMetaCell } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { ServerDetail, SiteDetail } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
@@ -32,7 +32,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -103,7 +103,10 @@ export function Search({ rows }: { rows: number }) {
 
   useKeyboard((key) => {
     if (!isActive) return
-    const name = key.name ?? ""
+    // Normalize Shift+letter (OpenTUI delivers it lowercased + a shift flag) so
+    // capital actions like L (link) match in actions mode.
+    const raw = key.name ?? ""
+    const name = key.shift && raw.length === 1 ? raw.toUpperCase() : raw
 
     // Selection movement works in both modes.
     if (name === "up") return setSelected((i) => moveSelection(i, -1, results.length))
@@ -138,6 +141,15 @@ export function Search({ rows }: { rows: number }) {
         return
       case "u":
         if (current?.kind === "site") setPhpUpgradeSite(current.site)
+        return
+      case "t":
+        if (current?.kind === "site") flashMsg(openLocalTerminal(current.site.id))
+        return
+      case "v":
+        if (current?.kind === "site") flashMsg(openLocalUrl(current.site.id))
+        return
+      case "L":
+        if (current?.kind === "site") setLocalLinkSite(current.site)
         return
       case "h": {
         const srv =
@@ -239,6 +251,11 @@ export function Search({ rows }: { rows: number }) {
                   <text content="SITE" fg={sel ? theme.text : theme.accent} style={{ flexShrink: 0 }} />
                   <text content={" " + statusDot(r.site.status) + " "} fg={statusColor(r.site.status)} style={{ flexShrink: 0 }} />
                   <text content={truncate(r.site.domain, 44)} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1, marginRight: 1 }} />
+                  <SiteMetaCell
+                    linked={localLinks.has(r.site.id)}
+                    updates={(r.site.wp_plugin_updates || 0) + (r.site.wp_theme_updates || 0) + (r.site.wp_core_update ? 1 : 0)}
+                    selected={sel}
+                  />
                   <text content={stackTag(classifyStack(r.site))} fg={stackColor(classifyStack(r.site), sel)} style={{ flexShrink: 0 }} />
                 </>
               )
@@ -279,6 +296,9 @@ function ActionsCard({ result, serverName }: { result: Result; serverName: strin
         ["o", "Open site in browser"],
         ["w", "Open in SpinupWP"],
         ["u", "Upgrade PHP version"],
+        ["t", "Open local working copy in a terminal"],
+        ["v", "Open the local URL in your browser"],
+        ["L", "Link / edit local working copy"],
         ["a", "Server actions (reboot / restart)"],
         ["h", "Server health"],
       ]

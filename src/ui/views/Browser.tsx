@@ -10,9 +10,9 @@ import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel, PhpVersionCell, Spinner } from "../components.tsx"
+import { Panel, PhpVersionCell, Spinner, SiteMetaCell } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
-import { ServerDetail, SiteDetail } from "../Details.tsx"
+import { ServerDetail, SiteDetail, SiteContextStrip, SITE_CONTEXT_STRIP_HEIGHT } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl, siteWebUrl } from "../../lib/spinupweb.ts"
@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -93,13 +93,31 @@ export function Browser({ rows }: { rows: number }) {
         if (focus === "sites" && sites[siteIndex]) {
           const s = sites[siteIndex]
           runProbe(s)
-          setFlash(`Probing ${s.domain}…`)
+          setFlash(`Identifying the app on ${s.domain}…`)
           setTimeout(() => setFlash(null), 1500)
         }
         return
       case "u":
         // Upgrade the selected site's PHP version (first write action).
         if (focus === "sites" && sites[siteIndex]) setPhpUpgradeSite(sites[siteIndex])
+        return
+      case "L":
+        // Link / view the selected site's local working copy (Phase 1).
+        if (focus === "sites" && sites[siteIndex]) setLocalLinkSite(sites[siteIndex])
+        return
+      case "t":
+        // Open the selected site's local working copy in a terminal (inline).
+        if (focus === "sites" && sites[siteIndex]) {
+          setFlash(openLocalTerminal(sites[siteIndex].id))
+          setTimeout(() => setFlash(null), 1800)
+        }
+        return
+      case "v":
+        // Open the selected site's stored local URL in the browser.
+        if (focus === "sites" && sites[siteIndex]) {
+          setFlash(openLocalUrl(sites[siteIndex].id))
+          setTimeout(() => setFlash(null), 1800)
+        }
         return
       case "a":
         // Server actions (reboot / restart) are server-scoped, so only offered
@@ -126,7 +144,7 @@ export function Browser({ rows }: { rows: number }) {
     }
   })
 
-  const listRows = Math.max(3, rows - 6)
+  const listRows = Math.max(3, rows - 6 - SITE_CONTEXT_STRIP_HEIGHT)
   const focusedSite = sites[Math.min(siteIndex, Math.max(0, sites.length - 1))]
 
   const hints =
@@ -141,8 +159,8 @@ export function Browser({ rows }: { rows: number }) {
       : [
           { key: "↑↓/jk", label: "select site" },
           { key: "←/esc", label: "back" },
-          { key: "d", label: "detect" },
-          { key: "u", label: "upgrade PHP" },
+          { key: "d", label: "identify app" },
+          { key: "u", label: "change PHP" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
           { key: "h", label: "health" },
@@ -201,8 +219,8 @@ export function Browser({ rows }: { rows: number }) {
                 <>
                   <text content={statusDot(s.status) + " "} fg={statusColor(s.status)} style={{ flexShrink: 0 }} />
                   <text content={truncate(s.domain, 40)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+                  <SiteMetaCell linked={localLinks.has(s.id)} updates={updates} selected={selected} />
                   <text content={stackTag(stack) + " "} fg={stackColor(stack, selected)} style={{ flexShrink: 0 }} />
-                  {updates > 0 && <text content={`↑${updates} `} fg={theme.warn} style={{ flexShrink: 0 }} />}
                   <PhpVersionCell version={s.php_version} upgrade={phpUpgrades.get(s.id)} selected={selected} />
                 </>
               )
@@ -221,6 +239,7 @@ export function Browser({ rows }: { rows: number }) {
           )}
         </Panel>
       </box>
+      <SiteContextStrip site={focus === "sites" ? focusedSite ?? null : null} />
       <StatusBar hints={hints} message={flash ?? undefined} messageColor={theme.brand} />
     </box>
   )
