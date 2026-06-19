@@ -49,7 +49,7 @@ const NONWP_SUBS: { kind: ProbeKind | null; label: string }[] = [
 
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen } =
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
@@ -186,6 +186,14 @@ export function Stacks({ rows }: { rows: number }) {
       case "S":
         // Scan configured roots to auto-discover & batch-link local copies.
         return setDiscoverOpen(true)
+      case "f": {
+        // Report: sites with no usable local copy (the inverse of S). Seed the
+        // report's stack filter from the selected group — a top-level stack maps
+        // to itself; a Non-WP sub-group (WHMCS/Laravel/…) maps to Non-WP.
+        const filter: Stack | null = selectedGroup?.level === 0 ? (selectedGroup.id as Stack) : selectedGroup ? "Non-WP" : null
+        setForgottenStack(filter)
+        return setForgottenOpen(true)
+      }
       case "D":
         // Probe the ENTIRE selected group, in list order (top→down), regardless
         // of cursor or focus. runProbeMany skips any already in flight; target
@@ -208,6 +216,7 @@ export function Stacks({ rows }: { rows: number }) {
           { key: "→/⏎", label: "view sites" },
           { key: "D", label: "identify all" },
           { key: "S", label: "find local copies" },
+          { key: "f", label: "needs local copy" },
         ]
       : [
           { key: "↑↓/jk", label: "select site" },

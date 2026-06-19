@@ -10,7 +10,9 @@ import { SpinupWPClient, ApiError, type ServerService } from "../api/client.ts"
 import type { Server, Site, Event } from "../api/types.ts"
 import { loadConfig, saveConfig } from "../config.ts"
 import { resolveLocalLink, expandPath, normalizeLink, type LocalLink } from "../lib/local.ts"
+import type { Stack } from "../lib/stack.ts"
 import { openTerminalAt, openUrl } from "../lib/open.ts"
+import { gitDrift, type Drift } from "../lib/gitStatus.ts"
 import { probeSite } from "../lib/probe.ts"
 import { fetchRebootInfo, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
@@ -117,11 +119,26 @@ interface StoreValue extends DataState {
   // Whether the local-copy discovery overlay is open.
   discoverOpen: boolean
   setDiscoverOpen: (v: boolean) => void
+  // Whether the "needs a local copy" (forgotten) report overlay is open, and an
+  // optional stack filter (set from the selected Stacks group when opened).
+  forgottenOpen: boolean
+  setForgottenOpen: (v: boolean) => void
+  forgottenStack: Stack | null
+  setForgottenStack: (s: Stack | null) => void
+  // When true, closing the link overlay reopens the forgotten report (set only
+  // when the link overlay was opened from that report, so Esc behaves normally
+  // everywhere else).
+  linkReturnToForgotten: boolean
+  setLinkReturnToForgotten: (v: boolean) => void
   // Open the local working copy in a terminal / the local URL in a browser.
   // Centralized so every surface (overlay, Stacks, Browser) behaves identically;
   // each returns a short status message for the caller to flash.
   openLocalTerminal: (siteId: number) => string
   openLocalUrl: (siteId: number) => string
+  // Local git drift for linked sites, keyed by site id (null = not a git repo,
+  // undefined = not yet computed). Computed lazily + cached; cleared on refresh.
+  drift: Map<number, Drift | null>
+  ensureDrift: (siteId: number, linkPath: string) => void
   // Optional SSH user override for the health view (from env/config).
   sshUser: string | null
   // SpinupWP account slug (from env/config) for building web deep links.
@@ -178,6 +195,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [localLinkSite, setLocalLinkSite] = useState<Site | null>(null)
   const [localRoots, setLocalRoots] = useState<string[]>(() => [...cfgRef.current.localRoots])
   const [discoverOpen, setDiscoverOpen] = useState(false)
+  const [forgottenOpen, setForgottenOpen] = useState(false)
+  const [forgottenStack, setForgottenStack] = useState<Stack | null>(null)
+  const [linkReturnToForgotten, setLinkReturnToForgotten] = useState(false)
+  const [drift, setDrift] = useState<Map<number, Drift | null>>(new Map())
+  // Tracks which site ids have had a drift check requested (so we compute once
+  // per site per session); a ref keeps ensureDrift stable across renders.
+  const driftRequested = useRef<Set<number>>(new Set())
   // Hydrate local links from the stored config (JSON keys are strings → number).
   const [localLinks, setLocalLinks] = useState<Map<number, LocalLink>>(
     () => new Map(Object.entries(cfgRef.current.localSites).map(([id, link]) => [Number(id), normalizeLink(link)])),
@@ -209,6 +233,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
+    // Drift can go stale once the user commits/pushes in their terminal — clear
+    // the cache on refresh so it recomputes next time a linked site is shown.
+    driftRequested.current.clear()
+    setDrift(new Map())
     try {
       // Servers + sites first (the core data); events are best-effort.
       const [srv, ste] = await Promise.all([client.listServers(), client.listSites()])
@@ -517,6 +545,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [localLinks],
   )
 
+  // Compute a linked site's git drift once (cached), fire-and-forget. Stable
+  // across renders (uses a ref for the dedup set), so views can call it freely
+  // from an effect when a linked site comes into view.
+  const ensureDrift = useCallback((siteId: number, linkPath: string) => {
+    if (driftRequested.current.has(siteId)) return
+    driftRequested.current.add(siteId)
+    void gitDrift(linkPath).then((d) => setDrift((prev) => new Map(prev).set(siteId, d)))
+  }, [])
+
   const value: StoreValue = {
     servers,
     sites,
@@ -554,8 +591,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     addLocalRoot,
     discoverOpen,
     setDiscoverOpen,
+    forgottenOpen,
+    setForgottenOpen,
+    forgottenStack,
+    setForgottenStack,
+    linkReturnToForgotten,
+    setLinkReturnToForgotten,
     openLocalTerminal,
     openLocalUrl,
+    drift,
+    ensureDrift,
     rebootInfo,
     rebootInfoLoading,
     rebootInfoErrors,

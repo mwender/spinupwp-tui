@@ -18,6 +18,7 @@ import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
 import { ServerActions } from "./views/ServerActions.tsx"
 import { LocalLinkOverlay } from "./views/LocalLink.tsx"
 import { Discover } from "./views/Discover.tsx"
+import { Forgotten } from "./views/Forgotten.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -43,7 +44,8 @@ export function App() {
     store.phpUpgradeSite !== null ||
     store.serverActionsServer !== null ||
     store.localLinkSite !== null ||
-    store.discoverOpen
+    store.discoverOpen ||
+    store.forgottenOpen
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
   }, [overlayActive, store])
@@ -78,6 +80,9 @@ export function App() {
 
     // The discovery overlay owns the keyboard while open.
     if (store.discoverOpen) return
+
+    // The "needs a local copy" report owns the keyboard while open.
+    if (store.forgottenOpen) return
 
     if (showHelp) {
       if (key.name === "escape" || key.name === "q" || key.name === "?") setShowHelp(false)
@@ -149,6 +154,7 @@ export function App() {
       {store.serverActionsServer && <ServerActions />}
       {store.localLinkSite && <LocalLinkOverlay />}
       {store.discoverOpen && <Discover />}
+      {store.forgottenOpen && <Forgotten />}
     </box>
   )
 }

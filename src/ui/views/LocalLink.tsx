@@ -31,7 +31,7 @@ function kindColor(kind: LocalKind, exists: boolean): string {
 
 export function LocalLinkOverlay() {
   const store = useStore()
-  const { localLinkSite: site, setLocalLinkSite, localLinks, linkSite, unlinkSite, setInputMode, openLocalTerminal, openLocalUrl } = store
+  const { localLinkSite: site, setLocalLinkSite, localLinks, linkSite, unlinkSite, setInputMode, openLocalTerminal, openLocalUrl, linkReturnToForgotten, setLinkReturnToForgotten, setForgottenOpen } = store
 
   const existing = site ? localLinks.get(site.id) : undefined
 
@@ -51,6 +51,11 @@ export function LocalLinkOverlay() {
   const close = () => {
     setInputMode(false)
     setLocalLinkSite(null)
+    // If we arrived here from the "needs a local copy" report, return to it.
+    if (linkReturnToForgotten) {
+      setLinkReturnToForgotten(false)
+      setForgottenOpen(true)
+    }
   }
 
   const save = () => {

@@ -61,6 +61,7 @@ const GUIDES: Record<Route, Guide> = {
       ["d", "Identify the app on a site (SSH)"],
       ["D", "Identify every app in the selected group"],
       ["S", "Find local copies on your disk and link them"],
+      ["f", "Report sites with no local copy (filter by stack with ←/→)"],
       ["u", "Change a site's PHP version"],
       ["t / v / L", "Local copy: terminal · local URL · link or edit"],
       ["o / w", "Open the site · open it in SpinupWP"],

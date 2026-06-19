@@ -38,6 +38,7 @@ const SECTIONS: { title: string; keys: [string, string][] }[] = [
       ["t", "Open the local copy in a terminal"],
       ["v", "Open the local URL in your browser"],
       ["S", "Scan for local copies & batch-link them (Stacks tab)"],
+      ["f", "Report sites with no usable local copy (Stacks tab)"],
     ],
   },
   {

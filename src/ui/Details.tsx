@@ -1,11 +1,13 @@
 // Detail panels for a server and a site. Shared by the Browser and Search views.
 
+import { useEffect } from "react"
 import { theme, statusColor, diskColor } from "../lib/theme.ts"
 import { formatBytes, diskUsedPct, bar, formatDate, timeAgo, truncate } from "../lib/format.ts"
 import { Field, StatusBadge } from "./components.tsx"
 import { classifyStack, stackColor } from "../lib/stack.ts"
 import { probeKindColor } from "../lib/probe.ts"
 import { resolveLocalLink } from "../lib/local.ts"
+import type { Drift } from "../lib/gitStatus.ts"
 import { useStore, isUpgradeInFlight, isServerOpInFlight } from "./store.tsx"
 import type { Server, Site } from "../api/types.ts"
 
@@ -164,6 +166,15 @@ function localLabelColor(kind: "bedrock" | "wp" | "unknown"): string {
   return kind === "bedrock" ? theme.good : kind === "wp" ? theme.accent : theme.warn
 }
 
+// Compact, self-explaining git-drift label for a linked copy's line, e.g.
+// "⇡2 unpushed  ● uncommitted". Empty when in sync.
+function driftLabel(d: Drift): string {
+  const parts: string[] = []
+  if (d.ahead > 0) parts.push(`⇡${d.ahead} unpushed`)
+  if (d.dirty) parts.push("● uncommitted")
+  return parts.join("  ")
+}
+
 // A single inline action token, e.g. "t terminal". Dimmed when not applicable.
 function Act({ keyName, label, on }: { keyName: string; label: string; on: boolean }) {
   return (
@@ -185,11 +196,17 @@ export const SITE_CONTEXT_STRIP_HEIGHT = 4
 // The space is always reserved (a placeholder when nothing is selected) so the
 // layout doesn't jump as the cursor moves.
 export function SiteContextStrip({ site }: { site: Site | null }) {
-  const { localLinks } = useStore()
+  const { localLinks, drift, ensureDrift } = useStore()
   const link = site ? localLinks.get(site.id) : undefined
   const state = link ? resolveLocalLink(link) : null
   const canOpen = !!state?.exists
   const hasLocalUrl = !!link?.localUrl
+  const d = site ? drift.get(site.id) : undefined
+
+  // Auto-compute (and cache) git drift when a linked, on-disk copy is shown.
+  useEffect(() => {
+    if (site && link && state?.exists) ensureDrift(site.id, link.path)
+  }, [site?.id, link?.path, state?.exists, ensureDrift])
 
   return (
     <box
@@ -224,6 +241,9 @@ export function SiteContextStrip({ site }: { site: Site | null }) {
           <text content={link.path} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
           {link.localUrl ? (
             <text content={"   " + link.localUrl} fg={theme.accent} wrapMode="none" style={{ flexShrink: 1 }} />
+          ) : null}
+          {d && (d.ahead > 0 || d.dirty) ? (
+            <text content={"   " + driftLabel(d)} fg={theme.warn} wrapMode="none" style={{ flexShrink: 0 }} />
           ) : null}
         </box>
       )}
