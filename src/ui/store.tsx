@@ -11,7 +11,7 @@ import type { Server, Site, Event } from "../api/types.ts"
 import { loadConfig, saveConfig } from "../config.ts"
 import { resolveLocalLink, expandPath, normalizeLink, type LocalLink } from "../lib/local.ts"
 import type { Stack } from "../lib/stack.ts"
-import { openTerminalAt, openUrl } from "../lib/open.ts"
+import { openTerminalAt, openUrl, openSshSession } from "../lib/open.ts"
 import { gitDrift, type Drift } from "../lib/gitStatus.ts"
 import { probeSite } from "../lib/probe.ts"
 import { fetchRebootInfo, type RebootInfo } from "../lib/ssh.ts"
@@ -135,6 +135,8 @@ interface StoreValue extends DataState {
   // each returns a short status message for the caller to flash.
   openLocalTerminal: (siteId: number) => string
   openLocalUrl: (siteId: number) => string
+  // Open a terminal and SSH into the site (site_user@server_ip). Returns a flash.
+  sshSite: (siteId: number) => string
   // Local git drift for linked sites, keyed by site id (null = not a git repo,
   // undefined = not yet computed). Computed lazily + cached; cleared on refresh.
   drift: Map<number, Drift | null>
@@ -545,6 +547,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [localLinks],
   )
 
+  const sshSite = useCallback(
+    (siteId: number) => {
+      const site = sites.find((s) => s.id === siteId)
+      if (!site) return ""
+      const server = servers.find((s) => s.id === site.server_id)
+      const host = server?.ip_address
+      const user = site.site_user ?? cfgRef.current.sshUser
+      if (!host || !user) return "Can't SSH — missing site user or server IP"
+      openSshSession(user, host, server?.ssh_port, cfgRef.current.terminalApp)
+      return `Opening SSH to ${site.domain}…`
+    },
+    [sites, servers],
+  )
+
   // Compute a linked site's git drift once (cached), fire-and-forget. Stable
   // across renders (uses a ref for the dedup set), so views can call it freely
   // from an effect when a linked site comes into view.
@@ -599,6 +615,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setLinkReturnToForgotten,
     openLocalTerminal,
     openLocalUrl,
+    sshSite,
     drift,
     ensureDrift,
     rebootInfo,

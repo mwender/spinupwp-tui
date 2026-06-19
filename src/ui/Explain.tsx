@@ -46,6 +46,7 @@ const GUIDES: Record<Route, Guide> = {
       ["d", "Identify the app running on a site (SSH)"],
       ["u", "Change a site's PHP version"],
       ["o / w", "Open the site · open it in the SpinupWP web app"],
+      ["s", "Open a terminal and SSH into the site"],
       ["t / v / L", "Local copy: open a terminal · open the local URL · link or edit"],
     ],
   },
@@ -65,6 +66,7 @@ const GUIDES: Record<Route, Guide> = {
       ["u", "Change a site's PHP version"],
       ["t / v / L", "Local copy: terminal · local URL · link or edit"],
       ["o / w", "Open the site · open it in SpinupWP"],
+      ["s", "Open a terminal and SSH into the site"],
     ],
   },
   search: {
@@ -78,6 +80,7 @@ const GUIDES: Record<Route, Guide> = {
       ["type", "Filter results"],
       ["Tab / →", "Hand focus from the box to the result's actions"],
       ["o / w / u", "Open · open in SpinupWP · change PHP"],
+      ["s", "SSH into the site (opens a terminal)"],
       ["t / v / L", "Local copy: terminal · local URL · link or edit"],
       ["a / h", "Server actions · server health"],
     ],

@@ -37,6 +37,36 @@ export function resolveTerminalApp(override?: string | null): string {
   return (tp && TERM_PROGRAM_APP[tp]) || "Terminal"
 }
 
+// The ssh command line for a site shell (adds -p when the port isn't the default).
+export function sshCommand(user: string, host: string, port?: number | null): string {
+  return port && port !== 22 ? `ssh -p ${port} ${user}@${host}` : `ssh ${user}@${host}`
+}
+
+// Open a new terminal window already running `ssh user@host`. Best-effort; never
+// throws. macOS scripts the user's terminal (iTerm or, as a reliable fallback for
+// any other, Terminal); Linux/Windows do their best.
+export function openSshSession(user: string, host: string, port?: number | null, terminalApp?: string | null): void {
+  const cmd = sshCommand(user, host, port)
+  try {
+    const platform = process.platform
+    if (platform === "darwin") {
+      const esc = cmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+      const app = resolveTerminalApp(terminalApp)
+      const args =
+        app === "iTerm"
+          ? ["-e", `tell application "iTerm"\ncreate window with default profile command "${esc}"\nactivate\nend tell`]
+          : ["-e", `tell application "Terminal" to do script "${esc}"`, "-e", `tell application "Terminal" to activate`]
+      Bun.spawn(["osascript", ...args], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+    } else if (platform === "win32") {
+      Bun.spawn(["cmd", "/c", "start", "cmd", "/k", cmd], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+    } else {
+      Bun.spawn(["x-terminal-emulator", "-e", cmd], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+    }
+  } catch {
+    // ignore — opening a shell is a convenience, not critical
+  }
+}
+
 // Open a terminal window at the given directory (where the user runs editor /
 // composer / git themselves). Best-effort; never throws. macOS opens the user's
 // terminal (see resolveTerminalApp); Linux tries common emulators; Windows opens

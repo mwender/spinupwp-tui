@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -119,6 +119,13 @@ export function Browser({ rows }: { rows: number }) {
           setTimeout(() => setFlash(null), 1800)
         }
         return
+      case "s":
+        // Open a terminal and SSH into the selected site.
+        if (focus === "sites" && sites[siteIndex]) {
+          setFlash(sshSite(sites[siteIndex].id))
+          setTimeout(() => setFlash(null), 2000)
+        }
+        return
       case "a":
         // Server actions (reboot / restart) are server-scoped, so only offered
         // when the Servers pane is focused — when you've drilled into a site,
@@ -163,6 +170,7 @@ export function Browser({ rows }: { rows: number }) {
           { key: "u", label: "change PHP" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
+          { key: "s", label: "ssh" },
           { key: "h", label: "health" },
         ]
 

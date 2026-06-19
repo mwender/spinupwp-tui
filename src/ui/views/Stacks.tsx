@@ -49,7 +49,7 @@ const NONWP_SUBS: { kind: ProbeKind | null; label: string }[] = [
 
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack } =
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
@@ -179,6 +179,10 @@ export function Stacks({ rows }: { rows: number }) {
         // Open the selected site's stored local URL in the browser.
         if (focus === "sites" && groupSites[siteIndex]) flashMsg(openLocalUrl(groupSites[siteIndex].id))
         return
+      case "s":
+        // Open a terminal and SSH into the selected site.
+        if (focus === "sites" && groupSites[siteIndex]) flashMsg(sshSite(groupSites[siteIndex].id))
+        return
       case "L":
         // Link / edit the selected site's local working copy (form overlay).
         if (focus === "sites" && groupSites[siteIndex]) setLocalLinkSite(groupSites[siteIndex])
@@ -225,6 +229,7 @@ export function Stacks({ rows }: { rows: number }) {
           { key: "u", label: "change PHP" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
+          { key: "s", label: "ssh" },
         ]
 
   // Status priority: transient flash > batch progress > selected site's error.

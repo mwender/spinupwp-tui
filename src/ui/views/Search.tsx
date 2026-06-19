@@ -32,7 +32,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -150,6 +150,9 @@ export function Search({ rows }: { rows: number }) {
         return
       case "L":
         if (current?.kind === "site") setLocalLinkSite(current.site)
+        return
+      case "s":
+        if (current?.kind === "site") flashMsg(sshSite(current.site.id))
         return
       case "h": {
         const srv =
@@ -295,6 +298,7 @@ function ActionsCard({ result, serverName }: { result: Result; serverName: strin
     ? [
         ["o", "Open site in browser"],
         ["w", "Open in SpinupWP"],
+        ["s", "SSH into the site (opens a terminal)"],
         ["u", "Upgrade PHP version"],
         ["t", "Open local working copy in a terminal"],
         ["v", "Open the local URL in your browser"],

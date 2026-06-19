@@ -22,6 +22,7 @@ const SECTIONS: { title: string; keys: [string, string][] }[] = [
       ["← / Esc", "Go back / collapse"],
       ["Tab", "Switch focus between columns"],
       ["o", "Open the selected site's URL in your browser"],
+      ["s", "Open a terminal and SSH into the selected site"],
       ["h", "Live server health (CPU/mem/disk over SSH)"],
       ["d", "Identify the app running on a site, via SSH (Servers / Stacks)"],
       ["D", "Identify every app in the selected group (Stacks tab)"],
