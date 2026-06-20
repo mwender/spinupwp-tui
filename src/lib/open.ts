@@ -11,6 +11,21 @@ export function openUrl(url: string): void {
   }
 }
 
+// Copy text to the system clipboard, cross-platform. Best-effort; never throws.
+// Used by the GoDaddy handoff so the domain is ready to paste after switching
+// into a delegated client account.
+export function copyToClipboard(text: string): void {
+  try {
+    const platform = process.platform
+    const cmd = platform === "darwin" ? ["pbcopy"] : platform === "win32" ? ["clip"] : ["xclip", "-selection", "clipboard"]
+    const proc = Bun.spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
+    proc.stdin.write(text)
+    void proc.stdin.end()
+  } catch {
+    // ignore — clipboard is a convenience, not critical
+  }
+}
+
 // macOS has no registered "default terminal" role (unlike the default browser),
 // so we can't ask LaunchServices which terminal to use. The best proxy is
 // $TERM_PROGRAM — the terminal that launched this process sets it — which works

@@ -12,6 +12,7 @@ import { join } from "node:path"
 import { mkdir, chmod } from "node:fs/promises"
 import { existsSync, readFileSync } from "node:fs"
 import type { LocalLink } from "./lib/local.ts"
+import { ALL_PROVIDERS, type Connection, type ConnProvider } from "./lib/providers.ts"
 
 export const DEFAULT_BASE_URL = "https://api.spinupwp.app/v1"
 
@@ -35,6 +36,35 @@ export interface AppConfig {
   // Local working-copy links, keyed by SpinupWP site id (as a string, since
   // JSON object keys are strings). See lib/local.ts for the link shape.
   localSites: Record<string, LocalLink>
+  // DNS provider connections (Phase 2 access detection), keyed by provider, merged
+  // from the stored config and the environment. Env-sourced connections carry
+  // `env: true` and are read-only in the UI. Secrets live here (file is chmod 600).
+  providerConnections: Record<ConnProvider, Connection[]>
+}
+
+// Stored connection (no `provider`/`env` discriminators — added on load).
+export interface StoredConnection {
+  id: string
+  label: string
+  creds: Record<string, string>
+}
+export type StoredProviders = Partial<Record<ConnProvider, StoredConnection[]>>
+
+// Read a connection's creds, migrating the pre-registry shape (credentials stored
+// as inline fields) to the `creds` bag. The migrated bag is rewritten to disk on
+// the next saveConfig (add/remove a connection).
+function migrateCreds(provider: ConnProvider, c: Record<string, unknown>): Record<string, string> {
+  if (c.creds && typeof c.creds === "object") return c.creds as Record<string, string>
+  if (provider === "aws") {
+    return {
+      accessKeyId: String(c.accessKeyId ?? ""),
+      secretAccessKey: String(c.secretAccessKey ?? ""),
+      region: String(c.region ?? ""),
+    }
+  }
+  if (provider === "cloudflare") return { token: String(c.token ?? "") }
+  if (provider === "godaddy") return { apiKey: String(c.apiKey ?? ""), apiSecret: String(c.apiSecret ?? "") }
+  return {}
 }
 
 export interface StoredConfig {
@@ -45,6 +75,7 @@ export interface StoredConfig {
   terminalApp?: string
   localRoots?: string[]
   localSites?: Record<string, LocalLink>
+  providers?: StoredProviders
 }
 
 export function configDir(): string {
@@ -75,6 +106,37 @@ export function loadConfig(): AppConfig {
   const token = envToken || fileToken || ""
   const tokenSource: AppConfig["tokenSource"] = envToken ? "env" : fileToken ? "file" : "none"
 
+  // Provider connections: stored ones first (per provider), with env-derived ones
+  // prepended as read-only "env" connections (consistent with the env token above).
+  const sp = stored.providers ?? {}
+  const providerConnections = {} as Record<ConnProvider, Connection[]>
+  for (const provider of ALL_PROVIDERS) {
+    providerConnections[provider] = (sp[provider] ?? []).map((c) => ({
+      id: c.id,
+      provider,
+      label: c.label,
+      creds: migrateCreds(provider, c as unknown as Record<string, unknown>),
+    }))
+  }
+  const cfEnv = process.env.CLOUDFLARE_API_TOKEN?.trim()
+  if (cfEnv) providerConnections.cloudflare.unshift({ id: "cloudflare-env", provider: "cloudflare", label: "env", creds: { token: cfEnv }, env: true })
+  const awsKey = process.env.AWS_ACCESS_KEY_ID?.trim()
+  const awsSecret = process.env.AWS_SECRET_ACCESS_KEY?.trim()
+  if (awsKey && awsSecret) {
+    providerConnections.aws.unshift({
+      id: "aws-env",
+      provider: "aws",
+      label: "env",
+      creds: { accessKeyId: awsKey, secretAccessKey: awsSecret, region: process.env.AWS_REGION?.trim() || "" },
+      env: true,
+    })
+  }
+  const gdKey = process.env.GODADDY_API_KEY?.trim()
+  const gdSecret = process.env.GODADDY_API_SECRET?.trim()
+  if (gdKey && gdSecret) {
+    providerConnections.godaddy.unshift({ id: "godaddy-env", provider: "godaddy", label: "env", creds: { apiKey: gdKey, apiSecret: gdSecret }, env: true })
+  }
+
   return {
     token,
     baseUrl: (stored.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ""),
@@ -84,6 +146,7 @@ export function loadConfig(): AppConfig {
     terminalApp: process.env.SPINUPWP_TERMINAL_APP?.trim() || stored.terminalApp?.trim() || null,
     localRoots: stored.localRoots ?? [],
     localSites: stored.localSites ?? {},
+    providerConnections,
   }
 }
 

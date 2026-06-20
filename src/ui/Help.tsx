@@ -47,6 +47,9 @@ const SECTIONS: { title: string; keys: [string, string][] }[] = [
     keys: [
       ["n", "Look up where the selected site's domains host DNS"],
       ["N", "DNS zone-host inventory for the selected server"],
+      ["c", "In the inventory: connect a provider / open its console for the zone"],
+      ["✓ ↗ ○ ·", "Access: editable · web only · needs key · unknown"],
+      ["GoDaddy", "Assumes Delegate Access from one main account: c → w opens your Clients hub (domain copied) → Login as client → paste → Exit access"],
     ],
   },
   {

@@ -6,7 +6,7 @@
 
 import { useState } from "react"
 import { theme } from "../lib/theme.ts"
-import { Spinner } from "./components.tsx"
+import { Spinner, SecretInput } from "./components.tsx"
 import { SpinupWPClient } from "../api/client.ts"
 import { DEFAULT_BASE_URL, saveConfig, configPath } from "../config.ts"
 
@@ -61,17 +61,12 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         <box style={{ height: 1 }} />
 
         <text content="API Access Token" fg={theme.accent} />
-        <input
+        <SecretInput
           focused={phase !== "validating"}
           value={value}
           placeholder="paste your token here…"
-          onInput={setValue}
+          onChange={setValue}
           onSubmit={() => submit(value)}
-          style={{
-            backgroundColor: theme.bgAlt,
-            focusedBackgroundColor: theme.bgAlt,
-            textColor: theme.text,
-          }}
         />
         <box style={{ height: 1 }} />
 

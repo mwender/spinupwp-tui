@@ -1,6 +1,7 @@
 // Small shared presentational components used across views.
 
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useKeyboard, usePaste } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../lib/theme.ts"
 import { isUpgradeInFlight, type PhpUpgradeProgress } from "./store.tsx"
 
@@ -136,6 +137,67 @@ export function SiteMetaCell({ linked, updates, selected = false }: { linked: bo
     <box style={{ flexDirection: "row", flexShrink: 0 }}>
       <text content={linked ? "◆ " : "  "} fg={selected ? theme.text : theme.good} wrapMode="none" />
       {updates > 0 ? <text content={`↑${updates} `} fg={selected ? theme.text : theme.warn} wrapMode="none" /> : null}
+    </box>
+  )
+}
+
+// A masked text field for secrets/tokens. OpenTUI's <input> keeps its own editor
+// buffer and has no masking/password mode, so a controlled "show dots" value
+// fights that buffer (the secret flashes, then the field clears). Instead this
+// owns the value itself: it captures keypresses + paste while focused and renders
+// only dots — the secret is never drawn in cleartext. We deliberately do NOT use
+// <input> here. Editing is append/backspace at the end (paste-and-go for tokens).
+const MASK = "•"
+export function SecretInput({
+  value,
+  onChange,
+  focused,
+  placeholder,
+  onSubmit,
+}: {
+  value: string
+  onChange: (v: string) => void
+  focused?: boolean
+  placeholder?: string
+  onSubmit?: () => void
+}) {
+  // Mirror the value in a ref so a rapid burst of key events (or a paste split
+  // into per-char events) accumulates instead of each handler closing over a
+  // stale `value` and overwriting the last — we update the ref synchronously.
+  const valueRef = useRef(value)
+  valueRef.current = value
+  const setValue = (next: string) => {
+    valueRef.current = next
+    onChange(next)
+  }
+
+  useKeyboard((key) => {
+    if (!focused) return
+    const name = key.name ?? ""
+    if (name === "return" || name === "enter") return onSubmit?.()
+    if (name === "backspace" || name === "delete") return setValue(valueRef.current.slice(0, -1))
+    // Let the host overlay handle navigation/dismiss keys.
+    if (["up", "down", "left", "right", "tab", "escape"].includes(name)) return
+    if (key.ctrl || key.meta) return
+    // A single printable character — append it.
+    const seq: string = (key as { sequence?: string; raw?: string }).sequence ?? (key as { raw?: string }).raw ?? ""
+    if (seq.length === 1 && seq >= " ") setValue(valueRef.current + seq)
+  })
+
+  usePaste((event: { bytes?: Uint8Array }) => {
+    if (!focused) return
+    const text = event?.bytes ? new TextDecoder().decode(event.bytes) : ""
+    const cleaned = text.replace(/[\r\n]+/g, "") // tokens are one line; drop any newlines
+    if (cleaned) setValue(valueRef.current + cleaned)
+  })
+
+  const hasValue = value.length > 0
+  const content = hasValue
+    ? MASK.repeat(value.length) + (focused ? "▏" : "")
+    : (focused ? "▏ " : "") + (placeholder ?? "")
+  return (
+    <box style={{ height: 1, flexDirection: "row", backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1 }}>
+      <text content={content} fg={hasValue ? theme.text : theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
     </box>
   )
 }
