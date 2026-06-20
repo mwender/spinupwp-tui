@@ -7,6 +7,7 @@ import { Field, StatusBadge } from "./components.tsx"
 import { classifyStack, stackColor } from "../lib/stack.ts"
 import { probeKindColor } from "../lib/probe.ts"
 import { resolveLocalLink } from "../lib/local.ts"
+import { normalizeDomain } from "../lib/dns.ts"
 import type { Drift } from "../lib/gitStatus.ts"
 import { useStore, isUpgradeInFlight, isServerOpInFlight } from "./store.tsx"
 import type { Server, Site } from "../api/types.ts"
@@ -121,6 +122,7 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       <Field label="User" value={site.site_user ?? "—"} />
       <Field label="Public dir" value={site.public_folder ?? "/"} />
       <Field label="Local" value={linkValue} valueColor={linkColor} />
+      <SiteDnsSection site={site} />
       <Field
         label="HTTPS"
         value={site.https?.enabled ? "enabled" : "disabled"}
@@ -157,6 +159,42 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       {site.git?.repo && <Field label="Git" value={`${truncate(site.git.repo, 26)} (${site.git.branch ?? "?"})`} />}
       {site.basic_auth?.enabled && <Field label="Basic auth" value="enabled" valueColor={theme.warn} />}
       <Field label="Created" value={formatDate(site.created_at)} />
+    </box>
+  )
+}
+
+// DNS zone-host lines for a site's domains, populated on demand (key `n`). Each
+// distinct zone (www + apex collapsed) shows its resolved host; a separate-TLD
+// additional domain surfaces as its own line with its own host. Read-only.
+function SiteDnsSection({ site }: { site: Site }) {
+  const { zoneForDomain, isDnsResolving } = useStore()
+  const seen = new Set<string>()
+  const domains = [site.domain, ...(site.additional_domains?.map((a) => a.domain) ?? [])].filter((d) => {
+    const k = normalizeDomain(d)
+    if (!k || seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+  const anyResolved = domains.some((d) => zoneForDomain(d))
+  const anyResolving = domains.some((d) => isDnsResolving(d))
+  if (!anyResolved && !anyResolving) {
+    return <Field label="DNS" value="not checked · n" valueColor={theme.textFaint} />
+  }
+  return (
+    <box style={{ flexDirection: "column" }}>
+      <text content="DNS" fg={theme.textDim} />
+      {domains.map((d) => {
+        const c = zoneForDomain(d)
+        const resolving = isDnsResolving(d) && !c
+        const host = resolving ? "looking up…" : !c ? "—" : c.zone === null ? "no host found" : c.zone.providerLabel
+        const color = resolving ? theme.textDim : !c ? theme.textFaint : c.zone === null ? theme.warn : theme.accent
+        return (
+          <box key={d} style={{ flexDirection: "row" }}>
+            <text content={"  " + truncate(d, 22)} fg={theme.text} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+            <text content={host} fg={color} wrapMode="none" style={{ flexShrink: 0 }} />
+          </box>
+        )
+      })}
     </box>
   )
 }

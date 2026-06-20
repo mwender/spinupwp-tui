@@ -19,6 +19,7 @@ import { ServerActions } from "./views/ServerActions.tsx"
 import { LocalLinkOverlay } from "./views/LocalLink.tsx"
 import { Discover } from "./views/Discover.tsx"
 import { Forgotten } from "./views/Forgotten.tsx"
+import { DnsInventory } from "./views/DnsInventory.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -45,7 +46,8 @@ export function App() {
     store.serverActionsServer !== null ||
     store.localLinkSite !== null ||
     store.discoverOpen ||
-    store.forgottenOpen
+    store.forgottenOpen ||
+    store.dnsInventoryServer !== null
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
   }, [overlayActive, store])
@@ -83,6 +85,9 @@ export function App() {
 
     // The "needs a local copy" report owns the keyboard while open.
     if (store.forgottenOpen) return
+
+    // The DNS inventory overlay owns the keyboard while open.
+    if (store.dnsInventoryServer) return
 
     if (showHelp) {
       if (key.name === "escape" || key.name === "q" || key.name === "?") setShowHelp(false)
@@ -155,6 +160,7 @@ export function App() {
       {store.localLinkSite && <LocalLinkOverlay />}
       {store.discoverOpen && <Discover />}
       {store.forgottenOpen && <Forgotten />}
+      {store.dnsInventoryServer && <DnsInventory />}
     </box>
   )
 }

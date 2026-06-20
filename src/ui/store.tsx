@@ -14,6 +14,8 @@ import type { Stack } from "../lib/stack.ts"
 import { openTerminalAt, openUrl, openSshSession } from "../lib/open.ts"
 import { gitDrift, type Drift } from "../lib/gitStatus.ts"
 import { probeSite } from "../lib/probe.ts"
+import { resolveZone, normalizeDomain } from "../lib/dns.ts"
+import { DnsCache, type CachedDns } from "../lib/dnsCache.ts"
 import { fetchRebootInfo, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
@@ -157,6 +159,19 @@ interface StoreValue extends DataState {
   runProbeMany: (sites: Site[]) => void
   // Whether a cached probe for this site is stale (site shape changed since).
   isProbeStale: (site: Site) => boolean
+  // DNS zone-host lookups (read-only). Hydrated from disk at startup; resolved
+  // lazily on demand (never auto-fired on selection — network cost).
+  dnsZones: Map<string, CachedDns> // by normalized domain (www-stripped, lowercased)
+  dnsResolving: Set<string> // normalized domains with an in-flight lookup
+  // Resolve every domain of a site / of all sites on a server (bounded conc).
+  lookupSiteDns: (site: Site, force?: boolean) => void
+  lookupServerDns: (serverId: number, force?: boolean) => void
+  // The cached zone-host for a domain (undefined = never looked up).
+  zoneForDomain: (domain: string) => CachedDns | undefined
+  isDnsResolving: (domain: string) => boolean
+  // The server whose DNS-inventory overlay is open, or null. Set by site views.
+  dnsInventoryServer: Server | null
+  setDnsInventoryServer: (s: Server | null) => void
   // Whether a PHP version is past end-of-life (real dates vs today, refreshed).
   isPhpEol: (version: string | null | undefined) => boolean
   // PHP versions to offer in the upgrade picker (dynamic; current always included).
@@ -222,6 +237,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [probes, setProbes] = useState<Map<number, CachedProbe>>(() => cacheRef.current!.snapshot())
   const [probingIds, setProbingIds] = useState<Set<number>>(new Set())
   const [probeErrors, setProbeErrors] = useState<Map<number, string>>(new Map())
+
+  // DNS zone-host cache: hydrate from disk once (no network at startup); lookups
+  // run lazily on demand and write through to disk. `dnsInFlight` is a ref so the
+  // lookup actions can dedupe concurrent requests without re-rendering.
+  const dnsCacheRef = useRef<DnsCache | null>(null)
+  if (!dnsCacheRef.current) {
+    dnsCacheRef.current = new DnsCache()
+    dnsCacheRef.current.load()
+  }
+  const dnsInFlight = useRef<Set<string>>(new Set())
+  const [dnsZones, setDnsZones] = useState<Map<string, CachedDns>>(() => dnsCacheRef.current!.snapshot())
+  const [dnsResolving, setDnsResolving] = useState<Set<string>>(new Set())
+  const [dnsInventoryServer, setDnsInventoryServer] = useState<Server | null>(null)
 
   // PHP EOL dates: embedded defaults overlaid with the last cached fetch; a
   // background refresh (endoflife.date) updates them when the cache is stale.
@@ -570,6 +598,70 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void gitDrift(linkPath).then((d) => setDrift((prev) => new Map(prev).set(siteId, d)))
   }, [])
 
+  // ---- DNS zone-host lookups -------------------------------------------------
+
+  // Resolve one domain's zone host (cache first). Concurrency-safe — the ref-based
+  // in-flight set dedupes, and a fresh cache entry short-circuits unless forced.
+  const dnsResolveOne = useCallback(async (domain: string, force: boolean) => {
+    const cache = dnsCacheRef.current!
+    const key = normalizeDomain(domain)
+    if (!key || dnsInFlight.current.has(key)) return
+    if (!force && !cache.isStale(key)) return
+    dnsInFlight.current.add(key)
+    setDnsResolving((prev) => new Set(prev).add(key))
+    try {
+      const zone = await resolveZone(key)
+      await cache.set(key, zone)
+      setDnsZones(cache.snapshot())
+    } finally {
+      dnsInFlight.current.delete(key)
+      setDnsResolving((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }
+  }, [])
+
+  // Resolve many domains with a bounded pool (skips fresh/in-flight unless forced).
+  const dnsLookupMany = useCallback(
+    (domains: string[], force = false) => {
+      const cache = dnsCacheRef.current!
+      const keys = Array.from(new Set(domains.map(normalizeDomain).filter(Boolean)))
+      const queue = keys.filter((k) => !dnsInFlight.current.has(k) && (force || cache.isStale(k)))
+      if (queue.length === 0) return
+      const CONCURRENCY = 5
+      let cursor = 0
+      const worker = async () => {
+        while (cursor < queue.length) await dnsResolveOne(queue[cursor++], force)
+      }
+      for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i++) void worker()
+    },
+    [dnsResolveOne],
+  )
+
+  const domainsForSite = (site: Site): string[] => [
+    site.domain,
+    ...(site.additional_domains?.map((a) => a.domain) ?? []),
+  ]
+
+  const lookupSiteDns = useCallback(
+    (site: Site, force = false) => dnsLookupMany(domainsForSite(site), force),
+    [dnsLookupMany],
+  )
+
+  const lookupServerDns = useCallback(
+    (serverId: number, force = false) => {
+      const domains: string[] = []
+      for (const s of sites) if (s.server_id === serverId) domains.push(...domainsForSite(s))
+      dnsLookupMany(domains, force)
+    },
+    [dnsLookupMany, sites],
+  )
+
+  const zoneForDomain = useCallback((domain: string) => dnsZones.get(normalizeDomain(domain)), [dnsZones])
+  const isDnsResolving = useCallback((domain: string) => dnsResolving.has(normalizeDomain(domain)), [dnsResolving])
+
   const value: StoreValue = {
     servers,
     sites,
@@ -632,6 +724,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     runProbe,
     runProbeMany,
     isProbeStale,
+    dnsZones,
+    dnsResolving,
+    lookupSiteDns,
+    lookupServerDns,
+    zoneForDomain,
+    isDnsResolving,
+    dnsInventoryServer,
+    setDnsInventoryServer,
     isPhpEol,
     offeredPhpVersions,
   }
