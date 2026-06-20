@@ -48,6 +48,20 @@ Once you're in, the dashboard looks like this:
   SSH: CPU (aggregate + per-core + sparkline), load, memory/swap, disk mounts,
   and top processes. Polls every few seconds. (See "Server health" below.)
 - **Open in browser** — press `o` on any site to open it in your default browser.
+- **Link local working copies** — press `L` on a site to link its local checkout
+  (a path plus the local URL where you serve it), then open it with `t` (a
+  terminal there) or `v` (its local URL). The Stacks tab can **auto-discover**
+  copies (`S`) by git remote / Bedrock `WP_HOME` / folder name, and **report**
+  managed sites that still need one (`f`). Linked sites show a `◆` marker, and a
+  linked checkout shows its local git drift (`⇡N unpushed` / `● uncommitted`).
+  (See "Local working copies" below.)
+- **SSH into a site** — press `s` on a site to open a new terminal already running
+  `ssh` into it (`{site_user}@{server_ip}`).
+- **DNS hosts & access** — press `n` on a site (or `N` on a server) to see where
+  each domain's DNS is hosted, and — if you connect a provider (AWS Route 53 /
+  Cloudflare / GoDaddy) — whether you can edit it and through which account. The
+  whole module is **read-only**: it inventories and verifies, it doesn't change
+  records. (See "DNS hosts & access" below.)
 - **Upgrade a site's PHP version** — press `u` on a site to pick a new PHP
   version and apply it (`PUT /sites/{id}/php`), then watch the upgrade event run
   to completion. (See "Upgrading PHP" below.)
@@ -154,14 +168,22 @@ Both can be set in `config.json` or via an environment variable:
 | `Tab` | Switch focus between columns |
 | `g` / `G` | Jump to top / bottom |
 | `o` | Open the selected site in your browser |
+| `s` | Open a terminal and SSH into the selected site |
+| `L` | Link / edit a site's local working copy |
+| `t` / `v` | Open the linked copy in a terminal / its local URL in your browser |
+| `n` | Look up where a site's domains host DNS |
+| `N` | DNS host + access inventory for the selected server |
 | `h` | Live server health (CPU/mem/disk over SSH) |
 | `d` | Detect a site's stack via SSH (Servers / Stacks tabs) |
 | `D` | Detect every site in the selected stack (Stacks tab) |
+| `S` | Auto-discover & batch-link local copies (Stacks tab) |
+| `f` | Report sites with no usable local copy (Stacks tab) |
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `r` | Refresh data from the API |
+| `i` | Explain the current screen (what each pane and key does) |
 | `?` | Toggle the help overlay |
 | `q` / `Ctrl+C` | Quit |
 
@@ -257,6 +279,62 @@ server's row keeps a spinner).
   file 1:1).
 - **Reboot is the big one** — its confirmation calls out that it takes the whole
   server down briefly (every site on it); a service restart is a brief blip.
+
+## Local working copies
+
+Bridge your SpinupWP sites to the local checkouts you actually edit. Press `L` on
+a site (Servers / Stacks / Search) to link a path and the local URL where you
+serve it; the site's details gain a "Local" field, and you can open the copy with
+`t` (a terminal at the path) or `v` (its local URL). All of this is **local-only**
+— no SpinupWP writes.
+
+- **Auto-discover (`S`, Stacks tab).** Scan one or more folders and match their
+  subdirectories to sites — by git remote, Bedrock `WP_HOME`, or folder name —
+  then batch-link the matches.
+- **"Needs a local copy" report (`f`, Stacks tab).** Lists the managed sites you
+  have no usable local copy for (never linked, or a missing path), filterable by
+  stack.
+- **Markers & drift.** Linked sites show `◆` in the lists; a linked, on-disk copy
+  shows its local git drift (`⇡N unpushed` / `● uncommitted`), read from the repo
+  with no network.
+
+Config keys: `localRoots` (folders to scan) and `localSites` (per-site path +
+local URL — tool-agnostic: Valet, Cove, LocalWP, Herd, DDEV, …).
+
+## DNS hosts & access
+
+A **read-only** DNS module: see where each domain's DNS is hosted, and whether
+you can edit it. No DNS records are ever changed.
+
+- **Inventory.** Press `n` on a site to look up its domains' hosts, or `N` on a
+  server for a zone-keyed inventory of every domain on it. The unit is the
+  **zone** — `www` and the apex collapse together, and a separate-TLD redirect
+  surfaces as its own zone with its own host (so a full portfolio move misses
+  nothing). Hosts come from a live nameserver lookup (no `dig` needed) and are
+  labeled (Cloudflare, AWS Route 53, GoDaddy, …), falling back to the nameserver
+  domain for anything unrecognized. Lookups are cached with a visible age; `r`
+  refreshes.
+- **Access (`✓ ↗ ○ ·`).** Each zone shows whether you can edit it: `✓` editable,
+  `↗` web-only handoff, `○` the provider has an API but you haven't connected an
+  account that holds the zone, `·` unknown. A zone is `✓` only when a connected
+  account of the provider that actually serves it (its live nameservers) holds it
+  — so a stale or duplicate zone elsewhere never shows a false green. With two or
+  more accounts connected, an **ACCOUNT** column names the owning one.
+- **Connect a provider (`c`).** Manage credentials for the selected zone's
+  provider — **AWS Route 53** (an IAM access key scoped to Route 53 reads),
+  **Cloudflare** (a `Zone:Read` token), or **GoDaddy** (a Production API key).
+  Multiple accounts per provider are supported, with a drill-down into each
+  account's zones. Credentials are verified before they're stored, kept in
+  `config.json` (chmod 600), and the matching environment variables are honored
+  (`CLOUDFLARE_API_TOKEN`, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`,
+  `GODADDY_API_KEY` / `GODADDY_API_SECRET`). Secrets are masked as you type.
+- **GoDaddy fallback.** GoDaddy's API is limited to larger accounts, so a GoDaddy
+  zone shows `↗`; press `w` (in the inventory or the connect overlay) to open your
+  GoDaddy Clients hub with the domain copied to your clipboard. The flow assumes
+  you manage client domains via Delegate Access from one main account.
+
+Provider credentials are entirely optional — without them you still get the full
+host inventory, just without the editable/account columns.
 
 ## Development
 

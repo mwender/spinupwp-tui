@@ -11,6 +11,46 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-20
+
+### Added
+- **DNS host inventory.** A new read-only DNS module that answers "where is each
+  domain's DNS hosted?" — the inventory you'd otherwise build by hand to migrate
+  or clone a site. Press `n` on a site to look up its domains' hosts; press `N`
+  on a server for a full, zone-keyed inventory of every domain on it. The unit is
+  the **zone**: `www` and the apex collapse together, and a separate-TLD redirect
+  (e.g. an alternate domain) surfaces as its own zone with its own host, so a full
+  portfolio move doesn't miss anything. Hosts are detected from a live nameserver
+  lookup (no `dig` dependency) and labeled (Cloudflare, AWS Route 53, GoDaddy,
+  …), falling back to the nameserver domain for anything unrecognized. Results
+  are cached with a visible age; `r` refreshes.
+- **DNS access detection.** Each zone also shows whether you can **edit** it:
+  `✓` editable · `↗` web only · `○` needs key · `·` unknown. A zone is `✓` only
+  when a connected account of the provider that actually serves it (its live
+  nameservers) holds it — so a stale or duplicate zone in another account doesn't
+  give a false green. With more than one account connected, an **ACCOUNT** column
+  names the owning account.
+- **Connect DNS providers.** Press `c` on a zone to manage credentials for its
+  provider — **AWS Route 53** (an access key for an IAM user scoped to Route 53
+  reads), **Cloudflare** (a `Zone:Read` scoped token), or **GoDaddy** (a
+  Production API key). Multiple accounts per provider are supported, with a
+  two-pane drill-down into each account's zones. Credentials are verified on the
+  spot (only stored if they work) and kept in `config.json` (chmod 600); standard
+  environment variables (`CLOUDFLARE_API_TOKEN`, `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY`, `GODADDY_API_KEY` / `GODADDY_API_SECRET`) are honored too.
+- **GoDaddy web fallback.** GoDaddy's API is only available to larger accounts, so
+  a GoDaddy zone shows `↗` and `w` (from the inventory or the connect overlay)
+  opens your GoDaddy **Clients hub** and copies the domain to your clipboard —
+  with an in-context note on the assumed Delegate-Access workflow.
+- **Masked secret entry.** Tokens and secret keys are masked as you type, in both
+  the DNS provider forms and the first-run **API-token onboarding** screen.
+
+### Notes
+- The DNS module is **entirely read-only** — it lists hosts and verifies access;
+  it does not change any DNS records (editing is a later phase). Provider
+  credentials are optional: without them you still get the full host inventory,
+  just without the editable/account columns.
+
 ## [0.5.0] - 2026-06-19
 
 ### Added
@@ -164,7 +204,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/mwender/spinupwp-tui/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mwender/spinupwp-tui/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mwender/spinupwp-tui/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mwender/spinupwp-tui/compare/v0.2.0...v0.3.0

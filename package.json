@@ -1,6 +1,6 @@
 {
   "name": "spinupwp-tui",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A cool terminal UI for browsing and monitoring your SpinupWP servers and sites.",
   "type": "module",
   "bin": {

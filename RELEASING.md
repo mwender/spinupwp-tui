@@ -26,6 +26,22 @@ land, add bullets under `## [Unreleased]` in the right group: **Added / Changed 
 Fixed / Removed** (plus **Notes** for caveats). Write user-facing impact, not
 implementation detail.
 
+## Keep the README current (part of shipping a feature)
+
+`README.md` is user-facing docs, not just a landing page — a new feature isn't
+"done" until it's there. Whenever a change adds or changes user-facing behavior,
+update, in the same breath:
+
+- the **Features** list (a bullet, with the key and a "see … below" pointer),
+- the **Keybindings** table (every new key, with where it applies),
+- the relevant **feature section** (a short how-it-works block; add one for a
+  whole new area like the DNS module or local working copies).
+
+When cutting a release, **re-read those three against the new `## [Unreleased]`
+changelog entries** and backfill anything that slipped — a prior release's
+features missing from the README is the exact failure mode this step exists to
+catch.
+
 ## Versioning (SemVer, while in `0.x`)
 
 - New user-facing feature → **minor** bump (`0.2.0` → `0.3.0`).
@@ -37,7 +53,8 @@ implementation detail.
 Run these in order. Replace `X.Y.Z` with the new version.
 
 1. **Land the work.** Feature branch merged to `main` (or docs committed directly).
-   `bun run typecheck` is green.
+   `bun run typecheck` is green, and `README.md` reflects the new features (see
+   "Keep the README current").
 2. **Bump the version** in `package.json`.
 3. **Roll the changelog:** rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`,
    add a fresh empty `## [Unreleased]` above it, and update the compare links at
@@ -81,6 +98,7 @@ Run these in order. Replace `X.Y.Z` with the new version.
 ## Quick checklist
 
 - [ ] Work merged to `main`, `bun run typecheck` green
+- [ ] `README.md` Features / Keybindings / feature sections updated for new user-facing changes
 - [ ] `package.json` version bumped (SemVer)
 - [ ] `CHANGELOG.md`: `[Unreleased]` → `[X.Y.Z]` + date, fresh `[Unreleased]`, compare links updated
 - [ ] Release commit on `main`
