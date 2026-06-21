@@ -1,17 +1,20 @@
-// DNS zone-host inventory for a server — the read-only first slice of the DNS
-// module. Answers "where is every domain on this server's DNS hosted?", the
-// inventory you build by hand when migrating or cloning a site.
+// DNS inventory for a server — a MIGRATION lens, not a zone editor. For every site
+// on the server it shows the website-hosting records that "count" when you move
+// the site to another server: each zone, and nested under it the site's own
+// hostnames (apex, www, additional domains) with their live record + TTL, flagged
+// when they point at THIS server. The full per-zone record list lives in the `⏎`
+// drill-down (DnsRecords) — that's where editing happens. Opened with `N`.
 //
-// The unit is the ZONE, not the hostname: www + apex collapse into one row, and a
-// separate-TLD additional domain (e.g. example.net redirecting to example.com)
-// surfaces as its OWN zone with its OWN host — because a full move must carry the
-// whole portfolio, and those can live on a different provider. Opened with `N`.
+// TTLs here are read CRED-FREE from each zone's authoritative nameserver (the
+// configured, non-decremented value), so they show for every host — not just the
+// ones we hold an API key for. Editing a TTL still needs a connected account.
 
 import { useEffect, useMemo, useState } from "react"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { truncate, timeAgo } from "../../lib/format.ts"
-import { normalizeDomain } from "../../lib/dns.ts"
+import { normalizeDomain, candidateHostnames } from "../../lib/dns.ts"
+import { formatTtl } from "../../lib/dnsRecords.ts"
 import { apiProviderFor, consoleForHost, type AccessState } from "../../lib/providers.ts"
 import { openUrl, copyToClipboard } from "../../lib/open.ts"
 import { List, moveSelection } from "../List.tsx"
@@ -20,15 +23,16 @@ import { Spinner } from "../components.tsx"
 import { useStore } from "../store.tsx"
 import type { Site } from "../../api/types.ts"
 
-// Fixed column widths (chars) so SITE/ZONE/HOST/ACCESS align on every row; NOTE
-// flexes to fill the remainder. Each cell truncates to width-1 for a 1-space gutter.
-const SITE_W = 38
-const ZONE_W = 44
-const HOST_W = 18
+// Fixed column widths (chars) so columns align on every row; VALUE flexes.
+const SITE_W = 22
+const NAME_W = 30
+const TYPE_W = 7
+const TTL_W = 8
+const HOST_W = 16
 const ACCESS_W = 8
-const ACCOUNT_W = 18
+const ACCOUNT_W = 16
 
-// Glyph + color for an access state (Phase 2). `·` is the resting/unknown state.
+// Glyph + color for an access state. `·` is the resting/unknown state.
 function accessGlyph(state: AccessState, selected: boolean): { glyph: string; color: string } {
   switch (state) {
     case "editable":
@@ -42,46 +46,84 @@ function accessGlyph(state: AccessState, selected: boolean): { glyph: string; co
   }
 }
 
-interface ZoneRow {
-  siteDomain: string // owning site (primary domain)
-  showSite: boolean // first zone row for this site (others blank the column)
-  status: string // owning site status (for the leading dot)
-  zone: string // zone apex (or normalized domain when unresolved)
-  hostKey: string // provider key from DNS detection (drives access + the `c` action)
-  host: string // provider label, or a lookup-state string
-  hostColor: string
-  access: AccessState // editable | needs-key | web | unknown
-  account: string // owning connection/account label (editable zones only)
-  note: string // e.g. "→ redirects to example.com"
-  checkedAt: number | null // age of the cached lookup, null when not yet known
-}
+// A zone-header row, or a hosting-record row nested under it. Both carry the zone
+// identity (apex/hostKey/access/liveNs) so access/edit actions work from either.
+type InvRow =
+  | {
+      kind: "zone"
+      siteDomain: string
+      showSite: boolean
+      status: string
+      apex: string
+      hostKey: string
+      host: string
+      hostColor: string
+      access: AccessState
+      account: string
+      liveNs: string[]
+      note: string
+      checkedAt: number | null
+    }
+  | {
+      kind: "record"
+      apex: string
+      hostKey: string
+      access: AccessState
+      liveNs: string[]
+      name: string // the hostname
+      recordType: string // A | CNAME | AAAA | "" while resolving
+      ttl: number | null
+      value: string
+      pointsHere: boolean
+      resolving: boolean
+    }
 
 export function DnsInventory() {
-  const { dnsInventoryServer, setDnsInventoryServer, sitesForServer, zoneForDomain, lookupServerDns, dnsZones, dnsResolving, accessForZone, accountForZone, setConnectZoneTarget, connectZoneTarget, connections, connectionCount, providerZones, verifyConnectionById } =
-    useStore()
+  const {
+    dnsInventoryServer,
+    setDnsInventoryServer,
+    sitesForServer,
+    zoneForDomain,
+    lookupServerDns,
+    dnsZones,
+    dnsResolving,
+    accessForZone,
+    accountForZone,
+    connForZone,
+    setConnectZoneTarget,
+    connectZoneTarget,
+    dnsRecordsTarget,
+    setDnsRecordsTarget,
+    connectionCount,
+    providerZones,
+    connections,
+    verifyConnectionById,
+    resolveServerHosting,
+    hostingFor,
+    isHostingResolving,
+  } = useStore()
   const allConnections = useMemo(() => Object.values(connections).flat(), [connections])
-  // Show the ACCOUNT column only when more than one account is connected (else
-  // it's the same label on every editable row — just noise).
   const showAccount = connectionCount >= 2
   const { height } = useTerminalDimensions()
   const [index, setIndex] = useState(0)
   const [flash, setFlash] = useState<string | null>(null)
   const server = dnsInventoryServer
 
-  // Kick off resolution for any un-cached domains when the overlay opens.
+  // Kick off zone-host resolution when the overlay opens.
   useEffect(() => {
     if (server) lookupServerDns(server.id)
   }, [server, lookupServerDns])
 
-  // Verify any configured-but-not-yet-verified connections so `✓` access appears
-  // without a manual re-verify (e.g. connections from a prior session or env).
-  // Cached ones are left alone; re-verify is on demand (connect overlay `v`).
+  // Resolve hosting records once their zone NS are known — re-runs as zones land
+  // (already-resolved/in-flight hostnames are skipped, so this is cheap).
   useEffect(() => {
-    for (const c of allConnections) {
-      if (!providerZones.has(c.id)) verifyConnectionById(c.id)
-    }
-    // providerZones intentionally omitted: verify once per connection, not on each
-    // cache update (which would re-fire mid-flight).
+    if (server) resolveServerHosting(server)
+  }, [server, dnsZones, resolveServerHosting])
+
+  // Verify configured-but-unverified connections so `✓` access appears without a
+  // manual re-verify.
+  useEffect(() => {
+    for (const c of allConnections) if (!providerZones.has(c.id)) verifyConnectionById(c.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allConnections, verifyConnectionById])
 
@@ -90,12 +132,11 @@ export function DnsInventory() {
     [server, sitesForServer],
   )
 
-  // Build the zone-keyed rows. Recomputes as lookups land (dnsZones changes).
-  const { rows, summary, resolvedZones, totalZones } = useMemo(() => {
-    const out: ZoneRow[] = []
-    const tally = new Map<string, number>() // host label → zone count
-    let total = 0
-    let resolved = 0
+  const { rows, summary, pending } = useMemo(() => {
+    const out: InvRow[] = []
+    let zoneCount = 0
+    let hereCount = 0
+    let resolving = false
 
     for (const site of sites) {
       const entries = [
@@ -104,7 +145,6 @@ export function DnsInventory() {
       ]
       const primaryApex = zoneForDomain(site.domain)?.zone?.apex ?? normalizeDomain(site.domain)
 
-      // Group the site's domains by zone apex.
       const groups = new Map<string, { apex: string; entries: typeof entries }>()
       for (const e of entries) {
         const apex = zoneForDomain(e.domain)?.zone?.apex ?? normalizeDomain(e.domain)
@@ -112,67 +152,115 @@ export function DnsInventory() {
         g.entries.push(e)
         groups.set(apex, g)
       }
-
-      // Primary zone first, then alphabetical.
       const ordered = [...groups.values()].sort((a, b) =>
         a.apex === primaryApex ? -1 : b.apex === primaryApex ? 1 : a.apex.localeCompare(b.apex),
       )
 
       ordered.forEach((g, idx) => {
-        total++
+        zoneCount++
         const cached = zoneForDomain(g.entries[0].domain)
-        const resolving = g.entries.some((e) => dnsResolving.has(normalizeDomain(e.domain)))
-        let host: string
-        let hostColor: string
+        const zoneResolving = g.entries.some((e) => dnsResolving.has(normalizeDomain(e.domain)))
         const hostKey = cached?.zone?.providerKey ?? ""
         const liveNs = cached?.zone?.nameservers ?? []
+        let host: string
+        let hostColor: string
         if (cached === undefined) {
-          host = resolving ? "looking up…" : "—"
-          hostColor = resolving ? theme.textDim : theme.textFaint
+          host = zoneResolving ? "looking up…" : "—"
+          hostColor = zoneResolving ? theme.textDim : theme.textFaint
+          resolving = resolving || zoneResolving
         } else if (cached.zone === null) {
           host = "no host found"
           hostColor = theme.warn
-          resolved++
         } else {
           host = cached.zone.providerLabel
           hostColor = theme.accent
-          resolved++
-          tally.set(host, (tally.get(host) ?? 0) + 1)
         }
-        // A note only when this zone is NOT the canonical one and redirects away.
         const isPrimaryZone = g.apex === primaryApex
         const redirect = g.entries.find((e) => e.redirect?.enabled)?.redirect
         const note = !isPrimaryZone && redirect ? `→ redirects to ${redirect.destination}` : ""
+        const access = accessForZone(g.apex, hostKey, liveNs)
+
         out.push({
+          kind: "zone",
           siteDomain: site.domain,
           showSite: idx === 0,
           status: site.status,
-          zone: g.apex,
+          apex: g.apex,
           hostKey,
           host,
           hostColor,
-          access: accessForZone(g.apex, hostKey, liveNs),
+          access,
           account: accountForZone(g.apex, hostKey, liveNs),
+          liveNs,
           note,
           checkedAt: cached?.checkedAt ?? null,
         })
+
+        // Nested hosting records: the site's hostnames in this zone (apex first).
+        const hosts = candidateHostnames(g.entries.map((e) => e.domain)).sort((a, b) =>
+          a === g.apex ? -1 : b === g.apex ? 1 : a.localeCompare(b),
+        )
+        for (const name of hosts) {
+          const hr = hostingFor(name)
+          if (hr && hr.type === "none") continue // no record for this hostname — nothing to migrate
+          const isResolving = isHostingResolving(name) || (!hr && cached?.zone != null)
+          if (hr?.pointsHere) hereCount++
+          if (!hr && isResolving) resolving = true
+          out.push({
+            kind: "record",
+            apex: g.apex,
+            hostKey,
+            access,
+            liveNs,
+            name,
+            recordType: hr?.type ?? "",
+            ttl: hr?.ttl ?? null,
+            value: hr?.value ?? "",
+            pointsHere: hr?.pointsHere ?? false,
+            resolving: !hr,
+          })
+        }
       })
     }
 
-    const parts = [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([label, n]) => `${n} ${label}`)
-    const pending = total - resolved
-    if (pending > 0) parts.push(`${pending} resolving`)
-    const summary = `${total} zone${total === 1 ? "" : "s"}${parts.length ? " · " + parts.join(" · ") : ""}`
-    return { rows: out, summary, resolvedZones: resolved, totalZones: total }
-  }, [sites, dnsZones, dnsResolving, zoneForDomain, accessForZone, accountForZone])
+    const summary = `${zoneCount} zone${zoneCount === 1 ? "" : "s"}${hereCount ? ` · ${hereCount} point${hereCount === 1 ? "s" : ""} here` : ""}`
+    return { rows: out, summary, pending: resolving }
+  }, [sites, dnsZones, dnsResolving, zoneForDomain, accessForZone, accountForZone, hostingFor, isHostingResolving])
 
   const safeIndex = Math.min(index, Math.max(0, rows.length - 1))
   const close = () => setDnsInventoryServer(null)
 
+  function openDrill(r: InvRow) {
+    if (r.access === "web") return openWeb(r)
+    if (r.access !== "editable") return showFlash("Connect API access first — press c")
+    const conn = connForZone(r.apex, r.hostKey, r.liveNs)
+    if (!conn) return showFlash("No reachable account for this zone — press c")
+    const focus = r.kind === "record" && r.recordType ? { name: r.name, type: r.recordType } : undefined
+    setDnsRecordsTarget({ apex: r.apex, hostKey: r.hostKey, connId: conn.id, focus })
+  }
+
+  function openWeb(r: InvRow) {
+    const con = consoleForHost(r.hostKey)
+    if (con) {
+      copyToClipboard(r.apex)
+      openUrl(con.url)
+      showFlash(`${con.label} opened · ${r.apex} copied`)
+    } else {
+      showFlash("No web console for this host — c to manage access")
+    }
+  }
+
+  function showFlash(msg: string) {
+    if (!msg) return
+    setFlash(msg)
+    setTimeout(() => setFlash(null), 2200)
+  }
+
   useKeyboard((key) => {
-    if (connectZoneTarget) return // the connect overlay (on top) owns the keyboard
+    if (connectZoneTarget || dnsRecordsTarget) return // an overlay on top owns the keyboard
     const raw = key.name ?? ""
     const name = key.shift && raw.length === 1 ? raw.toUpperCase() : raw
+    const r = rows[safeIndex]
     switch (name) {
       case "escape":
       case "q":
@@ -184,76 +272,60 @@ export function DnsInventory() {
       case "j":
         return setIndex((i) => moveSelection(i, 1, rows.length))
       case "r":
-        if (server) lookupServerDns(server.id, true)
+        if (server) {
+          lookupServerDns(server.id, true)
+          resolveServerHosting(server, true)
+        }
         return
-      case "c": {
-        // Manage access for the selected zone: connect an API provider, or open
-        // the web console for a host we can't drive via API.
-        const r = rows[safeIndex]
+      case "return":
+      case "right":
+      case "l":
+      case "t":
+        if (r) openDrill(r)
+        return
+      case "c":
         if (!r) return
-        if (apiProviderFor(r.hostKey)) setConnectZoneTarget({ apex: r.zone, hostKey: r.hostKey })
+        if (apiProviderFor(r.hostKey)) setConnectZoneTarget({ apex: r.apex, hostKey: r.hostKey })
         else openWeb(r)
         return
-      }
-      case "w": {
-        // Quick web handoff for the selected zone (e.g. GoDaddy Clients hub),
-        // copying the domain so it's ready to paste — no overlay round-trip.
-        const r = rows[safeIndex]
+      case "w":
         if (r) openWeb(r)
         return
-      }
     }
   })
 
-  function openWeb(r: ZoneRow) {
-    const con = consoleForHost(r.hostKey)
-    if (con) {
-      copyToClipboard(r.zone)
-      openUrl(con.url)
-      showFlash(`${con.label} opened · ${r.zone} copied`)
-    } else {
-      showFlash("No web console for this host — c to manage access")
-    }
-  }
-
-  function showFlash(msg: string) {
-    if (!msg) return
-    setFlash(msg)
-    setTimeout(() => setFlash(null), 2000)
-  }
-
   if (!server) return null
   const listRows = Math.max(3, height - 7)
-  const oldest = rows.reduce<number | null>((min, r) => (r.checkedAt && (min === null || r.checkedAt < min) ? r.checkedAt : min), null)
+  const oldest = rows.reduce<number | null>(
+    (min, r) => (r.kind === "zone" && r.checkedAt && (min === null || r.checkedAt < min) ? r.checkedAt : min),
+    null,
+  )
 
   return (
     <box style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.bg, zIndex: 216 }}>
       <box style={{ flexDirection: "row", height: 1, backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1, alignItems: "center" }}>
-        <text content={`🌐 DNS hosts · ${truncate(server.name, 28)}  `} fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={`🌐 DNS · ${truncate(server.name, 26)}  `} fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} />
         <text content={summary} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
         <box style={{ flexGrow: 1 }} />
-        {resolvedZones < totalZones ? <Spinner color={theme.brand} interval={120} /> : null}
+        {pending ? <Spinner color={theme.brand} interval={120} /> : null}
       </box>
 
-      {/* Column header — fixed widths so SITE/ZONE/HOST/ACCESS line up on every row;
-          the leading "  " matches the status-dot cell. NOTE (last) flexes to fill. */}
+      {/* Column header. SITE/zone-or-record name align across both row kinds. */}
       <box style={{ flexDirection: "row", paddingLeft: 1, paddingRight: 1, height: 1 }}>
         <text content={"  " + "SITE".padEnd(SITE_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={"ZONE".padEnd(ZONE_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={"HOST".padEnd(HOST_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={"ACCESS".padEnd(ACCESS_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        {showAccount ? <text content={"ACCOUNT".padEnd(ACCOUNT_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
-        <text content="NOTE" fg={theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+        <text content={"ZONE / RECORD".padEnd(NAME_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={"TYPE".padEnd(TYPE_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={"TTL".padEnd(TTL_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content="VALUE / HOST" fg={theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
       </box>
 
-      {/* Access legend — teaches the glyphs + the c action in-context. */}
+      {/* Legend — teaches access glyphs + the "points here" flag in-context. */}
       <box style={{ flexDirection: "row", paddingLeft: 1, paddingRight: 1, height: 1 }}>
-        <text content="ACCESS  " fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
         <text content="✓ editable" fg={theme.good} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content="   ↗ web only" fg={theme.accent} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content="   ↗ web" fg={theme.accent} wrapMode="none" style={{ flexShrink: 0 }} />
         <text content="   ○ needs key" fg={theme.warn} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content="   · unknown" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content="    c manage access" fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+        <text content="   ◀ here = points at this server" fg={theme.good} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content="    ⏎ edit TTL · c access" fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
       </box>
 
       <box style={{ flexGrow: 1, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}>
@@ -266,31 +338,18 @@ export function DnsInventory() {
             viewportRows={listRows}
             focused
             keyFor={(_r, i) => i}
-            emptyText="—"
-            renderRow={(r, selected) => {
-              const acc = accessGlyph(r.access, selected)
-              return (
-                <>
-                  <text content={r.showSite ? statusDot(r.status) + " " : "  "} fg={statusColor(r.status)} style={{ flexShrink: 0 }} />
-                  <text content={(r.showSite ? truncate(r.siteDomain, SITE_W - 1) : "").padEnd(SITE_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
-                  <text content={truncate(r.zone, ZONE_W - 1).padEnd(ZONE_W)} fg={theme.text} wrapMode="none" style={{ flexShrink: 0 }} />
-                  <text content={truncate(r.host, HOST_W - 1).padEnd(HOST_W)} fg={selected ? theme.text : r.hostColor} wrapMode="none" style={{ flexShrink: 0 }} />
-                  <text content={(acc.glyph + " ").padEnd(ACCESS_W)} fg={acc.color} wrapMode="none" style={{ flexShrink: 0 }} />
-                  {showAccount ? <text content={truncate(r.account, ACCOUNT_W - 1).padEnd(ACCOUNT_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
-                  <text content={r.note} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
-                </>
-              )
-            }}
+            renderRow={(r, selected) => (r.kind === "zone" ? renderZone(r, selected) : renderRecord(r, selected))}
           />
         )}
       </box>
 
       <StatusBar
         hints={[
-          { key: "↑↓/jk", label: "scroll" },
+          { key: "↑↓/jk", label: "select" },
+          { key: "⏎", label: "edit TTL" },
           { key: "c", label: "manage access" },
           { key: "w", label: "web console" },
-          { key: "r", label: "refresh lookups" },
+          { key: "r", label: "refresh" },
           { key: "esc", label: "close" },
         ]}
         message={flash ?? (oldest ? `checked ${timeAgo(new Date(oldest).toISOString())}` : undefined)}
@@ -299,4 +358,43 @@ export function DnsInventory() {
       />
     </box>
   )
+
+  function renderZone(r: Extract<InvRow, { kind: "zone" }>, selected: boolean) {
+    const acc = accessGlyph(r.access, selected)
+    return (
+      <>
+        <text content={r.showSite ? statusDot(r.status) + " " : "  "} fg={statusColor(r.status)} style={{ flexShrink: 0 }} />
+        <text content={(r.showSite ? truncate(r.siteDomain, SITE_W - 1) : "").padEnd(SITE_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={truncate(r.apex, NAME_W - 1).padEnd(NAME_W)} fg={selected ? theme.text : theme.text} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={truncate(r.host, HOST_W - 1).padEnd(HOST_W)} fg={selected ? theme.text : r.hostColor} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={(acc.glyph + " ").padEnd(ACCESS_W)} fg={acc.color} wrapMode="none" style={{ flexShrink: 0 }} />
+        {showAccount ? <text content={truncate(r.account, ACCOUNT_W - 1).padEnd(ACCOUNT_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+        <text content={r.note} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+      </>
+    )
+  }
+
+  function renderRecord(r: Extract<InvRow, { kind: "record" }>, selected: boolean) {
+    const ttlFg = selected ? theme.text : theme.accent
+    return (
+      <>
+        <text content="  " style={{ flexShrink: 0 }} />
+        <text content={"".padEnd(SITE_W)} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={("  ↳ " + truncate(r.name, NAME_W - 5)).padEnd(NAME_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
+        {r.resolving ? (
+          <box style={{ flexDirection: "row", width: TYPE_W + TTL_W, flexShrink: 0 }}>
+            <Spinner color={selected ? theme.text : theme.textDim} interval={120} />
+            <text content=" looking up…" fg={selected ? theme.text : theme.textFaint} wrapMode="none" />
+          </box>
+        ) : (
+          <>
+            <text content={r.recordType.padEnd(TYPE_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
+            <text content={formatTtl(r.ttl).padEnd(TTL_W)} fg={ttlFg} wrapMode="none" style={{ flexShrink: 0 }} />
+          </>
+        )}
+        <text content={truncate(r.value, 48)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+        {r.pointsHere ? <text content=" ◀ here" fg={selected ? theme.text : theme.good} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+      </>
+    )
+  }
 }

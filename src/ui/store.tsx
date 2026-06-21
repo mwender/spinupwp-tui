@@ -14,7 +14,8 @@ import type { Stack } from "../lib/stack.ts"
 import { openTerminalAt, openUrl, openSshSession } from "../lib/open.ts"
 import { gitDrift, type Drift } from "../lib/gitStatus.ts"
 import { probeSite } from "../lib/probe.ts"
-import { resolveZone, normalizeDomain } from "../lib/dns.ts"
+import { resolveZone, normalizeDomain, candidateHostnames } from "../lib/dns.ts"
+import { queryAuthoritative } from "../lib/dnsQuery.ts"
 import { DnsCache, type CachedDns } from "../lib/dnsCache.ts"
 import {
   verifyConnection as verifyProviderConnection,
@@ -29,6 +30,7 @@ import {
   type AccessState,
 } from "../lib/providers.ts"
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
+import { recordProviderFor, type DnsRecord, type ListResult } from "../lib/dnsRecords.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
@@ -67,6 +69,37 @@ export interface ServerOpProgress {
 
 export function isServerOpInFlight(p: ServerOpProgress | undefined): boolean {
   return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
+}
+
+// A record TTL change (Phase 3), tracked in the store (same model as the other
+// writes) so it survives the records overlay being closed and a Route 53 change
+// can keep polling to INSYNC in the background. Keyed by the record's stable key.
+// `status`: queued → pending (Route 53 propagating) → done | failed. Cloudflare
+// applies synchronously, so it jumps straight to done.
+export interface TtlWriteProgress {
+  ttl: number
+  status: string
+  error?: string
+}
+const TTL_DONE = "done"
+const TTL_FAIL = "failed"
+const TTL_POLL_MS = 3000
+
+export function isTtlWriteInFlight(p: TtlWriteProgress | undefined): boolean {
+  return p != null && p.status !== TTL_DONE && p.status !== TTL_FAIL
+}
+
+// A resolved website-hosting record for one hostname (apex / www / additional
+// domain), read cred-free from the zone's authoritative NS for the DNS inventory.
+// `type === "none"` means the hostname has no record (e.g. www isn't configured).
+export interface HostRecord {
+  host: string // the hostname (lowercased)
+  apex: string // its zone apex
+  type: string // A | AAAA | CNAME | none
+  ttl: number | null // configured TTL (from the authoritative answer)
+  value: string // record value (IP or CNAME target)
+  pointsHere: boolean // resolves (following CNAMEs) to this server's IP
+  checkedAt: number
 }
 
 export interface DataState {
@@ -183,6 +216,14 @@ interface StoreValue extends DataState {
   // The cached zone-host for a domain (undefined = never looked up).
   zoneForDomain: (domain: string) => CachedDns | undefined
   isDnsResolving: (domain: string) => boolean
+  // Website-hosting records (apex/www/additional + TTLs), keyed by hostname.
+  // Read cred-free from each zone's authoritative NS; resolved lazily once the
+  // zone's NS are known. The migration-focused inventory reads these.
+  hostingRecords: Map<string, HostRecord>
+  // Resolve every site's hosting hostnames on a server (needs the zone NS first).
+  resolveServerHosting: (server: Server, force?: boolean) => void
+  hostingFor: (host: string) => HostRecord | undefined
+  isHostingResolving: (host: string) => boolean
   // The server whose DNS-inventory overlay is open, or null. Set by site views.
   dnsInventoryServer: Server | null
   setDnsInventoryServer: (s: Server | null) => void
@@ -204,9 +245,24 @@ interface StoreValue extends DataState {
   accessForZone: (apex: string, hostKey: string, liveNs: string[]) => AccessState
   // The connection (account) label that owns/serves a zone, or "" if none.
   accountForZone: (apex: string, hostKey: string, liveNs: string[]) => string
+  // The connection (with creds) that serves a zone, or null — drives record editing.
+  connForZone: (apex: string, hostKey: string, liveNs: string[]) => Connection | null
   // The zone whose provider-connect overlay is open (apex + its host key), or null.
   connectZoneTarget: { apex: string; hostKey: string } | null
   setConnectZoneTarget: (t: { apex: string; hostKey: string } | null) => void
+  // The zone whose DNS-records overlay is open (Phase 3: view records + edit TTL),
+  // with the connection id we'll authenticate the record calls with. `focus` (set
+  // when opened from a specific inventory record) pre-selects that record. null = closed.
+  dnsRecordsTarget: { apex: string; hostKey: string; connId: string; focus?: { name: string; type: string } } | null
+  setDnsRecordsTarget: (t: { apex: string; hostKey: string; connId: string; focus?: { name: string; type: string } } | null) => void
+  // In-flight (and just-settled) record TTL changes, keyed by the record key.
+  // Tracked in the store so a Route 53 change keeps polling after the overlay closes.
+  ttlWrites: Map<string, TtlWriteProgress>
+  // List a zone's DNS records via the serving connection (read; on demand).
+  listZoneRecords: (connId: string, apex: string) => Promise<ListResult>
+  // Change a record's TTL via the host's API and follow it to completion.
+  startTtlChange: (connId: string, zoneId: string, record: DnsRecord, ttl: number) => void
+  clearTtlWrite: (key: string) => void
   // Whether a PHP version is past end-of-life (real dates vs today, refreshed).
   isPhpEol: (version: string | null | undefined) => boolean
   // PHP versions to offer in the upgrade picker (dynamic; current always included).
@@ -286,6 +342,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [dnsResolving, setDnsResolving] = useState<Set<string>>(new Set())
   const [dnsInventoryServer, setDnsInventoryServer] = useState<Server | null>(null)
 
+  // Website-hosting record lookups (Phase 3 inventory). In-memory for the session;
+  // resolved on demand once the hostname's zone NS are known. `hostingInFlight`
+  // dedupes concurrent queries without re-rendering.
+  const hostingInFlight = useRef<Set<string>>(new Set())
+  const [hostingRecords, setHostingRecords] = useState<Map<string, HostRecord>>(new Map())
+  const [hostingResolving, setHostingResolving] = useState<Set<string>>(new Set())
+
   // DNS provider connections (Phase 2). Connections hydrate from config (stored +
   // env); their verified zone sets hydrate from disk and re-verify on demand.
   const providersCacheRef = useRef<ProvidersCache | null>(null)
@@ -296,6 +359,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [connections, setConnections] = useState<Record<ConnProvider, Connection[]>>(() => cfgRef.current.providerConnections)
   const [providerZones, setProviderZones] = useState<Map<string, VerifiedConn>>(() => providersCacheRef.current!.snapshot())
   const [connectZoneTarget, setConnectZoneTarget] = useState<{ apex: string; hostKey: string } | null>(null)
+  const [dnsRecordsTarget, setDnsRecordsTarget] = useState<{ apex: string; hostKey: string; connId: string; focus?: { name: string; type: string } } | null>(null)
+  const [ttlWrites, setTtlWrites] = useState<Map<string, TtlWriteProgress>>(new Map())
 
   // PHP EOL dates: embedded defaults overlaid with the last cached fetch; a
   // background refresh (endoflife.date) updates them when the cache is stale.
@@ -708,6 +773,68 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const zoneForDomain = useCallback((domain: string) => dnsZones.get(normalizeDomain(domain)), [dnsZones])
   const isDnsResolving = useCallback((domain: string) => dnsResolving.has(normalizeDomain(domain)), [dnsResolving])
 
+  // ---- Website-hosting record lookups (Phase 3 inventory) --------------------
+
+  // Resolve one hostname's record at its zone's authoritative NS. Records "none"
+  // when the hostname has no record (so it isn't retried); a network miss also
+  // caches none until a forced refresh.
+  const resolveHostingOne = useCallback(async (host: string, apex: string, ns: string[], serverIp: string | null) => {
+    if (hostingInFlight.current.has(host)) return
+    hostingInFlight.current.add(host)
+    setHostingResolving((prev) => new Set(prev).add(host))
+    try {
+      const ans = await queryAuthoritative(host, "A", ns)
+      const own = ans?.find((a) => a.name.toLowerCase() === host)
+      const here = !!(serverIp && ans?.some((a) => a.type === "A" && a.value === serverIp))
+      const rec: HostRecord = own
+        ? { host, apex, type: own.type, ttl: own.ttl, value: own.value, pointsHere: here, checkedAt: Date.now() }
+        : { host, apex, type: "none", ttl: null, value: "", pointsHere: false, checkedAt: Date.now() }
+      setHostingRecords((prev) => new Map(prev).set(host, rec))
+    } finally {
+      hostingInFlight.current.delete(host)
+      setHostingResolving((prev) => {
+        const next = new Set(prev)
+        next.delete(host)
+        return next
+      })
+    }
+  }, [])
+
+  const resolveServerHosting = useCallback(
+    (server: Server, force = false) => {
+      const serverIp = server.ip_address ?? null
+      const hosts = new Set<string>()
+      for (const s of sites) if (s.server_id === server.id) for (const h of candidateHostnames(domainsForSite(s))) hosts.add(h)
+      // Only resolve hostnames whose zone NS we already know (needed to query the
+      // authoritative server). The rest get picked up when their zone lands and
+      // this re-runs (it's cheap — already-resolved/in-flight are skipped).
+      const pool: { host: string; apex: string; ns: string[] }[] = []
+      for (const host of hosts) {
+        if (hostingInFlight.current.has(host)) continue
+        if (!force && hostingRecords.has(host)) continue
+        const z = dnsZones.get(normalizeDomain(host))
+        const ns = z?.zone?.nameservers
+        const apex = z?.zone?.apex
+        if (!ns || ns.length === 0 || !apex) continue
+        pool.push({ host, apex, ns })
+      }
+      if (pool.length === 0) return
+      const CONCURRENCY = 5
+      let cursor = 0
+      const worker = async () => {
+        while (cursor < pool.length) {
+          const { host, apex, ns } = pool[cursor++]
+          await resolveHostingOne(host, apex, ns, serverIp)
+        }
+      }
+      for (let i = 0; i < Math.min(CONCURRENCY, pool.length); i++) void worker()
+    },
+    [sites, dnsZones, hostingRecords, resolveHostingOne],
+  )
+
+  const hostingFor = useCallback((host: string) => hostingRecords.get(host.toLowerCase()), [hostingRecords])
+  const isHostingResolving = useCallback((host: string) => hostingResolving.has(host.toLowerCase()), [hostingResolving])
+
   // ---- DNS provider connections (Phase 2 access detection) -------------------
 
   const genConnId = (provider: ConnProvider) =>
@@ -717,17 +844,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const connectionsFor = useCallback((provider: ConnProvider) => connections[provider], [connections])
 
   // Zones we can reach, keyed by `${provider}:${apex}` → list of candidate
-  // accounts (label + the account-zone's assigned nameservers). Provider-scoped:
-  // a Cloudflare-hosted zone is only reachable via a connected CLOUDFLARE account.
+  // accounts (connection id + label + the account-zone's assigned nameservers).
+  // Provider-scoped: a Cloudflare-hosted zone is only reachable via a connected
+  // CLOUDFLARE account.
   const reachable = useMemo(() => {
-    const m = new Map<string, { label: string; ns: string[] }[]>()
+    const m = new Map<string, { id: string; label: string; ns: string[] }[]>()
     for (const conn of allConnections) {
       const v = providerZones.get(conn.id)
       if (v?.ok)
         for (const z of v.zones) {
           const key = `${conn.provider}:${z.apex}`
           const list = m.get(key) ?? []
-          list.push({ label: conn.label || conn.id, ns: z.nameservers ?? [] })
+          list.push({ id: conn.id, label: conn.label || conn.id, ns: z.nameservers ?? [] })
           m.set(key, list)
         }
     }
@@ -739,23 +867,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // duplicate zones across accounts). When no NS are known (e.g. AWS), fall back
   // to membership — provider-scoping already guarantees the right provider.
   const matchedAccount = useCallback(
-    (apex: string, hostKey: string, liveNs: string[]): { editable: boolean; label: string } => {
+    (apex: string, hostKey: string, liveNs: string[]): { editable: boolean; label: string; id: string } => {
       const prov = apiProviderFor(hostKey)
-      if (!prov) return { editable: false, label: "" }
+      if (!prov) return { editable: false, label: "", id: "" }
       const candidates = reachable.get(`${prov}:${apex}`) ?? []
-      if (candidates.length === 0) return { editable: false, label: "" }
+      if (candidates.length === 0) return { editable: false, label: "", id: "" }
       const withNs = candidates.filter((c) => c.ns.length > 0)
       // If we know any candidate's NS, require a live match to count as editable.
       if (withNs.length > 0 && liveNs.length > 0) {
         const live = withNs.find((c) => nameserversMatch(c.ns, liveNs))
-        if (live) return { editable: true, label: live.label }
+        if (live) return { editable: true, label: live.label, id: live.id }
         // Some candidates have NS but none serve the live zone → only editable if
         // another candidate's NS are unknown (can't disprove it).
         const unknown = candidates.find((c) => c.ns.length === 0)
-        return unknown ? { editable: true, label: unknown.label } : { editable: false, label: "" }
+        return unknown ? { editable: true, label: unknown.label, id: unknown.id } : { editable: false, label: "", id: "" }
       }
       // No NS info to match on → membership (provider-scoped) is the best we have.
-      return { editable: true, label: candidates[0].label }
+      return { editable: true, label: candidates[0].label, id: candidates[0].id }
     },
     [reachable],
   )
@@ -778,6 +906,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const accountForZone = useCallback(
     (apex: string, hostKey: string, liveNs: string[]) => matchedAccount(apex, hostKey, liveNs).label,
     [matchedAccount],
+  )
+
+  const connForZone = useCallback(
+    (apex: string, hostKey: string, liveNs: string[]): Connection | null => {
+      const m = matchedAccount(apex, hostKey, liveNs)
+      if (!m.editable || !m.id) return null
+      return allConnections.find((c) => c.id === m.id) ?? null
+    },
+    [matchedAccount, allConnections],
   )
 
   // Persist the stored (non-env) connections to config, keeping cfgRef in sync.
@@ -854,6 +991,81 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [allConnections, verifyAndCache],
   )
 
+  // ---- DNS record TTL change (Phase 3, first write) -------------------------
+
+  const listZoneRecords = useCallback(
+    async (connId: string, apex: string): Promise<ListResult> => {
+      const conn = allConnections.find((c) => c.id === connId)
+      const provider = conn ? recordProviderFor(conn.provider) : null
+      if (!conn || !provider) return { ok: false, zoneId: "", records: [], error: "No reachable connection for this zone." }
+      return provider.listRecords(conn.creds, apex)
+    },
+    [allConnections],
+  )
+
+  const setTtlWrite = (key: string, progress: TtlWriteProgress) =>
+    setTtlWrites((prev) => new Map(prev).set(key, progress))
+
+  const clearTtlWrite = useCallback(
+    (key: string) =>
+      setTtlWrites((prev) => {
+        if (!prev.has(key)) return prev
+        const next = new Map(prev)
+        next.delete(key)
+        return next
+      }),
+    [],
+  )
+
+  const startTtlChange = useCallback(
+    (connId: string, zoneId: string, record: DnsRecord, ttl: number) => {
+      const existing = ttlWrites.get(record.key)
+      if (existing && isTtlWriteInFlight(existing)) return // one change per record at a time
+
+      const conn = allConnections.find((c) => c.id === connId)
+      const provider = conn ? recordProviderFor(conn.provider) : null
+      if (!conn || !provider) {
+        setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: "Lost the provider connection — reopen the records view." })
+        return
+      }
+
+      const run = async () => {
+        setTtlWrite(record.key, { ttl, status: "queued" })
+        let res
+        try {
+          res = await provider.setTtl(conn.creds, zoneId, record, ttl)
+        } catch (err) {
+          setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: (err as Error).message })
+          return
+        }
+        if (!res.ok) {
+          setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: res.error || "The provider rejected the change." })
+          return
+        }
+        // No poll id (Cloudflare) → already applied. Otherwise poll to INSYNC.
+        if (!res.pollId || !provider.pollChange) {
+          setTtlWrite(record.key, { ttl, status: TTL_DONE })
+          return
+        }
+        const pollId = res.pollId
+        setTtlWrite(record.key, { ttl, status: "pending" })
+        const poll = async () => {
+          try {
+            const status = await provider.pollChange!(conn.creds, pollId)
+            if (status === "done") setTtlWrite(record.key, { ttl, status: TTL_DONE })
+            else if (status === "failed") setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: "The change failed to propagate." })
+            else setTimeout(() => void poll(), TTL_POLL_MS)
+          } catch (err) {
+            setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: (err as Error).message })
+          }
+        }
+        setTimeout(() => void poll(), TTL_POLL_MS)
+      }
+      void run()
+    },
+    [allConnections, ttlWrites],
+  )
+
   const value: StoreValue = {
     servers,
     sites,
@@ -922,6 +1134,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     lookupServerDns,
     zoneForDomain,
     isDnsResolving,
+    hostingRecords,
+    resolveServerHosting,
+    hostingFor,
+    isHostingResolving,
     dnsInventoryServer,
     setDnsInventoryServer,
     connections,
@@ -933,8 +1149,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     verifyConnectionById,
     accessForZone,
     accountForZone,
+    connForZone,
     connectZoneTarget,
     setConnectZoneTarget,
+    dnsRecordsTarget,
+    setDnsRecordsTarget,
+    ttlWrites,
+    listZoneRecords,
+    startTtlChange,
+    clearTtlWrite,
     isPhpEol,
     offeredPhpVersions,
   }

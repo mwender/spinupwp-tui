@@ -21,6 +21,7 @@ import { Discover } from "./views/Discover.tsx"
 import { Forgotten } from "./views/Forgotten.tsx"
 import { DnsInventory } from "./views/DnsInventory.tsx"
 import { ProviderConnect } from "./views/ProviderConnect.tsx"
+import { DnsRecords } from "./views/DnsRecords.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -49,7 +50,8 @@ export function App() {
     store.discoverOpen ||
     store.forgottenOpen ||
     store.dnsInventoryServer !== null ||
-    store.connectZoneTarget !== null
+    store.connectZoneTarget !== null ||
+    store.dnsRecordsTarget !== null
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
   }, [overlayActive, store])
@@ -93,6 +95,9 @@ export function App() {
 
     // The provider-connect overlay owns the keyboard while open.
     if (store.connectZoneTarget) return
+
+    // The DNS-records overlay owns the keyboard while open.
+    if (store.dnsRecordsTarget) return
 
     if (showHelp) {
       if (key.name === "escape" || key.name === "q" || key.name === "?") setShowHelp(false)
@@ -167,6 +172,7 @@ export function App() {
       {store.forgottenOpen && <Forgotten />}
       {store.dnsInventoryServer && <DnsInventory />}
       {store.connectZoneTarget && <ProviderConnect />}
+      {store.dnsRecordsTarget && <DnsRecords />}
     </box>
   )
 }

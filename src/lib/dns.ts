@@ -39,6 +39,22 @@ export function normalizeDomain(domain: string): string {
   return domain.trim().toLowerCase().replace(/\.$/, "").replace(/^www\./, "")
 }
 
+// The website-hosting hostnames for a set of configured site domains: each domain
+// plus its sibling apex/www variant — the records that "count" in a server
+// migration (apex A + www CNAME/A + each additional domain). Lowercased + deduped.
+// Unlike normalizeDomain this does NOT collapse www: www is its own record here.
+export function candidateHostnames(domains: string[]): string[] {
+  const set = new Set<string>()
+  for (const raw of domains) {
+    const d = raw.trim().toLowerCase().replace(/\.$/, "")
+    if (!d || !d.includes(".")) continue
+    set.add(d)
+    if (d.startsWith("www.")) set.add(d.slice(4))
+    else set.add("www." + d)
+  }
+  return [...set]
+}
+
 // The next zone candidate up. Returns null once only a single-label TLD remains
 // (so a dead/unregistered domain can't walk all the way up to the TLD's servers).
 function parentDomain(name: string): string | null {

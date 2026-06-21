@@ -200,15 +200,15 @@ export const PROVIDER_REGISTRY: Record<ConnProvider, ProviderDescriptor> = {
       { name: "secretAccessKey", label: "Secret Access Key", secret: true, placeholder: "secret" },
       { name: "region", label: "Region (optional, default us-east-1)", optional: true, placeholder: "us-east-1" },
     ],
-    guidance: "Use an IAM user scoped to route53:ListHostedZones + ListResourceRecordSets.",
+    guidance: "IAM perms: route53 ListHostedZonesByName + ListResourceRecordSets to view; add ChangeResourceRecordSets + GetChange to edit TTLs.",
     verify: verifyAws,
   },
   cloudflare: {
     key: "cloudflare",
     name: "Cloudflare",
     hostKeys: ["cloudflare"],
-    fields: [{ name: "token", label: "API token — Zone:Read is enough", secret: true, placeholder: "Cloudflare API token" }],
-    guidance: "Create one at dash.cloudflare.com → My Profile → API Tokens.",
+    fields: [{ name: "token", label: "API token — DNS:Read to view, DNS:Edit to change TTLs", secret: true, placeholder: "Cloudflare API token" }],
+    guidance: "Create one at dash.cloudflare.com → My Profile → API Tokens (Zone DNS:Edit to edit records).",
     verify: verifyCloudflare,
   },
   godaddy: {
