@@ -34,7 +34,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -175,6 +175,14 @@ export function Search({ rows }: { rows: number }) {
           else setDbSyncSite(current.site)
         }
         return
+      case "n":
+        // DNS inventory scoped to this site (its domains + records) — the migrate
+        // lens for moving one site to another server.
+        if (current?.kind === "site") {
+          const srv = serverById(current.site.server_id)
+          if (srv) setDnsInventoryServer(srv, current.site.id)
+        }
+        return
       case "h": {
         const srv =
           current?.kind === "server"
@@ -219,6 +227,7 @@ export function Search({ rows }: { rows: number }) {
             { key: "↑↓", label: "select" },
             { key: "o", label: "open" },
             { key: "s", label: "SSH" },
+            { key: "n", label: "DNS" },
             { key: "d", label: "DB backup" },
             ...(localSync ? [{ key: "p", label: "pull to local" }] : []),
             { key: "a", label: "server actions" },
@@ -339,10 +348,14 @@ export function Search({ rows }: { rows: number }) {
 // server gets just the open + server actions.
 type ActionGroup = { title: string; items: [string, string][] }
 
-// The DB backup uses wp-cli on the remote, so it only applies to WordPress sites
-// — omitted for non-WP sites (their `d` keypress is also guarded in the handler).
+// The DB backup/sync use wp-cli, so they only apply to WordPress sites — omitted
+// for non-WP sites (their `d`/`p` keypresses are also guarded in the handler). DNS
+// (`n`) and the rest apply to any site.
 function siteGroups(isWordpress: boolean, localSync: boolean): ActionGroup[] {
-  const remote: [string, string][] = [["s", "SSH into the site"]]
+  const remote: [string, string][] = [
+    ["s", "SSH into the site"],
+    ["n", "DNS records (migrate lens)"],
+  ]
   if (isWordpress) {
     remote.push(["d", "Download DB backup"])
     if (localSync) remote.push(["p", "Pull production DB to local"])
