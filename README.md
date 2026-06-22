@@ -57,6 +57,12 @@ Once you're in, the dashboard looks like this:
   (See "Local working copies" below.)
 - **SSH into a site** — press `s` on a site to open a new terminal already running
   `ssh` into it (`{site_user}@{server_ip}`).
+- **Database backup & sync** — on a linked WordPress site (Search tab), press `d`
+  to download a gzipped production database backup into the copy's `sql/` folder
+  (**read-only on production**), or — opt-in — press `p` to pull production into
+  your **local** database (backs up local first, rewrites URLs, runs your existing
+  `sync.d` hook). Works with Standard WP and Bedrock, no per-site config. (See
+  "Database backup & sync" below.)
 - **DNS hosts & access** — press `n` on a site (or `N` on a server) to see where
   each domain's DNS is hosted, and — if you connect a provider (AWS Route 53 /
   Cloudflare / GoDaddy) — whether you can edit it and through which account. The
@@ -147,7 +153,7 @@ screen) and relaunch, or set the environment variable.
 
 ### Optional settings
 
-Both can be set in `config.json` or via an environment variable:
+These can be set in `config.json` or via an environment variable:
 
 - **`accountSlug`** / `SPINUPWP_ACCOUNT_SLUG` — your SpinupWP account/team slug
   (the first path segment in a SpinupWP URL, e.g. `wenmark-digital-solutions` in
@@ -156,6 +162,15 @@ Both can be set in `config.json` or via an environment variable:
   Without it, `w` opens the SpinupWP dashboard root.
 - **`sshUser`** / `SPINUPWP_SSH_USER` — override the SSH user for the health view
   and stack probes (see "Server health" below).
+- **`localSync`** / `SPINUPWP_LOCAL_SYNC` — opt-in for the **Pull production →
+  local** DB sync (`p`); off by default because it overwrites your local database.
+  **Prefer `"localSync": true` in `config.json`** — it's read from a fixed path
+  (`~/.config/spinupwp-tui/config.json`) so it applies wherever you launch `spinup`
+  from. The environment variable works too, but note a `.env` is only loaded when
+  you launch from the directory that contains it (Bun reads `.env` from the current
+  working directory, not from where the installed command lives) — so a repo or
+  project `.env` won't take effect for the globally-installed `spinup` run from
+  elsewhere. For a persistent, location-independent setting, use `config.json`.
 
 ## Keybindings
 
@@ -169,6 +184,8 @@ Both can be set in `config.json` or via an environment variable:
 | `g` / `G` | Jump to top / bottom |
 | `o` | Open the selected site in your browser |
 | `s` | Open a terminal and SSH into the selected site |
+| `d` | Download a production DB backup into the linked copy (Search; WordPress + linked) |
+| `p` | Pull the production DB into the linked copy — overwrites local; opt-in via `localSync` (Search) |
 | `L` | Link / edit a site's local working copy |
 | `t` / `v` | Open the linked copy in a terminal / its local URL in your browser |
 | `n` | Look up where a site's domains host DNS |
@@ -300,6 +317,44 @@ serve it; the site's details gain a "Local" field, and you can open the copy wit
 
 Config keys: `localRoots` (folders to scan) and `localSites` (per-site path +
 local URL — tool-agnostic: Valet, Cove, LocalWP, Herd, DDEV, …).
+
+## Database backup & sync
+
+For a WordPress site you've **linked** to a local copy, the Search tab can pull
+the production database down — the same idea as a hand-rolled `wp db export` +
+`scp`, without leaving the dashboard. Both actions are **read-only on production**
+(they export; they never write to the live site) and run `ssh`/`scp`
+non-interactively, so your key needs to be loaded in your agent.
+
+- **Download a backup (`d`).** Exports the production database with `wp-cli` into
+  a stage file *outside* the public webroot, gzips it, downloads it into the linked
+  copy's `sql/` folder, and removes the remote copy. Needs **no local WP-CLI** —
+  the export runs on the server. Available whenever a WordPress site is linked. A
+  spinner on the site's row tracks an in-flight download even if you close the
+  overlay; the saved path and size are shown on completion.
+- **Pull production → local (`p`, opt-in).** A full refresh of your **local**
+  database from production: it backs up the local DB first (to
+  `sql/local_<timestamp>.sql.gz`), exports + downloads production, imports it
+  locally, rewrites production URLs → your local URL (`wp search-replace`), and
+  runs an optional `bin/sync.d/post-import.sh` hook if the project has one.
+  **This overwrites your local database**, so it's **off by default** — enable it
+  with `localSync` (see "Optional settings"). It needs a working local WP-CLI; if
+  it's missing you get a clear error rather than a broken run.
+
+Everything is detected automatically, for Standard WP **and** Bedrock:
+
+- the **remote document root** from the API (`/sites/{domain}/files{public_folder}`),
+- the **SSH target** from the site/server (`{site_user}@{server_ip}`),
+- the **local WordPress root** from the linked path (where `wp` runs — wp-config
+  for Standard WP, `wp-cli.yml` for Bedrock),
+- the **local URL** for the rewrite from the link's local URL, falling back to the
+  project's `.env` `WP_HOME`.
+
+If your project already has a `bin/sync.d/post-import.sh` (e.g. Elementor URL
+swaps, plugin toggles), it runs with `WEB_DIR`, `SYNC_REMOTE_HOST`, and
+`SYNC_LOCAL_HOST` set — so existing per-project tweaks carry over with no extra
+configuration. Backups stay **gzipped** in `sql/`; decompress with `gunzip` when
+you need one.
 
 ## DNS hosts & access
 
