@@ -30,6 +30,11 @@ export interface AppConfig {
   // macOS terminal app to open for local working copies (e.g. "iTerm", "Warp").
   // When unset, inferred from $TERM_PROGRAM, falling back to Terminal.
   terminalApp: string | null
+  // Opt-in for the production→local DB sync (`p`). Off by default because it
+  // OVERWRITES the local database and assumes a working local WP dev environment
+  // (WP-CLI + a local DB). The read-only DB backup (`d`) needs neither and stays
+  // available without this. Set "localSync": true in config to enable.
+  localSync: boolean
   // Directories to (eventually) scan for local working copies. Reserved for the
   // Phase 2 auto-discovery pass; unused by Phase 1's manual linking.
   localRoots: string[]
@@ -75,6 +80,7 @@ export interface StoredConfig {
   terminalApp?: string
   localRoots?: string[]
   localSites?: Record<string, LocalLink>
+  localSync?: boolean
   providers?: StoredProviders
 }
 
@@ -144,6 +150,12 @@ export function loadConfig(): AppConfig {
     sshUser: process.env.SPINUPWP_SSH_USER?.trim() || stored.sshUser?.trim() || null,
     accountSlug: process.env.SPINUPWP_ACCOUNT_SLUG?.trim() || stored.accountSlug?.trim() || null,
     terminalApp: process.env.SPINUPWP_TERMINAL_APP?.trim() || stored.terminalApp?.trim() || null,
+    localSync: ((): boolean => {
+      // Env overrides the file when present; otherwise the stored flag (default off).
+      const env = process.env.SPINUPWP_LOCAL_SYNC?.trim()
+      if (env != null && env !== "") return /^(1|true|yes|on)$/i.test(env)
+      return stored.localSync === true
+    })(),
     localRoots: stored.localRoots ?? [],
     localSites: stored.localSites ?? {},
     providerConnections,

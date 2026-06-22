@@ -33,6 +33,8 @@ import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
+import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
+import { planDbSync, runDbSync, type DbSyncProgress, type SyncPlanResult } from "../lib/dbSync.ts"
 
 export type Route = "dashboard" | "servers" | "stacks" | "search" | "events"
 
@@ -153,12 +155,38 @@ interface StoreValue extends DataState {
   openLocalUrl: (siteId: number) => string
   // Open a terminal and SSH into the site (site_user@server_ip). Returns a flash.
   sshSite: (siteId: number) => string
+  // The site whose DB-backup overlay is open, or null. Set by site views.
+  dbBackupSite: Site | null
+  setDbBackupSite: (s: Site | null) => void
+  // In-flight (and just-settled) DB-backup downloads, keyed by site id. Tracked in
+  // the store — not the overlay — so the download survives closing the modal.
+  dbBackups: Map<number, DbBackupProgress>
+  // Resolve a site's backup plan (SSH target, remote docroot, local destination)
+  // or a reason it can't run — used by the overlay's confirm screen.
+  planDbBackupFor: (site: Site) => PlanResult
+  // Export the production DB and download it to the linked project's sql/ dir.
+  startDbBackup: (site: Site) => void
+  clearDbBackup: (siteId: number) => void
+  // The site whose DB-sync overlay is open, or null. Set by site views.
+  dbSyncSite: Site | null
+  setDbSyncSite: (s: Site | null) => void
+  // In-flight (and just-settled) DB syncs, keyed by site id. Tracked in the store
+  // so the (longer, destructive-on-local) sync survives closing the modal.
+  dbSyncs: Map<number, DbSyncProgress>
+  // Resolve a site's sync plan (remote + local detection) or a reason it can't run.
+  planDbSyncFor: (site: Site) => SyncPlanResult
+  // Pull production into the local copy: backup local → export/download prod →
+  // import → search-replace URLs → run post-import hook. Destructive on LOCAL.
+  startDbSync: (site: Site) => void
+  clearDbSync: (siteId: number) => void
   // Local git drift for linked sites, keyed by site id (null = not a git repo,
   // undefined = not yet computed). Computed lazily + cached; cleared on refresh.
   drift: Map<number, Drift | null>
   ensureDrift: (siteId: number, linkPath: string) => void
   // Optional SSH user override for the health view (from env/config).
   sshUser: string | null
+  // Opt-in for the destructive production→local DB sync (`p`); default off.
+  localSync: boolean
   // SpinupWP account slug (from env/config) for building web deep links.
   accountSlug: string | null
   sitesForServer: (serverId: number) => Site[]
@@ -245,6 +273,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
   const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
   const [localLinkSite, setLocalLinkSite] = useState<Site | null>(null)
+  const [dbBackupSite, setDbBackupSite] = useState<Site | null>(null)
+  const [dbBackups, setDbBackups] = useState<Map<number, DbBackupProgress>>(new Map())
+  const [dbSyncSite, setDbSyncSite] = useState<Site | null>(null)
+  const [dbSyncs, setDbSyncs] = useState<Map<number, DbSyncProgress>>(new Map())
   const [localRoots, setLocalRoots] = useState<string[]>(() => [...cfgRef.current.localRoots])
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const [forgottenOpen, setForgottenOpen] = useState(false)
@@ -635,6 +667,79 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [sites, servers],
   )
 
+  // ---- Production DB backup download ------------------------------------
+
+  const setBackup = (siteId: number, progress: DbBackupProgress) =>
+    setDbBackups((prev) => new Map(prev).set(siteId, progress))
+
+  const clearDbBackup = useCallback(
+    (siteId: number) =>
+      setDbBackups((prev) => {
+        if (!prev.has(siteId)) return prev
+        const next = new Map(prev)
+        next.delete(siteId)
+        return next
+      }),
+    [],
+  )
+
+  const planDbBackupFor = useCallback(
+    (site: Site): PlanResult =>
+      planDbBackup(site, servers.find((s) => s.id === site.server_id), cfgRef.current.sshUser, localLinks.get(site.id), new Date()),
+    [servers, localLinks],
+  )
+
+  const startDbBackup = useCallback(
+    (site: Site) => {
+      // Ignore a duplicate request while one is already running for this site.
+      const existing = dbBackups.get(site.id)
+      if (existing && existing.stage !== "done" && existing.stage !== "error") return
+      const res = planDbBackupFor(site)
+      if (!res.ok) {
+        setBackup(site.id, { stage: "error", domain: site.domain, error: res.error })
+        return
+      }
+      void runDbBackup(res.plan, site.domain, (p) => setBackup(site.id, p))
+    },
+    [dbBackups, planDbBackupFor],
+  )
+
+  // ---- Production → local DB sync ---------------------------------------
+
+  const setSync = (siteId: number, progress: DbSyncProgress) =>
+    setDbSyncs((prev) => new Map(prev).set(siteId, progress))
+
+  const clearDbSync = useCallback(
+    (siteId: number) =>
+      setDbSyncs((prev) => {
+        if (!prev.has(siteId)) return prev
+        const next = new Map(prev)
+        next.delete(siteId)
+        return next
+      }),
+    [],
+  )
+
+  const planDbSyncFor = useCallback(
+    (site: Site): SyncPlanResult =>
+      planDbSync(site, servers.find((s) => s.id === site.server_id), cfgRef.current.sshUser, localLinks.get(site.id), new Date()),
+    [servers, localLinks],
+  )
+
+  const startDbSync = useCallback(
+    (site: Site) => {
+      const existing = dbSyncs.get(site.id)
+      if (existing && existing.stage !== "done" && existing.stage !== "error") return
+      const res = planDbSyncFor(site)
+      if (!res.ok) {
+        setSync(site.id, { stage: "error", domain: site.domain, error: res.error })
+        return
+      }
+      void runDbSync(res.plan, site.domain, (p) => setSync(site.id, p))
+    },
+    [dbSyncs, planDbSyncFor],
+  )
+
   // Compute a linked site's git drift once (cached), fire-and-forget. Stable
   // across renders (uses a ref for the dedup set), so views can call it freely
   // from an effect when a linked site comes into view.
@@ -900,6 +1005,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     openLocalTerminal,
     openLocalUrl,
     sshSite,
+    dbBackupSite,
+    setDbBackupSite,
+    dbBackups,
+    planDbBackupFor,
+    startDbBackup,
+    clearDbBackup,
+    dbSyncSite,
+    setDbSyncSite,
+    dbSyncs,
+    planDbSyncFor,
+    startDbSync,
+    clearDbSync,
     drift,
     ensureDrift,
     rebootInfo,
@@ -907,6 +1024,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     rebootInfoErrors,
     loadRebootInfo,
     sshUser: cfgRef.current.sshUser,
+    localSync: cfgRef.current.localSync,
     accountSlug: cfgRef.current.accountSlug,
     sitesForServer,
     serverById,

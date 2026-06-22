@@ -15,6 +15,8 @@ import { Search } from "./views/Search.tsx"
 import { Events } from "./views/Events.tsx"
 import { Health } from "./views/Health.tsx"
 import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
+import { DbBackup } from "./views/DbBackup.tsx"
+import { DbSync } from "./views/DbSync.tsx"
 import { ServerActions } from "./views/ServerActions.tsx"
 import { LocalLinkOverlay } from "./views/LocalLink.tsx"
 import { Discover } from "./views/Discover.tsx"
@@ -44,6 +46,8 @@ export function App() {
     showExplain ||
     store.healthServer !== null ||
     store.phpUpgradeSite !== null ||
+    store.dbBackupSite !== null ||
+    store.dbSyncSite !== null ||
     store.serverActionsServer !== null ||
     store.localLinkSite !== null ||
     store.discoverOpen ||
@@ -75,6 +79,12 @@ export function App() {
 
     // The PHP-upgrade overlay owns the keyboard while open.
     if (store.phpUpgradeSite) return
+
+    // The DB-backup overlay owns the keyboard while open.
+    if (store.dbBackupSite) return
+
+    // The DB-sync overlay owns the keyboard while open.
+    if (store.dbSyncSite) return
 
     // The server-actions overlay owns the keyboard while open.
     if (store.serverActionsServer) return
@@ -161,6 +171,8 @@ export function App() {
       {showExplain && <ExplainOverlay route={store.route} />}
       {store.healthServer && <Health />}
       {store.phpUpgradeSite && <PhpUpgrade />}
+      {store.dbBackupSite && <DbBackup />}
+      {store.dbSyncSite && <DbSync />}
       {store.serverActionsServer && <ServerActions />}
       {store.localLinkSite && <LocalLinkOverlay />}
       {store.discoverOpen && <Discover />}

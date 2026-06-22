@@ -80,6 +80,17 @@ export function sparkline(values: number[], width = 30, max = 100): string {
     .join("")
 }
 
+// Truncate the MIDDLE, keeping the head and tail — for long paths/filenames where
+// both ends matter (e.g. ".../app/sql/site_2026-06-22.sql.gz").
+export function middleTruncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  if (max <= 1) return s.slice(0, Math.max(0, max))
+  const keep = max - 1 // room for the ellipsis
+  const head = Math.ceil(keep / 2)
+  const tail = Math.floor(keep / 2)
+  return s.slice(0, head) + "…" + s.slice(s.length - tail)
+}
+
 export function truncate(s: string | null | undefined, max: number): string {
   if (!s) return ""
   if (s.length <= max) return s

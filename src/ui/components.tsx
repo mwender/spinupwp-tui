@@ -3,7 +3,30 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useKeyboard, usePaste } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../lib/theme.ts"
+import { middleTruncate } from "../lib/format.ts"
 import { isUpgradeInFlight, type PhpUpgradeProgress } from "./store.tsx"
+
+// Shorten a home-relative absolute path for display (~/project/sql/file.sql.gz).
+export function shortPath(path: string): string {
+  const home = process.env.HOME
+  return home && path.startsWith(home + "/") ? "~/" + path.slice(home.length + 1) : path
+}
+
+// A filesystem destination shown as two lines — folder (dim, middle-truncated)
+// above the filename (colored, middle-truncated) — so the filename always stays
+// readable instead of being clipped off the end of one long line.
+export function DestPath({ path, fileColor, width = 62 }: { path: string; fileColor: string; width?: number }) {
+  const s = shortPath(path)
+  const i = s.lastIndexOf("/")
+  const dir = i < 0 ? "" : s.slice(0, i + 1)
+  const file = i < 0 ? s : s.slice(i + 1)
+  return (
+    <box style={{ flexDirection: "column" }}>
+      {dir ? <text content={`  ${middleTruncate(dir, width)}`} fg={theme.textDim} wrapMode="none" /> : null}
+      <text content={`  ${middleTruncate(file, width)}`} fg={fileColor} wrapMode="none" />
+    </box>
+  )
+}
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 

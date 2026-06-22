@@ -9,7 +9,9 @@ import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel, Field, StatusBadge, SiteMetaCell } from "../components.tsx"
+import { Panel, Field, StatusBadge, SiteMetaCell, Spinner } from "../components.tsx"
+import { isDbBackupInFlight } from "../../lib/dbBackup.ts"
+import { isDbSyncInFlight } from "../../lib/dbSync.ts"
 import { List, moveSelection } from "../List.tsx"
 import { ServerDetail, SiteDetail } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
@@ -32,7 +34,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -154,6 +156,25 @@ export function Search({ rows }: { rows: number }) {
       case "s":
         if (current?.kind === "site") flashMsg(sshSite(current.site.id))
         return
+      case "d":
+        // DB backup uses wp-cli on the remote and downloads into the linked copy,
+        // so it needs a WordPress site and a local link.
+        if (current?.kind === "site") {
+          if (!current.site.is_wordpress) flashMsg("Database backup needs WordPress (wp-cli) — this isn't a WP site")
+          else if (!localLinks.has(current.site.id)) flashMsg("Not linked — press L to link a local copy")
+          else setDbBackupSite(current.site)
+        }
+        return
+      case "p":
+        // Pull production → local: opt-in (it overwrites the local DB), and needs
+        // a WordPress site + a local link.
+        if (current?.kind === "site") {
+          if (!localSync) flashMsg('Local sync is off — set "localSync": true in config to enable')
+          else if (!current.site.is_wordpress) flashMsg("Sync needs WordPress (wp-cli) — this isn't a WP site")
+          else if (!localLinks.has(current.site.id)) flashMsg("Not linked — press L to link a local copy")
+          else setDbSyncSite(current.site)
+        }
+        return
       case "h": {
         const srv =
           current?.kind === "server"
@@ -197,10 +218,10 @@ export function Search({ rows }: { rows: number }) {
         : [
             { key: "↑↓", label: "select" },
             { key: "o", label: "open" },
-            { key: "w", label: "SpinupWP" },
-            { key: "u", label: "upgrade PHP" },
+            { key: "s", label: "SSH" },
+            { key: "d", label: "DB backup" },
+            ...(localSync ? [{ key: "p", label: "pull to local" }] : []),
             { key: "a", label: "server actions" },
-            { key: "h", label: "health" },
             { key: "←/esc", label: "back" },
           ]
 
@@ -254,6 +275,30 @@ export function Search({ rows }: { rows: number }) {
                   <text content="SITE" fg={sel ? theme.text : theme.accent} style={{ flexShrink: 0 }} />
                   <text content={" " + statusDot(r.site.status) + " "} fg={statusColor(r.site.status)} style={{ flexShrink: 0 }} />
                   <text content={truncate(r.site.domain, 44)} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1, marginRight: 1 }} />
+                  {(() => {
+                    // Sync (destructive) takes visual priority over a plain backup.
+                    const sy = dbSyncs.get(r.site.id)
+                    if (sy && isDbSyncInFlight(sy))
+                      return (
+                        <box style={{ flexDirection: "row", flexShrink: 0 }}>
+                          <Spinner color={sel ? theme.text : theme.brand} interval={120} />
+                          <text content="⇣ " fg={sel ? theme.text : theme.warn} wrapMode="none" />
+                        </box>
+                      )
+                    if (sy?.stage === "done") return <text content="⇣✓ " fg={sel ? theme.text : theme.good} wrapMode="none" style={{ flexShrink: 0 }} />
+                    if (sy?.stage === "error") return <text content="⇣! " fg={sel ? theme.text : theme.bad} wrapMode="none" style={{ flexShrink: 0 }} />
+                    const b = dbBackups.get(r.site.id)
+                    if (b && isDbBackupInFlight(b))
+                      return (
+                        <box style={{ flexDirection: "row", flexShrink: 0 }}>
+                          <Spinner color={sel ? theme.text : theme.brand} interval={120} />
+                          <text content="⬇ " fg={sel ? theme.text : theme.warn} wrapMode="none" />
+                        </box>
+                      )
+                    if (b?.stage === "done") return <text content="⬇✓ " fg={sel ? theme.text : theme.good} wrapMode="none" style={{ flexShrink: 0 }} />
+                    if (b?.stage === "error") return <text content="⬇! " fg={sel ? theme.text : theme.bad} wrapMode="none" style={{ flexShrink: 0 }} />
+                    return null
+                  })()}
                   <SiteMetaCell
                     linked={localLinks.has(r.site.id)}
                     updates={(r.site.wp_plugin_updates || 0) + (r.site.wp_theme_updates || 0) + (r.site.wp_core_update ? 1 : 0)}
@@ -273,6 +318,7 @@ export function Search({ rows }: { rows: number }) {
             <ActionsCard
               result={current}
               serverName={current.kind === "site" ? (serverById(current.site.server_id)?.name ?? "—") : current.server.name}
+              localSync={localSync}
             />
           ) : current.kind === "server" ? (
             <ServerDetail server={current.server} siteCount={store.sitesForServer(current.server.id).length} />
@@ -287,30 +333,46 @@ export function Search({ rows }: { rows: number }) {
   )
 }
 
-// Compact action menu shown in the Details pane while in "actions" focus. Lists
-// the keys live for the selected result (a site gets the full suite; a server
-// gets web/health), so the available actions are discoverable, not hidden.
-function ActionsCard({ result, serverName }: { result: Result; serverName: string }) {
+// Site Control panel shown in the Details pane while in "actions" focus. Groups
+// the live single-key actions (Open / Remote / Local / Server) so the suite is
+// discoverable and scales as more actions land. A site gets the full set; a
+// server gets just the open + server actions.
+type ActionGroup = { title: string; items: [string, string][] }
+
+// The DB backup uses wp-cli on the remote, so it only applies to WordPress sites
+// — omitted for non-WP sites (their `d` keypress is also guarded in the handler).
+function siteGroups(isWordpress: boolean, localSync: boolean): ActionGroup[] {
+  const remote: [string, string][] = [["s", "SSH into the site"]]
+  if (isWordpress) {
+    remote.push(["d", "Download DB backup"])
+    if (localSync) remote.push(["p", "Pull production DB to local"])
+  }
+  remote.push(["u", "Upgrade PHP version"])
+  return [
+    { title: "Open", items: [["o", "Open site in browser"], ["w", "Open in SpinupWP"]] },
+    { title: "Remote", items: remote },
+    {
+      title: "Local",
+      items: [
+        ["t", "Open working copy in a terminal"],
+        ["v", "Open the local URL"],
+        ["L", "Link / edit local copy"],
+      ],
+    },
+    { title: "Server", items: [["a", "Server actions (reboot / restart)"], ["h", "Server health"]] },
+  ]
+}
+
+const SERVER_GROUPS: ActionGroup[] = [
+  { title: "Open", items: [["w", "Open in SpinupWP"]] },
+  { title: "Server", items: [["a", "Server actions (reboot / restart)"], ["h", "Server health"]] },
+]
+
+function ActionsCard({ result, serverName, localSync }: { result: Result; serverName: string; localSync: boolean }) {
   const isSite = result.kind === "site"
   const name = isSite ? result.site.domain : result.server.name
   const status = isSite ? result.site.status : result.server.connection_status
-  const actions: [string, string][] = isSite
-    ? [
-        ["o", "Open site in browser"],
-        ["w", "Open in SpinupWP"],
-        ["s", "SSH into the site (opens a terminal)"],
-        ["u", "Upgrade PHP version"],
-        ["t", "Open local working copy in a terminal"],
-        ["v", "Open the local URL in your browser"],
-        ["L", "Link / edit local working copy"],
-        ["a", "Server actions (reboot / restart)"],
-        ["h", "Server health"],
-      ]
-    : [
-        ["w", "Open in SpinupWP"],
-        ["a", "Server actions (reboot / restart)"],
-        ["h", "Server health"],
-      ]
+  const groups = isSite ? siteGroups(result.site.is_wordpress, localSync) : SERVER_GROUPS
   return (
     <box style={{ flexDirection: "column" }}>
       <box style={{ flexDirection: "row" }}>
@@ -335,11 +397,16 @@ function ActionsCard({ result, serverName }: { result: Result; serverName: strin
         </>
       )}
       <box style={{ height: 1 }} />
-      <text content="Actions" fg={theme.accent} />
-      {actions.map(([k, label]) => (
-        <box key={k} style={{ flexDirection: "row" }}>
-          <text content={` ${k} `} fg={theme.bg} bg={theme.brandDim} style={{ flexShrink: 0 }} />
-          <text content={`  ${label}`} fg={theme.text} wrapMode="none" />
+      <text content="Site Control" fg={theme.accent} />
+      {groups.map((group) => (
+        <box key={group.title} style={{ flexDirection: "column" }}>
+          <text content={group.title.toUpperCase()} fg={theme.textFaint} wrapMode="none" />
+          {group.items.map(([k, label]) => (
+            <box key={k} style={{ flexDirection: "row" }}>
+              <text content={` ${k} `} fg={theme.bg} bg={theme.brandDim} style={{ flexShrink: 0 }} />
+              <text content={`  ${label}`} fg={theme.text} wrapMode="none" />
+            </box>
+          ))}
         </box>
       ))}
       <box style={{ height: 1 }} />
