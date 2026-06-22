@@ -11,6 +11,39 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Edit DNS record TTLs — the first DNS write.** From the DNS view, press `⏎` on a
+  site's hosting record to open a focused editor and change its TTL (a preset or a
+  custom value). This is the prep step for a low-risk server migration: lower the TTL
+  before you cut over, then restore it after. Writes go to **AWS Route 53** or
+  **Cloudflare** through your connected account, behind a confirm step. An edit-time
+  safety check re-reads the live nameservers and **blocks the write** if the account's
+  zone isn't the one actually serving the domain — so you can't edit a stale or
+  duplicate copy. Route 53 changes are followed to completion; the record shows an
+  "updating" status that keeps ticking even if you leave the view.
+- **Open the DNS view scoped to one site.** Press `n` on a site (Servers or Search)
+  to open the inventory for just that site's domains and records — the view you want
+  when migrating a single site. Press `a` inside to expand to the whole server.
+
+### Changed
+- **The DNS view is now a migration lens, organized by site.** It shows only the
+  records that "count" when you move a site — each **site** on its own line (labeled
+  by the site's own domain, even when it's a subdomain), its hosting record's
+  type / TTL / value, a `◀ here` flag when the record points at this server, and a
+  `+www` tag when `www` simply follows the apex. A site's additional domains nest
+  beneath it, so a domain portfolio reads as one site, not many. TTLs are shown in
+  **seconds** (e.g. `3600`), and editing happens in place — there's no full-zone
+  record list to get lost in.
+
+### Notes
+- Only the **TTL** is editable so far (repointing a record's target is a later step).
+  Cloudflare **proxied** records are read-only (their TTL is managed by Cloudflare).
+  By design the view only ever touches a site's own hosting records — your MX, TXT,
+  and other zone records are never shown or modified, so moving a site can't take
+  down its email.
+- Editing a Cloudflare record needs a token scoped to `Zone.DNS:Edit` (the read-only
+  `Zone:Read` token from the host inventory isn't enough).
+
 ## [0.6.0] - 2026-06-20
 
 ### Added

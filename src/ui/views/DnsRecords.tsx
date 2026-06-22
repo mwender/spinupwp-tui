@@ -1,15 +1,17 @@
-// DNS records overlay — Phase 3, the module's first record-level write.
+// Focused TTL editor — Phase 3, the migration record manager's first write.
 //
-// Opened with Enter/t on an EDITABLE zone in the DNS inventory (one whose host we
-// hold a verified API key for). Lists the zone's records straight from the host
-// (Route 53 / Cloudflare) and lets you change a single field — the TTL — through
-// the same confirm-before-firing flow as the PHP upgrade. The write + its polling
-// live in the store (startTtlChange), so closing this modal doesn't abandon a
-// Route 53 change mid-propagation.
+// Opened with Enter on a hosting record in the DNS inventory (one whose host we
+// hold a verified API key for). This is NOT a zone editor: it reads and edits the
+// ONE record it was handed (no zone listing), so the only records reachable here
+// are a site's own hosting records — MX/TXT/DKIM/etc. are never even fetched. You
+// change a single field — the TTL — through the same confirm-before-firing flow as
+// the PHP upgrade. The write + its polling live in the store (startTtlChange), so
+// closing this modal doesn't abandon a Route 53 change mid-propagation.
 //
-// Only the TTL is editable here, and only where that's well-defined: alias /
-// routing-policy / proxied records surface read-only with a short reason. Record
-// listing is on-demand and ephemeral (no disk cache) — re-opening re-fetches.
+// Target/IP repointing (step 3 of the cutover loop) is the next write; for now only
+// the TTL is editable, and only where that's well-defined — an alias / routing-policy
+// / proxied record opens read-only with a short reason. The read is on-demand and
+// ephemeral (no disk cache) — re-opening re-fetches.
 
 import { useEffect, useMemo, useState } from "react"
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
@@ -18,18 +20,13 @@ import { truncate } from "../../lib/format.ts"
 import { apiProviderFor, PROVIDER_REGISTRY, normNameservers, nameserversMatch } from "../../lib/providers.ts"
 import { resolveZone } from "../../lib/dns.ts"
 import { TTL_PRESETS, formatTtl, validateTtl, defaultTtlFor, type DnsRecord } from "../../lib/dnsRecords.ts"
-import { List, moveSelection } from "../List.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { Panel, Spinner, Centered } from "../components.tsx"
+import { moveSelection } from "../List.tsx"
 import { useStore } from "../store.tsx"
 import { isTtlWriteInFlight } from "../store.tsx"
 
-const NAME_W = 30
-const TYPE_W = 7
-const TTL_W = 9
-const FLAG_W = 11
-
-type Phase = "list" | "pick" | "custom" | "confirm" | "tracking"
+type Phase = "pick" | "custom" | "confirm" | "tracking"
 type LoadState = "loading" | "ready" | "error"
 
 // A TTL option in the picker. ttl = -1 is the "Custom…" sentinel.
@@ -40,7 +37,7 @@ interface TtlOption {
 const CUSTOM_TTL = -1
 
 export function DnsRecords() {
-  const { dnsRecordsTarget, setDnsRecordsTarget, listZoneRecords, startTtlChange, clearTtlWrite, ttlWrites, setInputMode } = useStore()
+  const { dnsRecordsTarget, setDnsRecordsTarget, getZoneRecord, startTtlChange, clearTtlWrite, ttlWrites, setInputMode } = useStore()
   const target = dnsRecordsTarget
   const provider = target ? apiProviderFor(target.hostKey) : null
   const providerName = provider ? PROVIDER_REGISTRY[provider].name : ""
@@ -48,10 +45,9 @@ export function DnsRecords() {
 
   const [loadState, setLoadState] = useState<LoadState>("loading")
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [records, setRecords] = useState<DnsRecord[]>([])
+  const [record, setRecord] = useState<DnsRecord | null>(null)
   const [zoneId, setZoneId] = useState("")
-  const [index, setIndex] = useState(0)
-  const [phase, setPhase] = useState<Phase>("list")
+  const [phase, setPhase] = useState<Phase>("pick")
   const [pickIndex, setPickIndex] = useState(0)
   const [custom, setCustom] = useState("")
   const [customError, setCustomError] = useState<string | null>(null)
@@ -68,41 +64,33 @@ export function DnsRecords() {
 
   const apex = target?.apex ?? ""
 
-  // Load the zone's records when the overlay opens.
+  // Load the single hosting record when the overlay opens. We re-dig the FRESH live
+  // NS in parallel — the NS-match gate compares it against the zone's apex NS.
   useEffect(() => {
     if (!target) return
     let cancelled = false
-    const apexLc = target.apex.toLowerCase()
     setLoadState("loading")
     setNs(null)
-    // List the records and re-dig the FRESH live NS in parallel — the NS-match
-    // gate compares the live NS against the zone's own apex NS record.
-    void Promise.all([listZoneRecords(target.connId, target.apex), resolveZone(target.apex)]).then(([res, liveZone]) => {
+    void Promise.all([getZoneRecord(target.connId, target.apex, target.record.name, target.record.type), resolveZone(target.apex)]).then(([res, liveZone]) => {
       if (cancelled) return
-      if (res.ok) {
-        const sorted = [...res.records].sort((a, b) => a.name.localeCompare(b.name) || a.type.localeCompare(b.type))
-        setRecords(sorted)
+      if (res.ok && res.record) {
+        setRecord(res.record)
         setZoneId(res.zoneId)
         setLoadState("ready")
-        // When opened from a specific inventory record, land the cursor on it.
-        if (target.focus) {
-          const fn = target.focus.name.toLowerCase()
-          const i = sorted.findIndex((r) => r.name.toLowerCase() === fn && r.type === target.focus!.type)
-          if (i >= 0) setIndex(i)
-        }
-        // The zone's declared NS = its apex NS record (Route 53 returns it; some
-        // hosts don't, in which case we can't compare and don't block).
-        const apexNs = res.records.find((r) => r.type === "NS" && r.name.toLowerCase() === apexLc)?.values ?? []
-        setNs({ live: normNameservers(liveZone?.nameservers), zone: normNameservers(apexNs) })
+        // Open the picker cursor on the current value: a preset lands on its row; an
+        // off-list TTL is prepended as "current" at index 0; null (CF auto) → 0.
+        const i = TTL_PRESETS.findIndex((o) => o.ttl === res.record!.ttl)
+        setPickIndex(i >= 0 ? i : 0)
+        setNs({ live: normNameservers(liveZone?.nameservers), zone: normNameservers(res.apexNs) })
       } else {
-        setLoadError(res.error ?? "Couldn't list records.")
+        setLoadError(res.error ?? "Couldn't read this record.")
         setLoadState("error")
       }
     })
     return () => {
       cancelled = true
     }
-  }, [target, listZoneRecords])
+  }, [target, getZoneRecord])
 
   // The custom-TTL input owns the keyboard while it's focused.
   useEffect(() => {
@@ -110,27 +98,14 @@ export function DnsRecords() {
     return () => setInputMode(false)
   }, [phase, setInputMode])
 
-  const safeIndex = Math.min(index, Math.max(0, records.length - 1))
-  const selected = records[safeIndex]
-
-  // Reflect a settled success back into the row so the list shows the new TTL.
-  useEffect(() => {
-    if (!activeKey) return
-    const p = ttlWrites.get(activeKey)
-    if (p?.status === "done") {
-      setRecords((rs) => rs.map((r) => (r.key === activeKey ? { ...r, ttl: p.ttl } : r)))
-    }
-  }, [ttlWrites, activeKey])
-
-  // TTL options for the selected record: presets, the record's current value when
-  // off-list, and a Custom… entry.
+  // TTL options: presets, the record's current value when off-list, and a Custom… entry.
   const ttlOptions = useMemo<TtlOption[]>(() => {
     const opts: TtlOption[] = [...TTL_PRESETS]
-    const cur = selected?.ttl
+    const cur = record?.ttl
     if (cur != null && !opts.some((o) => o.ttl === cur)) opts.unshift({ ttl: cur, label: "current" })
     opts.push({ ttl: CUSTOM_TTL, label: "Custom…" })
     return opts
-  }, [selected])
+  }, [record])
 
   // Tracking display derives from the store, like the PHP-upgrade overlay.
   const progress = activeKey ? ttlWrites.get(activeKey) : undefined
@@ -143,6 +118,8 @@ export function DnsRecords() {
           ? "error"
           : "done"
 
+  const blocked = loadState === "ready" && (nsMismatch || (record != null && !record.editable))
+
   const close = () => {
     // Drop a settled failure so its marker doesn't linger; an in-flight change
     // keeps polling in the store.
@@ -154,16 +131,6 @@ export function DnsRecords() {
   const showFlash = (msg: string) => {
     setFlash(msg)
     setTimeout(() => setFlash(null), 2000)
-  }
-
-  const openPicker = () => {
-    if (!selected) return
-    if (nsMismatch) return showFlash("TTL edits blocked — this account's zone isn't serving the domain live (see ⚠).")
-    if (!selected.editable) return showFlash(`Can't edit this TTL — ${selected.reason ?? "read-only"}.`)
-    // Open the cursor on the current value when it's an option.
-    const i = ttlOptions.findIndex((o) => o.ttl === selected.ttl)
-    setPickIndex(i >= 0 ? i : 0)
-    setPhase("pick")
   }
 
   const chooseTtl = (ttl: number) => {
@@ -181,9 +148,9 @@ export function DnsRecords() {
   }
 
   const fire = () => {
-    if (!target || !selected || targetTtl == null) return
-    startTtlChange(target.connId, zoneId, selected, targetTtl)
-    setActiveKey(selected.key)
+    if (!target || !record || targetTtl == null) return
+    startTtlChange(target.connId, zoneId, record, targetTtl)
+    setActiveKey(record.key)
     setPhase("tracking")
   }
 
@@ -201,36 +168,14 @@ export function DnsRecords() {
       return
     }
     if (raw === "escape" || name === "q") {
-      if (phase === "pick") return setPhase("list")
       if (phase === "confirm") return setPhase("pick")
-      // After a successful change, Esc returns to the (now-updated) record list
-      // rather than closing — so you can edit another record in one sitting.
-      if (phase === "tracking" && dp === "done") {
-        if (activeKey) clearTtlWrite(activeKey)
-        setActiveKey(null)
-        return setPhase("list")
-      }
+      // After a successful change, Esc closes back to the inventory — we KEEP the
+      // settled write so its row there reflects the new TTL (the authoritative host
+      // already has it); only failures are dropped (in close()).
       return close()
     }
 
-    if (loadState !== "ready") return
-
-    if (phase === "list") {
-      switch (name) {
-        case "up":
-        case "k":
-          return setIndex((i) => moveSelection(i, -1, records.length))
-        case "down":
-        case "j":
-          return setIndex((i) => moveSelection(i, 1, records.length))
-        case "return":
-        case "t":
-        case "right":
-        case "l":
-          return openPicker()
-      }
-      return
-    }
+    if (loadState !== "ready" || blocked) return
 
     if (phase === "pick") {
       switch (name) {
@@ -246,7 +191,7 @@ export function DnsRecords() {
           const opt = ttlOptions[pickIndex]
           if (!opt) return
           if (opt.ttl === CUSTOM_TTL) {
-            setCustom(selected ? String(defaultTtlFor(selected)) : "")
+            setCustom(record ? String(defaultTtlFor(record)) : "")
             setCustomError(null)
             return setPhase("custom")
           }
@@ -274,13 +219,13 @@ export function DnsRecords() {
 
   if (!target || !provider) return null
 
-  const listRows = Math.max(3, height - 7)
+  const recLabel = `${truncate(target.record.name || "@", 32)} ${target.record.type}`
 
   return (
     <box style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.bg, zIndex: 235 }}>
       <box style={{ flexDirection: "row", height: 1, backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1, alignItems: "center" }}>
-        <text content={`🔧 DNS records · ${truncate(apex, 36)}  `} fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={providerName} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
+        <text content={`🔧 Edit TTL · ${recLabel}  `} fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={`${truncate(apex, 28)} · ${providerName}`} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
         <box style={{ flexGrow: 1 }} />
         {loadState === "loading" ? <Spinner color={theme.brand} interval={120} /> : null}
       </box>
@@ -292,21 +237,17 @@ export function DnsRecords() {
         </box>
       ) : null}
 
-      {phase === "list" && loadState === "ready" ? renderListHeader() : null}
-
       <box style={{ flexGrow: 1, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}>
         {loadState === "loading" ? (
           <Centered>
-            <text content="Listing records…" fg={theme.textDim} />
+            <text content="Reading record…" fg={theme.textDim} />
           </Centered>
         ) : loadState === "error" ? (
           <Centered>
             <text content={`✕ ${loadError}`} fg={theme.bad} wrapMode="none" />
           </Centered>
-        ) : phase === "list" ? (
-          renderList()
         ) : (
-          <Centered>{renderEditor()}</Centered>
+          <Centered>{renderBody()}</Centered>
         )}
       </box>
 
@@ -314,69 +255,46 @@ export function DnsRecords() {
     </box>
   )
 
-  function renderListHeader() {
-    return (
-      <box style={{ flexDirection: "row", paddingLeft: 1, paddingRight: 1, height: 1 }}>
-        <text content={"NAME".padEnd(NAME_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={"TYPE".padEnd(TYPE_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={"TTL".padEnd(TTL_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={"".padEnd(FLAG_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content="VALUE" fg={theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
-      </box>
-    )
-  }
+  function renderBody() {
+    if (!record) return null
+    const curLabel = formatTtl(record.ttl)
 
-  function renderList() {
-    return (
-      <List
-        items={records}
-        selectedIndex={safeIndex}
-        viewportRows={listRows}
-        focused
-        keyFor={(r) => r.key}
-        emptyText="No records in this zone."
-        renderRow={(r, sel) => {
-          const wp = ttlWrites.get(r.key)
-          const inFlight = isTtlWriteInFlight(wp)
-          const nameFg = sel ? theme.text : r.editable ? theme.text : theme.textFaint
-          const ttlFg = sel ? theme.text : r.editable ? theme.accent : theme.textFaint
-          return (
-            <>
-              <text content={truncate(r.name || "@", NAME_W - 1).padEnd(NAME_W)} fg={nameFg} wrapMode="none" style={{ flexShrink: 0 }} />
-              <text content={truncate(r.type, TYPE_W - 1).padEnd(TYPE_W)} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
-              {inFlight ? (
-                <box style={{ flexDirection: "row", width: TTL_W, flexShrink: 0 }}>
-                  <Spinner color={sel ? theme.text : theme.brand} interval={120} />
-                  <text content={`→${formatTtl(wp!.ttl)}`} fg={sel ? theme.text : theme.warn} wrapMode="none" />
-                </box>
-              ) : (
-                <text content={formatTtl(r.ttl).padEnd(TTL_W)} fg={ttlFg} wrapMode="none" style={{ flexShrink: 0 }} />
-              )}
-              <text
-                content={(r.editable ? "" : `· ${r.reason ?? "read-only"}`).padEnd(FLAG_W)}
-                fg={sel ? theme.text : theme.textFaint}
-                wrapMode="none"
-                style={{ flexShrink: 0 }}
-              />
-              <text content={truncate(r.values.join(" "), 80)} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
-            </>
-          )
-        }}
-      />
-    )
-  }
-
-  function renderEditor() {
-    if (!selected) return null
-    const curLabel = formatTtl(selected.ttl)
+    // NS-mismatch is already shown as the banner; non-editable records open here.
+    if (nsMismatch) {
+      return (
+        <Panel title=" Editing blocked " active>
+          <box style={{ flexDirection: "column", width: 56, paddingTop: 1, paddingBottom: 1 }}>
+            <text content="This connection can't safely edit this record — see the ⚠ above." fg={theme.textDim} wrapMode="none" />
+            <box style={{ height: 1 }} />
+            <text content="Esc to close" fg={theme.textFaint} />
+          </box>
+        </Panel>
+      )
+    }
+    if (!record.editable) {
+      return (
+        <Panel title=" Read-only record " active>
+          <box style={{ flexDirection: "column", width: 56, paddingTop: 1, paddingBottom: 1 }}>
+            <box style={{ flexDirection: "row" }}>
+              <text content={`${truncate(record.name || "@", 28)} `} fg={theme.accent} wrapMode="none" />
+              <text content={record.type} fg={theme.textDim} wrapMode="none" />
+            </box>
+            <box style={{ height: 1 }} />
+            <text content={`Can't edit this TTL — ${record.reason ?? "read-only"}.`} fg={theme.textDim} wrapMode="none" />
+            <box style={{ height: 1 }} />
+            <text content="Esc to close" fg={theme.textFaint} />
+          </box>
+        </Panel>
+      )
+    }
 
     if (phase === "pick") {
       return (
         <Panel title=" Choose a TTL " active>
           <box style={{ flexDirection: "column", width: 44 }}>
             <box style={{ flexDirection: "row" }}>
-              <text content={`${truncate(selected.name || "@", 28)} `} fg={theme.accent} wrapMode="none" />
-              <text content={selected.type} fg={theme.textDim} wrapMode="none" />
+              <text content={`${truncate(record.name || "@", 28)} `} fg={theme.accent} wrapMode="none" />
+              <text content={record.type} fg={theme.textDim} wrapMode="none" />
               <box style={{ flexGrow: 1 }} />
               <text content={`now ${curLabel}`} fg={theme.textFaint} wrapMode="none" />
             </box>
@@ -384,7 +302,7 @@ export function DnsRecords() {
             {ttlOptions.map((o, i) => {
               const sel = i === pickIndex
               const isCustom = o.ttl === CUSTOM_TTL
-              const isCurrent = o.ttl === selected.ttl
+              const isCurrent = o.ttl === record.ttl
               const text = isCustom ? "Custom…" : `${formatTtl(o.ttl)}  (${o.ttl}s)`
               const tag = isCurrent ? "  (current)" : ""
               return (
@@ -418,8 +336,8 @@ export function DnsRecords() {
         <Panel title=" Confirm TTL change " active>
           <box style={{ flexDirection: "column", width: 56, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
-              <text content={`${truncate(selected.name || "@", 28)} `} fg={theme.accent} wrapMode="none" />
-              <text content={selected.type} fg={theme.textDim} wrapMode="none" />
+              <text content={`${truncate(record.name || "@", 28)} `} fg={theme.accent} wrapMode="none" />
+              <text content={record.type} fg={theme.textDim} wrapMode="none" />
             </box>
             <box style={{ flexDirection: "row" }}>
               <text content={`TTL ${curLabel}`} fg={theme.textDim} />
@@ -454,11 +372,11 @@ export function DnsRecords() {
           <box style={{ flexDirection: "column", width: 52, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
               <text content="✓ " fg={theme.good} />
-              <text content={`${truncate(selected.name || "@", 24)} ${selected.type}`} fg={theme.accent} wrapMode="none" />
+              <text content={`${truncate(record.name || "@", 24)} ${record.type}`} fg={theme.accent} wrapMode="none" />
               <text content={` TTL is now ${formatTtl(targetTtl)}`} fg={theme.text} wrapMode="none" />
             </box>
             <box style={{ height: 1 }} />
-            <text content="Esc to return to the records" fg={theme.textFaint} />
+            <text content="Esc to close · r in the inventory to refresh" fg={theme.textFaint} wrapMode="none" />
           </box>
         </Panel>
       )
@@ -477,19 +395,14 @@ export function DnsRecords() {
   }
 
   function hints() {
-    if (loadState !== "ready" && phase === "list") return [{ key: "esc", label: "close" }]
+    if (loadState !== "ready") return [{ key: "esc", label: "close" }]
+    if (blocked) return [{ key: "esc", label: "close" }]
     switch (dp) {
-      case "list":
-        return [
-          { key: "↑↓/jk", label: "record" },
-          { key: "t/⏎", label: "set TTL" },
-          { key: "esc", label: "close" },
-        ]
       case "pick":
         return [
           { key: "↑↓/jk", label: "TTL" },
           { key: "⏎", label: "choose" },
-          { key: "esc", label: "back" },
+          { key: "esc", label: "close" },
         ]
       case "custom":
         return [

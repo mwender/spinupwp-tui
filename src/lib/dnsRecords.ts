@@ -1,13 +1,20 @@
 // DNS record access layer (Phase 3) — the read + first-write slice for editing a
-// record's TTL directly at the host, since SpinupWP's API doesn't manage DNS
-// records. Mirrors the providers.ts registry shape: one descriptor per editable
+// site's hosting records directly at the host, since SpinupWP's API doesn't manage
+// DNS records. Mirrors the providers.ts registry shape: one descriptor per editable
 // provider, so the overlay and store stay provider-agnostic.
 //
-// The unit here is the RECORD (within a zone), not the zone. We only ever touch
-// ONE field — the TTL — so a record is "editable" only when changing its TTL is
-// well-defined: not a Route 53 alias (no TTL), not a routing-policy set (TTL edit
-// would need the whole policy echoed back), and not a Cloudflare proxied record
-// (its TTL is forced to automatic). Everything else surfaces but is read-only.
+// This is a MIGRATION record manager, NOT a zone editor. We never enumerate a zone:
+// reads are scoped to ONE named record (`getRecord`), so by construction the module
+// can't see — let alone touch — MX/TXT/DKIM/other records. That untouchability is
+// the product's safety guarantee (move the site without knocking out email), and it
+// holds host-agnostically: Route 53 scopes via StartRecordName/Type, Cloudflare via
+// the `?name=&type=` filter.
+//
+// We only ever touch the TTL (target/IP repointing is the next write), so a record
+// is "editable" only when changing its TTL is well-defined: not a Route 53 alias (no
+// TTL), not a routing-policy set (TTL edit would need the whole policy echoed back),
+// and not a Cloudflare proxied record (its TTL is forced to automatic). A
+// non-editable record surfaces with a short reason.
 //
 // Two providers are wired: AWS Route 53 (hand-rolled SigV4; the write is an async
 // ChangeResourceRecordSets we poll to INSYNC) and Cloudflare (REST; the PATCH is
@@ -27,10 +34,14 @@ export interface DnsRecord {
   reason?: string // when not editable, the short why (alias / proxied / policy)
 }
 
-export interface ListResult {
+export interface RecordResult {
   ok: boolean
   zoneId: string // provider zone id (needed again for the write); "" on failure
-  records: DnsRecord[]
+  record?: DnsRecord // the single requested record
+  // The zone's declared apex NS records — fuel for the edit-time NS-match gate
+  // (compare to fresh live NS). Omitted by providers whose access is already
+  // NS-matched at connect time (Cloudflare), so the gate simply doesn't apply.
+  apexNs?: string[]
   error?: string
 }
 
@@ -45,9 +56,11 @@ export interface ChangeResult {
 export type ChangeStatus = "pending" | "done" | "failed"
 
 export interface RecordProvider {
-  // List a zone's records (and return the provider zone id for the follow-up write).
-  listRecords(creds: Record<string, string>, apex: string): Promise<ListResult>
-  // Change one record's TTL. `zoneId` comes from listRecords; `record` carries the
+  // Read ONE named record (and return the provider zone id for the follow-up write,
+  // plus the apex NS for the edit-time gate). Scoped on purpose — we never list the
+  // whole zone.
+  getRecord(creds: Record<string, string>, apex: string, name: string, type: string): Promise<RecordResult>
+  // Change one record's TTL. `zoneId` comes from getRecord; `record` carries the
   // values to preserve (Route 53 needs the full set on an upsert).
   setTtl(creds: Record<string, string>, zoneId: string, record: DnsRecord, ttl: number): Promise<ChangeResult>
   // Poll an async change to completion. Only providers that return a pollId set this.
@@ -187,26 +200,30 @@ function parseRoute53Records(xml: string): DnsRecord[] {
   return out
 }
 
+// Scoped read: ListResourceRecordSets starting at a name+type returns records AT or
+// AFTER that name, so we ask for a few and pick the exact match (never the zone).
+async function r53RecordAt(creds: AwsCreds, zoneId: string, name: string, type: string): Promise<{ ok: boolean; records: DnsRecord[]; error?: string }> {
+  const r = await awsGet(creds, "route53", R53_HOST, `${R53_BASE}/hostedzone/${zoneId}/rrset`, { name, type, maxitems: "5" })
+  if (r.status !== 200) return { ok: false, records: [], error: awsErrorMessage(r.body) || `Route 53 HTTP ${r.status}` }
+  return { ok: true, records: parseRoute53Records(r.body) }
+}
+
 const route53: RecordProvider = {
-  async listRecords(rawCreds, apex) {
+  async getRecord(rawCreds, apex, name, type) {
     const creds = awsCreds(rawCreds)
     const zone = await awsZoneId(creds, apex)
-    if (!zone.id) return { ok: false, zoneId: "", records: [], error: zone.error }
-    const records: DnsRecord[] = []
-    const query: Record<string, string> = { maxitems: "300" }
-    // Paginate via NextRecordName/Type (StartRecord* on the follow-up call).
-    for (;;) {
-      const r = await awsGet(creds, "route53", R53_HOST, `${R53_BASE}/hostedzone/${zone.id}/rrset`, query)
-      if (r.status !== 200) return { ok: false, zoneId: "", records: [], error: awsErrorMessage(r.body) || `Route 53 HTTP ${r.status}` }
-      records.push(...parseRoute53Records(r.body))
-      if (!/<IsTruncated>true<\/IsTruncated>/.test(r.body)) break
-      const nextName = r.body.match(/<NextRecordName>([^<]+)<\/NextRecordName>/)?.[1]
-      const nextType = r.body.match(/<NextRecordType>([^<]+)<\/NextRecordType>/)?.[1]
-      if (!nextName || !nextType) break
-      query.name = nextName
-      query.type = nextType
-    }
-    return { ok: true, zoneId: zone.id, records }
+    if (!zone.id) return { ok: false, zoneId: "", error: zone.error }
+    const want = stripDot(name).toLowerCase()
+    const got = await r53RecordAt(creds, zone.id, name, type)
+    if (!got.ok) return { ok: false, zoneId: "", error: got.error }
+    const record = got.records.find((r) => r.name.toLowerCase() === want && r.type === type)
+    if (!record) return { ok: false, zoneId: "", error: `No ${type} record for ${want} in this zone.` }
+    // A second scoped read for the apex NS (the edit-time NS-match gate compares it
+    // to the fresh live NS). Failure here just disables the gate, never the edit.
+    const apexLc = stripDot(apex).toLowerCase()
+    const nsGot = await r53RecordAt(creds, zone.id, apex, "NS")
+    const apexNs = nsGot.records.find((r) => r.type === "NS" && r.name.toLowerCase() === apexLc)?.values ?? []
+    return { ok: true, zoneId: zone.id, record, apexNs }
   },
 
   async setTtl(rawCreds, zoneId, record, ttl) {
@@ -258,36 +275,32 @@ async function cfZoneId(token: string, apex: string): Promise<{ id: string; erro
 }
 
 const cloudflare: RecordProvider = {
-  async listRecords(rawCreds, apex) {
+  async getRecord(rawCreds, apex, name, type) {
     const token = rawCreds.token ?? ""
     const zone = await cfZoneId(token, apex)
-    if (!zone.id) return { ok: false, zoneId: "", records: [], error: zone.error }
-    const records: DnsRecord[] = []
-    let page = 1
-    let totalPages = 1
-    do {
-      const res = await fetch(`${CF_API}/zones/${zone.id}/dns_records?per_page=100&page=${page}`, { headers: cfHeaders(token) })
-      const json = (await res.json().catch(() => undefined)) as
-        | { success?: boolean; errors?: { message?: string }[]; result?: { id: string; type: string; name: string; content: string; ttl: number; proxied?: boolean }[]; result_info?: { total_pages?: number } }
-        | undefined
-      if (!res.ok || !json?.success) return { ok: false, zoneId: "", records: [], error: cfError(json, res.status) }
-      for (const r of json.result ?? []) {
-        const proxied = r.proxied === true
-        records.push({
-          key: r.id,
-          recordId: r.id,
-          name: stripDot(r.name),
-          type: r.type,
-          ttl: r.ttl === 1 ? null : r.ttl, // 1 = Cloudflare "automatic"
-          values: [r.content],
-          editable: !proxied,
-          reason: proxied ? "proxied" : undefined,
-        })
-      }
-      totalPages = json.result_info?.total_pages ?? 1
-      page++
-    } while (page <= totalPages)
-    return { ok: true, zoneId: zone.id, records }
+    if (!zone.id) return { ok: false, zoneId: "", error: zone.error }
+    // Scoped read: filter to the one record by name+type (never the whole zone).
+    const url = `${CF_API}/zones/${zone.id}/dns_records?name=${encodeURIComponent(stripDot(name))}&type=${encodeURIComponent(type)}`
+    const res = await fetch(url, { headers: cfHeaders(token) })
+    const json = (await res.json().catch(() => undefined)) as
+      | { success?: boolean; errors?: { message?: string }[]; result?: { id: string; type: string; name: string; content: string; ttl: number; proxied?: boolean }[] }
+      | undefined
+    if (!res.ok || !json?.success) return { ok: false, zoneId: "", error: cfError(json, res.status) }
+    const r = json.result?.[0]
+    if (!r) return { ok: false, zoneId: "", error: `No ${type} record for ${stripDot(name)} in this zone.` }
+    const proxied = r.proxied === true
+    const record: DnsRecord = {
+      key: r.id,
+      recordId: r.id,
+      name: stripDot(r.name),
+      type: r.type,
+      ttl: r.ttl === 1 ? null : r.ttl, // 1 = Cloudflare "automatic"
+      values: [r.content],
+      editable: !proxied,
+      reason: proxied ? "proxied" : undefined,
+    }
+    // apexNs omitted — Cloudflare access is already NS-matched at connect time.
+    return { ok: true, zoneId: zone.id, record }
   },
 
   async setTtl(rawCreds, zoneId, record, ttl) {

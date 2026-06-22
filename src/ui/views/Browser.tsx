@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, lookupSiteDns, setDnsInventoryServer } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -127,16 +127,11 @@ export function Browser({ rows }: { rows: number }) {
         }
         return
       case "n":
-        // Look up where the selected site's domains host DNS (shows in Details).
-        if (focus === "sites" && sites[siteIndex]) {
-          const s = sites[siteIndex]
-          lookupSiteDns(s)
-          setFlash(`Looking up DNS hosts for ${s.domain}…`)
-          setTimeout(() => setFlash(null), 1500)
-        }
+        // DNS inventory scoped to the selected site (its domains + records).
+        if (focus === "sites" && sites[siteIndex] && server) setDnsInventoryServer(server, sites[siteIndex].id)
         return
       case "N":
-        // Server-wide DNS zone-host inventory (server-scoped, both panes).
+        // Server-wide DNS inventory — every site on the server.
         if (server) setDnsInventoryServer(server)
         return
       case "a":

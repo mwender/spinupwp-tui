@@ -32,7 +32,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -154,6 +154,14 @@ export function Search({ rows }: { rows: number }) {
       case "s":
         if (current?.kind === "site") flashMsg(sshSite(current.site.id))
         return
+      case "n":
+        // DNS inventory scoped to this site (its domains + records) — the migrate
+        // lens for moving one site to another server.
+        if (current?.kind === "site") {
+          const srv = serverById(current.site.server_id)
+          if (srv) setDnsInventoryServer(srv, current.site.id)
+        }
+        return
       case "h": {
         const srv =
           current?.kind === "server"
@@ -197,7 +205,7 @@ export function Search({ rows }: { rows: number }) {
         : [
             { key: "↑↓", label: "select" },
             { key: "o", label: "open" },
-            { key: "w", label: "SpinupWP" },
+            { key: "n", label: "DNS" },
             { key: "u", label: "upgrade PHP" },
             { key: "a", label: "server actions" },
             { key: "h", label: "health" },
@@ -298,6 +306,7 @@ function ActionsCard({ result, serverName }: { result: Result; serverName: strin
     ? [
         ["o", "Open site in browser"],
         ["w", "Open in SpinupWP"],
+        ["n", "DNS records for this site (migrate lens)"],
         ["s", "SSH into the site (opens a terminal)"],
         ["u", "Upgrade PHP version"],
         ["t", "Open local working copy in a terminal"],

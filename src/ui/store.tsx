@@ -30,7 +30,7 @@ import {
   type AccessState,
 } from "../lib/providers.ts"
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
-import { recordProviderFor, type DnsRecord, type ListResult } from "../lib/dnsRecords.ts"
+import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
@@ -80,6 +80,8 @@ export interface TtlWriteProgress {
   ttl: number
   status: string
   error?: string
+  host: string // record hostname (lowercased) — lets the inventory match a write to a row
+  type: string // record type (A / AAAA / CNAME …)
 }
 const TTL_DONE = "done"
 const TTL_FAIL = "failed"
@@ -225,8 +227,12 @@ interface StoreValue extends DataState {
   hostingFor: (host: string) => HostRecord | undefined
   isHostingResolving: (host: string) => boolean
   // The server whose DNS-inventory overlay is open, or null. Set by site views.
+  // `focusSiteId` (optional) scopes the overlay to a single site (opened via `n`);
+  // null shows every site on the server (opened via `N`).
   dnsInventoryServer: Server | null
-  setDnsInventoryServer: (s: Server | null) => void
+  dnsInventoryFocusSiteId: number | null
+  setDnsInventoryServer: (s: Server | null, focusSiteId?: number | null) => void
+  setDnsInventoryFocusSiteId: (id: number | null) => void
   // DNS provider connections (Phase 2), keyed by provider — each is a credential
   // ("account"). The overlay lists + manages them. `providerZones` holds each
   // connection's last verified zone set (hydrated from disk). Secrets persist to
@@ -251,15 +257,17 @@ interface StoreValue extends DataState {
   connectZoneTarget: { apex: string; hostKey: string } | null
   setConnectZoneTarget: (t: { apex: string; hostKey: string } | null) => void
   // The zone whose DNS-records overlay is open (Phase 3: view records + edit TTL),
-  // with the connection id we'll authenticate the record calls with. `focus` (set
-  // when opened from a specific inventory record) pre-selects that record. null = closed.
-  dnsRecordsTarget: { apex: string; hostKey: string; connId: string; focus?: { name: string; type: string } } | null
-  setDnsRecordsTarget: (t: { apex: string; hostKey: string; connId: string; focus?: { name: string; type: string } } | null) => void
+  // with the connection id we'll authenticate the record calls with. `record` is the
+  // single hosting record to edit (migration lens — never a whole zone). null = closed.
+  dnsRecordsTarget: { apex: string; hostKey: string; connId: string; record: { name: string; type: string } } | null
+  setDnsRecordsTarget: (t: { apex: string; hostKey: string; connId: string; record: { name: string; type: string } } | null) => void
   // In-flight (and just-settled) record TTL changes, keyed by the record key.
   // Tracked in the store so a Route 53 change keeps polling after the overlay closes.
   ttlWrites: Map<string, TtlWriteProgress>
-  // List a zone's DNS records via the serving connection (read; on demand).
-  listZoneRecords: (connId: string, apex: string) => Promise<ListResult>
+  // Read ONE hosting record via the serving connection (scoped; on demand).
+  getZoneRecord: (connId: string, apex: string, name: string, type: string) => Promise<RecordResult>
+  // The latest TTL write for a hostname+type (drives the inventory's updating status).
+  ttlWriteForHost: (host: string, type: string) => TtlWriteProgress | undefined
   // Change a record's TTL via the host's API and follow it to completion.
   startTtlChange: (connId: string, zoneId: string, record: DnsRecord, ttl: number) => void
   clearTtlWrite: (key: string) => void
@@ -340,7 +348,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const dnsInFlight = useRef<Set<string>>(new Set())
   const [dnsZones, setDnsZones] = useState<Map<string, CachedDns>>(() => dnsCacheRef.current!.snapshot())
   const [dnsResolving, setDnsResolving] = useState<Set<string>>(new Set())
-  const [dnsInventoryServer, setDnsInventoryServer] = useState<Server | null>(null)
+  const [dnsInventoryServer, setDnsInventoryServerState] = useState<Server | null>(null)
+  const [dnsInventoryFocusSiteId, setDnsInventoryFocusSiteId] = useState<number | null>(null)
+  const setDnsInventoryServer = useCallback((s: Server | null, focusSiteId: number | null = null) => {
+    setDnsInventoryServerState(s)
+    setDnsInventoryFocusSiteId(focusSiteId)
+  }, [])
 
   // Website-hosting record lookups (Phase 3 inventory). In-memory for the session;
   // resolved on demand once the hostname's zone NS are known. `hostingInFlight`
@@ -359,7 +372,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [connections, setConnections] = useState<Record<ConnProvider, Connection[]>>(() => cfgRef.current.providerConnections)
   const [providerZones, setProviderZones] = useState<Map<string, VerifiedConn>>(() => providersCacheRef.current!.snapshot())
   const [connectZoneTarget, setConnectZoneTarget] = useState<{ apex: string; hostKey: string } | null>(null)
-  const [dnsRecordsTarget, setDnsRecordsTarget] = useState<{ apex: string; hostKey: string; connId: string; focus?: { name: string; type: string } } | null>(null)
+  const [dnsRecordsTarget, setDnsRecordsTarget] = useState<{ apex: string; hostKey: string; connId: string; record: { name: string; type: string } } | null>(null)
   const [ttlWrites, setTtlWrites] = useState<Map<string, TtlWriteProgress>>(new Map())
 
   // PHP EOL dates: embedded defaults overlaid with the last cached fetch; a
@@ -993,18 +1006,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // ---- DNS record TTL change (Phase 3, first write) -------------------------
 
-  const listZoneRecords = useCallback(
-    async (connId: string, apex: string): Promise<ListResult> => {
+  const getZoneRecord = useCallback(
+    async (connId: string, apex: string, name: string, type: string): Promise<RecordResult> => {
       const conn = allConnections.find((c) => c.id === connId)
       const provider = conn ? recordProviderFor(conn.provider) : null
-      if (!conn || !provider) return { ok: false, zoneId: "", records: [], error: "No reachable connection for this zone." }
-      return provider.listRecords(conn.creds, apex)
+      if (!conn || !provider) return { ok: false, zoneId: "", error: "No reachable connection for this zone." }
+      return provider.getRecord(conn.creds, apex, name, type)
     },
     [allConnections],
   )
 
   const setTtlWrite = (key: string, progress: TtlWriteProgress) =>
     setTtlWrites((prev) => new Map(prev).set(key, progress))
+
+  // The latest TTL write for a given hostname+type, if any — so the inventory can
+  // show an "updating"/just-changed status on the matching record row.
+  const ttlWriteForHost = useCallback(
+    (host: string, type: string): TtlWriteProgress | undefined => {
+      const h = host.toLowerCase()
+      for (const p of ttlWrites.values()) if (p.host === h && p.type === type) return p
+      return undefined
+    },
+    [ttlWrites],
+  )
 
   const clearTtlWrite = useCallback(
     (key: string) =>
@@ -1022,41 +1046,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const existing = ttlWrites.get(record.key)
       if (existing && isTtlWriteInFlight(existing)) return // one change per record at a time
 
+      // Stamp every progress update with the record's host/type so the inventory can
+      // match an in-flight write back to its row after the editor closes.
+      const put = (status: string, error?: string) =>
+        setTtlWrite(record.key, { ttl, status, host: record.name.toLowerCase(), type: record.type, ...(error ? { error } : {}) })
+
       const conn = allConnections.find((c) => c.id === connId)
       const provider = conn ? recordProviderFor(conn.provider) : null
       if (!conn || !provider) {
-        setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: "Lost the provider connection — reopen the records view." })
+        put(TTL_FAIL, "Lost the provider connection — reopen the records view.")
         return
       }
 
       const run = async () => {
-        setTtlWrite(record.key, { ttl, status: "queued" })
+        put("queued")
         let res
         try {
           res = await provider.setTtl(conn.creds, zoneId, record, ttl)
         } catch (err) {
-          setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: (err as Error).message })
+          put(TTL_FAIL, (err as Error).message)
           return
         }
         if (!res.ok) {
-          setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: res.error || "The provider rejected the change." })
+          put(TTL_FAIL, res.error || "The provider rejected the change.")
           return
         }
         // No poll id (Cloudflare) → already applied. Otherwise poll to INSYNC.
         if (!res.pollId || !provider.pollChange) {
-          setTtlWrite(record.key, { ttl, status: TTL_DONE })
+          put(TTL_DONE)
           return
         }
         const pollId = res.pollId
-        setTtlWrite(record.key, { ttl, status: "pending" })
+        put("pending")
         const poll = async () => {
           try {
             const status = await provider.pollChange!(conn.creds, pollId)
-            if (status === "done") setTtlWrite(record.key, { ttl, status: TTL_DONE })
-            else if (status === "failed") setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: "The change failed to propagate." })
+            if (status === "done") put(TTL_DONE)
+            else if (status === "failed") put(TTL_FAIL, "The change failed to propagate.")
             else setTimeout(() => void poll(), TTL_POLL_MS)
           } catch (err) {
-            setTtlWrite(record.key, { ttl, status: TTL_FAIL, error: (err as Error).message })
+            put(TTL_FAIL, (err as Error).message)
           }
         }
         setTimeout(() => void poll(), TTL_POLL_MS)
@@ -1139,7 +1168,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     hostingFor,
     isHostingResolving,
     dnsInventoryServer,
+    dnsInventoryFocusSiteId,
     setDnsInventoryServer,
+    setDnsInventoryFocusSiteId,
     connections,
     connectionsFor,
     connectionCount: allConnections.length,
@@ -1155,7 +1186,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dnsRecordsTarget,
     setDnsRecordsTarget,
     ttlWrites,
-    listZoneRecords,
+    getZoneRecord,
+    ttlWriteForHost,
     startTtlChange,
     clearTtlWrite,
     isPhpEol,

@@ -14,23 +14,24 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { truncate, timeAgo } from "../../lib/format.ts"
 import { normalizeDomain, candidateHostnames } from "../../lib/dns.ts"
-import { formatTtl } from "../../lib/dnsRecords.ts"
 import { apiProviderFor, consoleForHost, type AccessState } from "../../lib/providers.ts"
 import { openUrl, copyToClipboard } from "../../lib/open.ts"
 import { List, moveSelection } from "../List.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { Spinner } from "../components.tsx"
-import { useStore } from "../store.tsx"
+import { useStore, isTtlWriteInFlight } from "../store.tsx"
 import type { Site } from "../../api/types.ts"
 
 // Fixed column widths (chars) so columns align on every row; VALUE flexes.
-const SITE_W = 22
-const NAME_W = 30
-const TYPE_W = 7
+// Fixed column widths (chars). VALUE flexes; HOST/ACCOUNT sit on the right.
+const NAME_W = 32
+const TYPE_W = 6
 const TTL_W = 8
-const HOST_W = 16
-const ACCESS_W = 8
+const HOST_W = 14
 const ACCOUNT_W = 16
+
+// Lowercase a hostname and drop a trailing dot (for comparisons).
+const norm = (d: string) => d.trim().toLowerCase().replace(/\.$/, "")
 
 // Glyph + color for an access state. `·` is the resting/unknown state.
 function accessGlyph(state: AccessState, selected: boolean): { glyph: string; color: string } {
@@ -46,13 +47,13 @@ function accessGlyph(state: AccessState, selected: boolean): { glyph: string; co
   }
 }
 
-// A zone-header row, or a hosting-record row nested under it. Both carry the zone
+// A folded zone line (zone identity + its apex hosting record, when the site is
+// served at the apex), or a hosting-record row nested under it for the non-apex
+// records that still need action (own-A www, subdomains). Both carry the zone
 // identity (apex/hostKey/access/liveNs) so access/edit actions work from either.
 type InvRow =
   | {
       kind: "zone"
-      siteDomain: string
-      showSite: boolean
       status: string
       apex: string
       hostKey: string
@@ -63,6 +64,22 @@ type InvRow =
       liveNs: string[]
       note: string
       checkedAt: number | null
+      // Site grouping: the primary zone is the site's `●` line; additional-domain
+      // zones nest under it as `↳` lines. `extraZones` (on the primary) drives the
+      // "(+N)" portfolio hint.
+      isPrimary: boolean
+      extraZones: number
+      // The site's own hosting record, folded into this line. `recordName` is the
+      // hostname it belongs to (the site's domain — apex for a root site, the
+      // subdomain for a subdomain-hosted site), used as the label + the edit target.
+      recordName: string
+      hasRecord: boolean
+      recordType: string // A | AAAA | CNAME | ""
+      ttl: number | null
+      value: string
+      pointsHere: boolean
+      resolving: boolean // apex record still being looked up
+      wwwFollows: boolean // a www CNAME that just follows the apex → shown as "+www"
     }
   | {
       kind: "record"
@@ -75,13 +92,17 @@ type InvRow =
       ttl: number | null
       value: string
       pointsHere: boolean
+      followsApex: boolean // a www/alias CNAME pointing at the apex — follows it on a move, no edit needed
       resolving: boolean
+      indent: number // 1 = record under the primary zone; 2 = under an additional-domain zone
     }
 
 export function DnsInventory() {
   const {
     dnsInventoryServer,
+    dnsInventoryFocusSiteId,
     setDnsInventoryServer,
+    setDnsInventoryFocusSiteId,
     sitesForServer,
     zoneForDomain,
     lookupServerDns,
@@ -101,6 +122,7 @@ export function DnsInventory() {
     resolveServerHosting,
     hostingFor,
     isHostingResolving,
+    ttlWriteForHost,
   } = useStore()
   const allConnections = useMemo(() => Object.values(connections).flat(), [connections])
   const showAccount = connectionCount >= 2
@@ -127,10 +149,13 @@ export function DnsInventory() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allConnections, verifyConnectionById])
 
-  const sites = useMemo<Site[]>(
+  const allSites = useMemo<Site[]>(
     () => (server ? [...sitesForServer(server.id)].sort((a, b) => a.domain.localeCompare(b.domain)) : []),
     [server, sitesForServer],
   )
+  // When opened via `n`, scope the rows to a single site; `N` shows them all.
+  const focusSite = dnsInventoryFocusSiteId != null ? allSites.find((s) => s.id === dnsInventoryFocusSiteId) ?? null : null
+  const sites = useMemo<Site[]>(() => (focusSite ? [focusSite] : allSites), [focusSite, allSites])
 
   const { rows, summary, pending } = useMemo(() => {
     const out: InvRow[] = []
@@ -155,8 +180,9 @@ export function DnsInventory() {
       const ordered = [...groups.values()].sort((a, b) =>
         a.apex === primaryApex ? -1 : b.apex === primaryApex ? 1 : a.apex.localeCompare(b.apex),
       )
+      const additionalZones = ordered.length - 1
 
-      ordered.forEach((g, idx) => {
+      ordered.forEach((g) => {
         zoneCount++
         const cached = zoneForDomain(g.entries[0].domain)
         const zoneResolving = g.entries.some((e) => dnsResolving.has(normalizeDomain(e.domain)))
@@ -180,10 +206,27 @@ export function DnsInventory() {
         const note = !isPrimaryZone && redirect ? `→ redirects to ${redirect.destination}` : ""
         const access = accessForZone(g.apex, hostKey, liveNs)
 
+        // The site's hostnames in this zone (apex first).
+        const hosts = candidateHostnames(g.entries.map((e) => e.domain)).sort((a, b) =>
+          a === g.apex ? -1 : b === g.apex ? 1 : a.localeCompare(b),
+        )
+        // The line's head = the SITE's own domain in this zone: the apex when the site
+        // is served at the root, otherwise the subdomain the site actually lives at
+        // (so three sites on one apex read as three distinct lines, not one).
+        const headHost = hosts.includes(g.apex) ? g.apex : norm(g.entries[0].domain)
+        const headRec = hostingFor(headHost)
+        const headResolving = isHostingResolving(headHost) || (!headRec && cached?.zone != null)
+        const hasRecord = !!(headRec && headRec.type !== "none")
+        // A www that merely CNAMEs to the head (or apex) follows it on a move → "+www".
+        const wwwName = "www." + headHost
+        const wwwRec = headHost.startsWith("www.") ? undefined : hostingFor(wwwName)
+        const wwwTarget = wwwRec?.type === "CNAME" ? norm(wwwRec.value) : ""
+        const wwwFollows = wwwTarget !== "" && (wwwTarget === headHost || wwwTarget === g.apex)
+        if (hasRecord && headRec!.pointsHere) hereCount++
+        if (headResolving) resolving = true
+
         out.push({
           kind: "zone",
-          siteDomain: site.domain,
-          showSite: idx === 0,
           status: site.status,
           apex: g.apex,
           hostKey,
@@ -194,18 +237,29 @@ export function DnsInventory() {
           liveNs,
           note,
           checkedAt: cached?.checkedAt ?? null,
+          isPrimary: isPrimaryZone,
+          extraZones: isPrimaryZone ? additionalZones : 0,
+          recordName: headHost,
+          hasRecord,
+          recordType: headRec?.type ?? "",
+          ttl: headRec?.ttl ?? null,
+          value: headRec?.value ?? "",
+          pointsHere: headRec?.pointsHere ?? false,
+          resolving: headResolving,
+          wwwFollows,
         })
 
-        // Nested hosting records: the site's hostnames in this zone (apex first).
-        const hosts = candidateHostnames(g.entries.map((e) => e.domain)).sort((a, b) =>
-          a === g.apex ? -1 : b === g.apex ? 1 : a.localeCompare(b),
-        )
+        // Nested rows: only the non-head records that still need action.
         for (const name of hosts) {
+          if (name === headHost) continue // folded into the site/zone line
+          if (name === wwwName && wwwFollows) continue // shown as "+www"
           const hr = hostingFor(name)
           if (hr && hr.type === "none") continue // no record for this hostname — nothing to migrate
           const isResolving = isHostingResolving(name) || (!hr && cached?.zone != null)
           if (hr?.pointsHere) hereCount++
           if (!hr && isResolving) resolving = true
+          const cnameTarget = hr?.type === "CNAME" ? hr.value.toLowerCase().replace(/\.$/, "") : ""
+          const followsApex = cnameTarget !== "" && cnameTarget === g.apex
           out.push({
             kind: "record",
             apex: g.apex,
@@ -217,7 +271,9 @@ export function DnsInventory() {
             ttl: hr?.ttl ?? null,
             value: hr?.value ?? "",
             pointsHere: hr?.pointsHere ?? false,
+            followsApex,
             resolving: !hr,
+            indent: isPrimaryZone ? 1 : 2,
           })
         }
       })
@@ -235,8 +291,20 @@ export function DnsInventory() {
     if (r.access !== "editable") return showFlash("Connect API access first — press c")
     const conn = connForZone(r.apex, r.hostKey, r.liveNs)
     if (!conn) return showFlash("No reachable account for this zone — press c")
-    const focus = r.kind === "record" && r.recordType ? { name: r.name, type: r.recordType } : undefined
-    setDnsRecordsTarget({ apex: r.apex, hostKey: r.hostKey, connId: conn.id, focus })
+    // Editing always targets ONE hosting record — never a zone. A record row edits
+    // itself; a zone-header row edits its apex A/AAAA (the record right below it).
+    let rec: { name: string; type: string } | null = null
+    if (r.kind === "record") {
+      if (r.followsApex) return showFlash(`${r.name} follows the apex — no separate change needed.`)
+      if (r.resolving) return showFlash("Still looking up this record…")
+      if (!r.recordType || r.recordType === "none") return showFlash("No record to edit here.")
+      rec = { name: r.name, type: r.recordType }
+    } else {
+      if (r.resolving) return showFlash("Still looking up this record…")
+      if (!r.hasRecord || !r.recordType) return showFlash("No record to edit on this line.")
+      rec = { name: r.recordName, type: r.recordType }
+    }
+    setDnsRecordsTarget({ apex: r.apex, hostKey: r.hostKey, connId: conn.id, record: rec })
   }
 
   function openWeb(r: InvRow) {
@@ -291,6 +359,13 @@ export function DnsInventory() {
       case "w":
         if (r) openWeb(r)
         return
+      case "a":
+        // Expand a site-scoped view (opened via `n`) to the whole server.
+        if (focusSite) {
+          setDnsInventoryFocusSiteId(null)
+          setIndex(0)
+        }
+        return
     }
   })
 
@@ -304,28 +379,21 @@ export function DnsInventory() {
   return (
     <box style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.bg, zIndex: 216 }}>
       <box style={{ flexDirection: "row", height: 1, backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1, alignItems: "center" }}>
-        <text content={`🌐 DNS · ${truncate(server.name, 26)}  `} fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={summary} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
+        <text content={`🌐 DNS · ${truncate(focusSite ? focusSite.domain : server.name, 28)}  `} fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={focusSite ? `${summary} · a all sites` : summary} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
         <box style={{ flexGrow: 1 }} />
         {pending ? <Spinner color={theme.brand} interval={120} /> : null}
       </box>
 
-      {/* Column header. SITE/zone-or-record name align across both row kinds. */}
+      {/* Column header. The dot column (2) + NAME align across both row kinds; HOST
+          sits on the right, pushed there by the growable VALUE region. */}
       <box style={{ flexDirection: "row", paddingLeft: 1, paddingRight: 1, height: 1 }}>
-        <text content={"  " + "SITE".padEnd(SITE_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={"ZONE / RECORD".padEnd(NAME_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={"  " + "SITE / RECORD".padEnd(NAME_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
         <text content={"TYPE".padEnd(TYPE_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
         <text content={"TTL".padEnd(TTL_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content="VALUE / HOST" fg={theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
-      </box>
-
-      {/* Legend — teaches access glyphs + the "points here" flag in-context. */}
-      <box style={{ flexDirection: "row", paddingLeft: 1, paddingRight: 1, height: 1 }}>
-        <text content="✓ editable" fg={theme.good} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content="   ↗ web" fg={theme.accent} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content="   ○ needs key" fg={theme.warn} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content="   ◀ here = points at this server" fg={theme.good} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content="    ⏎ edit TTL · c access" fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+        <text content="VALUE" fg={theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+        <text content="HOST" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+        {showAccount ? <text content={"  " + "ACCOUNT".padEnd(ACCOUNT_W)} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
       </box>
 
       <box style={{ flexGrow: 1, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}>
@@ -348,7 +416,7 @@ export function DnsInventory() {
           { key: "↑↓/jk", label: "select" },
           { key: "⏎", label: "edit TTL" },
           { key: "c", label: "manage access" },
-          { key: "w", label: "web console" },
+          ...(focusSite ? [{ key: "a", label: "all sites" }] : []),
           { key: "r", label: "refresh" },
           { key: "esc", label: "close" },
         ]}
@@ -359,41 +427,98 @@ export function DnsInventory() {
     </box>
   )
 
-  function renderZone(r: Extract<InvRow, { kind: "zone" }>, selected: boolean) {
+  // The TTL cell, shared by both row kinds: a spinner while resolving, a spinner +
+  // "→<ttl>" while a write is in flight, else the value in seconds (300/3600/86400,
+  // not "1h"). A settled write shows its new value — the authoritative host has it.
+  function ttlCell(name: string, type: string, ttl: number | null, resolving: boolean, faint: boolean, selected: boolean) {
+    if (resolving) {
+      return (
+        <box style={{ flexDirection: "row", width: TTL_W, flexShrink: 0 }}>
+          <Spinner color={selected ? theme.text : theme.textDim} interval={120} />
+          <text content=" …" fg={selected ? theme.text : theme.textFaint} wrapMode="none" />
+        </box>
+      )
+    }
+    const wp = ttlWriteForHost(name, type)
+    if (isTtlWriteInFlight(wp)) {
+      return (
+        <box style={{ flexDirection: "row", width: TTL_W, flexShrink: 0 }}>
+          <Spinner color={selected ? theme.text : theme.brand} interval={120} />
+          <text content={` →${wp!.ttl}`} fg={selected ? theme.text : theme.warn} wrapMode="none" />
+        </box>
+      )
+    }
+    const effTtl = wp?.status === "done" ? wp.ttl : ttl
+    const txt = effTtl == null ? "—" : String(effTtl)
+    const fg = selected ? theme.text : faint ? theme.textFaint : theme.accent
+    return <text content={txt.padEnd(TTL_W)} fg={fg} wrapMode="none" style={{ flexShrink: 0 }} />
+  }
+
+  // host + access glyph — a right-side cluster on zone lines.
+  function hostCell(r: Extract<InvRow, { kind: "zone" }>, selected: boolean) {
     const acc = accessGlyph(r.access, selected)
     return (
+      <box style={{ flexDirection: "row", flexShrink: 0 }}>
+        <text content={truncate(r.host, HOST_W)} fg={selected ? theme.text : r.hostColor} wrapMode="none" />
+        <text content={" " + acc.glyph} fg={acc.color} wrapMode="none" />
+      </box>
+    )
+  }
+
+  // Indented "↳ name" cell for nested rows. Level 1 = directly under the site's
+  // primary line (additional-domain zone, or a record in the primary zone); level 2
+  // = a record under an additional-domain zone.
+  function indentedName(name: string, level: number): string {
+    const prefix = level >= 2 ? "     ↳ " : "  ↳ "
+    return (prefix + truncate(name, NAME_W - prefix.length - 1)).padEnd(NAME_W)
+  }
+
+  function renderZone(r: Extract<InvRow, { kind: "zone" }>, selected: boolean) {
+    // Primary zone = the site's `●` line; additional-domain zones nest as `↳`. The
+    // label is the site's own domain (recordName), not the zone apex.
+    const nameContent = r.isPrimary ? truncate(r.recordName, NAME_W - 1).padEnd(NAME_W) : indentedName(r.recordName, 1)
+    const nameColor = selected ? theme.text : r.isPrimary ? theme.text : theme.textDim
+    return (
       <>
-        <text content={r.showSite ? statusDot(r.status) + " " : "  "} fg={statusColor(r.status)} style={{ flexShrink: 0 }} />
-        <text content={(r.showSite ? truncate(r.siteDomain, SITE_W - 1) : "").padEnd(SITE_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={truncate(r.apex, NAME_W - 1).padEnd(NAME_W)} fg={selected ? theme.text : theme.text} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={truncate(r.host, HOST_W - 1).padEnd(HOST_W)} fg={selected ? theme.text : r.hostColor} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={(acc.glyph + " ").padEnd(ACCESS_W)} fg={acc.color} wrapMode="none" style={{ flexShrink: 0 }} />
-        {showAccount ? <text content={truncate(r.account, ACCOUNT_W - 1).padEnd(ACCOUNT_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
-        <text content={r.note} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+        <text content={r.isPrimary ? statusDot(r.status) + " " : "  "} fg={r.isPrimary ? statusColor(r.status) : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={nameContent} fg={nameColor} wrapMode="none" style={{ flexShrink: 0 }} />
+        {r.hasRecord || r.resolving ? (
+          <>
+            <text content={r.recordType.padEnd(TYPE_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
+            {ttlCell(r.recordName, r.recordType, r.ttl, r.resolving, false, selected)}
+          </>
+        ) : (
+          <>
+            <text content={"".padEnd(TYPE_W)} wrapMode="none" style={{ flexShrink: 0 }} />
+            <text content={"".padEnd(TTL_W)} wrapMode="none" style={{ flexShrink: 0 }} />
+          </>
+        )}
+        <text content={truncate(r.value, 38)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+        {r.pointsHere ? <text content=" ◀ here" fg={selected ? theme.text : theme.good} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+        {r.wwwFollows ? <text content=" +www" fg={selected ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+        {r.note ? <text content={"  " + r.note} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+        <box style={{ flexGrow: 1 }} />
+        {hostCell(r, selected)}
+        {r.isPrimary && r.extraZones > 0 ? <text content={`  (+${r.extraZones})`} fg={selected ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+        {showAccount ? <text content={"  " + truncate(r.account, ACCOUNT_W).padEnd(ACCOUNT_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
       </>
     )
   }
 
   function renderRecord(r: Extract<InvRow, { kind: "record" }>, selected: boolean) {
-    const ttlFg = selected ? theme.text : theme.accent
     return (
       <>
-        <text content="  " style={{ flexShrink: 0 }} />
-        <text content={"".padEnd(SITE_W)} wrapMode="none" style={{ flexShrink: 0 }} />
-        <text content={("  ↳ " + truncate(r.name, NAME_W - 5)).padEnd(NAME_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
-        {r.resolving ? (
-          <box style={{ flexDirection: "row", width: TYPE_W + TTL_W, flexShrink: 0 }}>
-            <Spinner color={selected ? theme.text : theme.textDim} interval={120} />
-            <text content=" looking up…" fg={selected ? theme.text : theme.textFaint} wrapMode="none" />
-          </box>
-        ) : (
-          <>
-            <text content={r.recordType.padEnd(TYPE_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
-            <text content={formatTtl(r.ttl).padEnd(TTL_W)} fg={ttlFg} wrapMode="none" style={{ flexShrink: 0 }} />
-          </>
-        )}
-        <text content={truncate(r.value, 48)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
-        {r.pointsHere ? <text content=" ◀ here" fg={selected ? theme.text : theme.good} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+        <text content="  " wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={indentedName(r.name, r.indent)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={(r.resolving ? "" : r.recordType).padEnd(TYPE_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
+        {ttlCell(r.name, r.recordType, r.ttl, r.resolving, r.followsApex, selected)}
+        <text content={truncate(r.value, 38)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+        {r.followsApex ? (
+          <text content=" follows apex" fg={selected ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+        ) : r.pointsHere ? (
+          <text content=" ◀ here" fg={selected ? theme.text : theme.good} wrapMode="none" style={{ flexShrink: 0 }} />
+        ) : null}
+        <box style={{ flexGrow: 1 }} />
       </>
     )
   }

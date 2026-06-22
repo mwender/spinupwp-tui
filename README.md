@@ -57,11 +57,12 @@ Once you're in, the dashboard looks like this:
   (See "Local working copies" below.)
 - **SSH into a site** — press `s` on a site to open a new terminal already running
   `ssh` into it (`{site_user}@{server_ip}`).
-- **DNS hosts & access** — press `n` on a site (or `N` on a server) to see where
-  each domain's DNS is hosted, and — if you connect a provider (AWS Route 53 /
-  Cloudflare / GoDaddy) — whether you can edit it and through which account. The
-  whole module is **read-only**: it inventories and verifies, it doesn't change
-  records. (See "DNS hosts & access" below.)
+- **DNS migration lens** — press `n` on a site (or `N` on a server) to see the DNS
+  records that move a site to another server: each site's hostnames with their type,
+  TTL (in seconds), and a `◀ here` flag when they point at this server. Connect a
+  provider (AWS Route 53 / Cloudflare) and press `⏎` to **edit a record's TTL** — the
+  prep step for a low-risk cutover. It only ever touches a site's own hosting records,
+  never your MX/TXT/other records. (See "DNS hosts, access & editing" below.)
 - **Upgrade a site's PHP version** — press `u` on a site to pick a new PHP
   version and apply it (`PUT /sites/{id}/php`), then watch the upgrade event run
   to completion. (See "Upgrading PHP" below.)
@@ -171,8 +172,8 @@ Both can be set in `config.json` or via an environment variable:
 | `s` | Open a terminal and SSH into the selected site |
 | `L` | Link / edit a site's local working copy |
 | `t` / `v` | Open the linked copy in a terminal / its local URL in your browser |
-| `n` | Look up where a site's domains host DNS |
-| `N` | DNS host + access inventory for the selected server |
+| `n` | DNS migration view for a site — its records + TTLs (`⏎` edits a TTL; `a` shows the whole server) |
+| `N` | DNS migration view for the whole server |
 | `h` | Live server health (CPU/mem/disk over SSH) |
 | `d` | Detect a site's stack via SSH (Servers / Stacks tabs) |
 | `D` | Detect every site in the selected stack (Stacks tab) |
@@ -301,40 +302,55 @@ serve it; the site's details gain a "Local" field, and you can open the copy wit
 Config keys: `localRoots` (folders to scan) and `localSites` (per-site path +
 local URL — tool-agnostic: Valet, Cove, LocalWP, Herd, DDEV, …).
 
-## DNS hosts & access
+## DNS hosts, access & editing
 
-A **read-only** DNS module: see where each domain's DNS is hosted, and whether
-you can edit it. No DNS records are ever changed.
+A **server-migration lens** for DNS: see the records that move a site to another
+server, and edit them in place. It is deliberately **not** a full zone editor — it
+only ever shows and touches a site's own hosting records (its apex / `www` /
+subdomains and additional domains), so your MX, TXT, DKIM, and other zone records are
+never shown or changed. Moving a site can't take down its email.
 
-- **Inventory.** Press `n` on a site to look up its domains' hosts, or `N` on a
-  server for a zone-keyed inventory of every domain on it. The unit is the
-  **zone** — `www` and the apex collapse together, and a separate-TLD redirect
-  surfaces as its own zone with its own host (so a full portfolio move misses
-  nothing). Hosts come from a live nameserver lookup (no `dig` needed) and are
-  labeled (Cloudflare, AWS Route 53, GoDaddy, …), falling back to the nameserver
-  domain for anything unrecognized. Lookups are cached with a visible age; `r`
-  refreshes.
-- **Access (`✓ ↗ ○ ·`).** Each zone shows whether you can edit it: `✓` editable,
-  `↗` web-only handoff, `○` the provider has an API but you haven't connected an
-  account that holds the zone, `·` unknown. A zone is `✓` only when a connected
-  account of the provider that actually serves it (its live nameservers) holds it
-  — so a stale or duplicate zone elsewhere never shows a false green. With two or
-  more accounts connected, an **ACCOUNT** column names the owning one.
+- **The view.** Press `n` on a site for just that site's records, or `N` on a server
+  for every site on it; inside a site-scoped view, `a` expands to the whole server.
+  Each **site** is a line, labeled by its own domain (even when it's a subdomain),
+  with its hosting record's type, **TTL in seconds**, value, a `◀ here` flag when the
+  record points at this server, and a `+www` tag when `www` simply follows the apex.
+  A site's additional domains nest beneath it, so a domain portfolio reads as one
+  site, not many. TTLs come from the zone's authoritative nameserver (the configured
+  value, not a counted-down one), so they show even for hosts you haven't connected;
+  `r` refreshes.
+- **Access (`✓ ↗ ○ ·`).** Each record's zone shows whether you can edit it: `✓`
+  editable, `↗` web-only handoff, `○` the provider has an API but you haven't
+  connected an account that holds the zone, `·` unknown. A zone is `✓` only when a
+  connected account of the provider that actually serves it (its live nameservers)
+  holds it — so a stale or duplicate zone elsewhere never shows a false green. With
+  two or more accounts connected, an **ACCOUNT** column names the owning one.
+- **Edit a TTL (`⏎`).** On an editable record, `⏎` opens a focused editor — pick a
+  preset or a custom value, confirm, and it's written to **AWS Route 53** or
+  **Cloudflare** through your connected account. This is the prep step for a low-risk
+  migration: lower the TTL, cut over, then restore it. Before writing, an edit-time
+  check re-reads the live nameservers and **blocks** the change if the connected
+  account's zone isn't the one actually serving the domain. Route 53 changes are
+  followed to completion; the record shows an "updating" status that keeps ticking
+  even if you leave the view. Only the **TTL** is editable for now (repointing a
+  record's target comes later), and Cloudflare **proxied** records are read-only.
 - **Connect a provider (`c`).** Manage credentials for the selected zone's
-  provider — **AWS Route 53** (an IAM access key scoped to Route 53 reads),
-  **Cloudflare** (a `Zone:Read` token), or **GoDaddy** (a Production API key).
-  Multiple accounts per provider are supported, with a drill-down into each
-  account's zones. Credentials are verified before they're stored, kept in
-  `config.json` (chmod 600), and the matching environment variables are honored
-  (`CLOUDFLARE_API_TOKEN`, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`,
-  `GODADDY_API_KEY` / `GODADDY_API_SECRET`). Secrets are masked as you type.
+  provider — **AWS Route 53** (an IAM access key), **Cloudflare** (a scoped token),
+  or **GoDaddy** (a Production API key). Multiple accounts per provider are
+  supported, with a drill-down into each account's zones. Credentials are verified
+  before they're stored, kept in `config.json` (chmod 600), and the matching
+  environment variables are honored (`CLOUDFLARE_API_TOKEN`, `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY`, `GODADDY_API_KEY` / `GODADDY_API_SECRET`). Secrets are
+  masked as you type. Listing hosts needs only read access (Cloudflare `Zone:Read`);
+  **editing a TTL** needs write access — Route 53 record writes, or a Cloudflare
+  `Zone.DNS:Edit` token.
 - **GoDaddy fallback.** GoDaddy's API is limited to larger accounts, so a GoDaddy
   zone shows `↗`; press `w` (in the inventory or the connect overlay) to open your
   GoDaddy Clients hub with the domain copied to your clipboard. The flow assumes
   you manage client domains via Delegate Access from one main account.
 
-Provider credentials are entirely optional — without them you still get the full
-host inventory, just without the editable/account columns.
+Provider credentials are optional — without them you still get the full host
+inventory and TTLs, just without the editable/account columns or in-place editing.
 
 ## Development
 
