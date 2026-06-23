@@ -11,6 +11,25 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-23
+
+### Added
+- **Scaffold a post-import hook from the sync screen.** When you press `p` on a
+  linked site that has no `bin/sync.d/post-import.sh`, the confirm screen now
+  explains what the hook is (it runs after the import + URL rewrite) and offers
+  `s` to write an **inert** sample for you — a documented `post-import.sh` with
+  the `WEB_DIR` / `SYNC_REMOTE_HOST` / `SYNC_LOCAL_HOST` env contract and common
+  examples (Elementor URL swaps, plugin toggles), all commented out so nothing
+  runs until you uncomment it. It never overwrites an existing hook.
+
+### Changed
+- **Backup (`d`) and sync (`p`) now show progress as a building checklist.** Each
+  step (back up local, export, download, import, rewrite URLs, run hook) is listed
+  in one bordered panel and gets a `✓` as it finishes, the running step spins, and
+  the final result (saved paths, size) appears below the completed stack — so the
+  whole operation, including the "done" summary, reads in a single frame. A
+  failure marks the exact step that broke with `✕` and shows the error inline.
+
 ## [0.7.0] - 2026-06-22
 
 ### Added
@@ -263,7 +282,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/mwender/spinupwp-tui/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mwender/spinupwp-tui/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mwender/spinupwp-tui/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mwender/spinupwp-tui/compare/v0.4.0...v0.5.0

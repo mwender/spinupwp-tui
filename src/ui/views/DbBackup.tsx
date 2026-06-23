@@ -12,15 +12,17 @@ import { useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { theme } from "../../lib/theme.ts"
 import { truncate, formatBytes, middleTruncate } from "../../lib/format.ts"
-import { Panel, Spinner, Centered, DestPath } from "../components.tsx"
+import { Panel, Centered, DestPath, Steps, type StepRow } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
+import type { DbBackupStage } from "../../lib/dbBackup.ts"
 
-const STAGE_LABEL: Record<string, string> = {
-  export: "Exporting the database on the server…",
-  download: "Downloading the backup…",
-  cleanup: "Cleaning up the remote copy…",
-}
+// The backup's stages in run order — rendered as a building checklist.
+const BACKUP_STEPS: { stage: DbBackupStage; label: string }[] = [
+  { stage: "export", label: "Export database on server" },
+  { stage: "download", label: "Download the backup" },
+  { stage: "cleanup", label: "Clean up remote copy" },
+]
 
 export function DbBackup() {
   const { dbBackupSite: site, setDbBackupSite, serverById, planDbBackupFor, dbBackups, startDbBackup, clearDbBackup } = useStore()
@@ -154,43 +156,54 @@ export function DbBackup() {
       )
     }
 
-    if (dp === "running") {
-      return (
-        <box style={{ flexDirection: "column", alignItems: "center" }}>
-          <box style={{ flexDirection: "row" }}>
-            <Spinner />
-            <text content={`  ${STAGE_LABEL[progress?.stage ?? "export"] ?? "Working…"}`} fg={theme.textDim} />
-          </box>
-          <box style={{ height: 1 }} />
-          <text content="You can press Esc — the download keeps running in the background." fg={theme.textFaint} wrapMode="none" />
-        </box>
-      )
-    }
+    // running | done | error share one bordered checklist so the whole backup
+    // reads as a building stack; the footer carries the live/result/error status.
+    const order = BACKUP_STEPS.map((s) => s.stage)
+    const curIdx = order.indexOf((progress?.stage ?? "export") as DbBackupStage)
+    const failedIdx = progress?.failedStage ? order.indexOf(progress.failedStage) : order.length - 1
+    const rows: StepRow[] = BACKUP_STEPS.map(({ label }, i) => {
+      const state: StepRow["state"] =
+        dp === "done"
+          ? "done"
+          : dp === "error"
+            ? i < failedIdx
+              ? "done"
+              : i === failedIdx
+                ? "failed"
+                : "pending"
+            : i < curIdx
+              ? "done"
+              : i === curIdx
+                ? "active"
+                : "pending"
+      return { label, state }
+    })
 
-    if (dp === "done") {
-      return (
-        <Panel title=" Done " active>
-          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
-            <box style={{ flexDirection: "row" }}>
-              <text content="✓ Saved " fg={theme.good} />
-              <text content={progress?.bytes != null ? formatBytes(progress.bytes) : ""} fg={theme.text} />
-            </box>
-            <box style={{ height: 1 }} />
-            {progress?.destPath ? <DestPath path={progress.destPath} fileColor={theme.accent} width={62} /> : null}
-            <box style={{ height: 1 }} />
-            <text content="Esc to close" fg={theme.textFaint} />
-          </box>
-        </Panel>
-      )
-    }
-
-    // error
     return (
-      <Panel title=" Backup failed " active>
-        <box style={{ flexDirection: "column", width: 70, paddingTop: 1, paddingBottom: 1 }}>
-          <text content={`✕ ${progress?.error ?? "Something went wrong."}`} fg={theme.bad} wrapMode="none" />
+      <Panel title=" Download production database " active>
+        <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
+          <Steps rows={rows} />
           <box style={{ height: 1 }} />
-          <text content="Press r to try again · Esc to close" fg={theme.textFaint} wrapMode="none" />
+          {dp === "done" ? (
+            <>
+              <box style={{ flexDirection: "row" }}>
+                <text content="✓ Done — saved " fg={theme.good} />
+                <text content={progress?.bytes != null ? formatBytes(progress.bytes) : ""} fg={theme.text} />
+              </box>
+              <box style={{ height: 1 }} />
+              {progress?.destPath ? <DestPath path={progress.destPath} fileColor={theme.accent} width={62} /> : null}
+              <box style={{ height: 1 }} />
+              <text content="Esc to close" fg={theme.textFaint} />
+            </>
+          ) : dp === "error" ? (
+            <>
+              <text content={`✕ ${progress?.error ?? "Something went wrong."}`} fg={theme.bad} />
+              <box style={{ height: 1 }} />
+              <text content="Press r to try again · Esc to close" fg={theme.textFaint} wrapMode="none" />
+            </>
+          ) : (
+            <text content="You can press Esc — the download keeps running in the background." fg={theme.textFaint} wrapMode="none" />
+          )}
         </box>
       </Panel>
     )

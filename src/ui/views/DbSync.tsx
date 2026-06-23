@@ -11,18 +11,21 @@ import { useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { theme } from "../../lib/theme.ts"
 import { truncate, middleTruncate } from "../../lib/format.ts"
-import { Panel, Spinner, Centered, DestPath } from "../components.tsx"
+import { Panel, Centered, DestPath, Steps, type StepRow } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
+import { writeSampleHook, type DbSyncStage } from "../../lib/dbSync.ts"
 
-const STAGE_LABEL: Record<string, string> = {
-  "local-backup": "Backing up your local database…",
-  export: "Exporting the production database…",
-  download: "Downloading the dump…",
-  import: "Importing into your local database…",
-  replace: "Rewriting production URLs → local…",
-  hook: "Running the post-import hook…",
-}
+// The pull's stages in run order — rendered as a building checklist. The hook
+// row is included only when the plan found a bin/sync.d/post-import.sh.
+const SYNC_STEPS: { stage: DbSyncStage; label: string }[] = [
+  { stage: "local-backup", label: "Back up local database" },
+  { stage: "export", label: "Export production database" },
+  { stage: "download", label: "Download the dump" },
+  { stage: "import", label: "Import into local" },
+  { stage: "replace", label: "Rewrite production URLs → local" },
+  { stage: "hook", label: "Run post-import hook" },
+]
 
 export function DbSync() {
   const { dbSyncSite: site, setDbSyncSite, serverById, planDbSyncFor, dbSyncs, startDbSync, clearDbSync } = useStore()
@@ -30,6 +33,8 @@ export function DbSync() {
   const planResult = site ? planDbSyncFor(site) : null
   const progress = site ? dbSyncs.get(site.id) : undefined
   const [started, setStarted] = useState(false)
+  // Result of scaffolding a sample post-import hook (s on the confirm screen).
+  const [scaffold, setScaffold] = useState<{ ok: true; path: string } | { ok: false; error: string } | null>(null)
 
   const dp: "blocked" | "confirm" | "running" | "done" | "error" =
     planResult && !planResult.ok && !progress
@@ -55,6 +60,15 @@ export function DbSync() {
         if (site) {
           startDbSync(site)
           setStarted(true)
+        }
+        return
+      }
+      // s: scaffold a sample hook — only when none exists yet.
+      if (name === "s" && plan && !plan.hookPath) {
+        try {
+          setScaffold({ ok: true, path: writeSampleHook(plan.localRoot) })
+        } catch (e) {
+          setScaffold({ ok: false, error: e instanceof Error ? e.message : "Couldn't write the sample hook." })
         }
       }
       return
@@ -100,6 +114,50 @@ export function DbSync() {
     </box>
   )
 
+  // The post-import-hook line(s) on the confirm screen. Three states: a fresh
+  // scaffold result (wins, so the user sees their action land), an existing hook
+  // (it'll run), or none — in which case we explain the extension point in
+  // context and offer `s` to write an inert sample.
+  function renderHookSection() {
+    if (scaffold?.ok) {
+      return (
+        <>
+          <box style={{ height: 1 }} />
+          <box style={{ flexDirection: "row" }}>
+            <text content="✓ " fg={theme.good} />
+            <text content="wrote bin/sync.d/post-import.sh — edit it, then pull." fg={theme.text} wrapMode="none" />
+          </box>
+          <text content="  (it's inert until you uncomment a command)" fg={theme.textFaint} wrapMode="none" />
+        </>
+      )
+    }
+    if (scaffold && !scaffold.ok) {
+      return (
+        <>
+          <box style={{ height: 1 }} />
+          <text content={`✕ ${scaffold.error}`} fg={theme.bad} wrapMode="none" />
+        </>
+      )
+    }
+    if (plan?.hookPath) {
+      return (
+        <>
+          <box style={{ height: 1 }} />
+          <text content="↪ post-import hook will run (your per-project tweaks)" fg={theme.purple} wrapMode="none" />
+        </>
+      )
+    }
+    return (
+      <>
+        <box style={{ height: 1 }} />
+        <text content="No post-import hook set up for this project." fg={theme.textFaint} wrapMode="none" />
+        <text content="Spinup can run bin/sync.d/post-import.sh after each pull —" fg={theme.textFaint} wrapMode="none" />
+        <text content="e.g. swap Elementor URLs, toggle dev-only plugins." fg={theme.textFaint} wrapMode="none" />
+        <text content="  s  write a sample hook" fg={theme.textDim} wrapMode="none" />
+      </>
+    )
+  }
+
   function renderBody() {
     if (dp === "blocked") {
       return (
@@ -134,12 +192,7 @@ export function DbSync() {
             <box style={{ height: 1 }} />
             <text content="rewrite URLs" fg={theme.textFaint} />
             <text content={`  ${plan ? middleTruncate(`${plan.remoteOrigin} → ${plan.localOrigin}`, 64) : "—"}`} fg={theme.textDim} wrapMode="none" />
-            {plan?.hookPath ? (
-              <>
-                <box style={{ height: 1 }} />
-                <text content="↪ will run bin/sync.d/post-import.sh" fg={theme.purple} wrapMode="none" />
-              </>
-            ) : null}
+            {renderHookSection()}
             {plan?.prefixWarning ? (
               <>
                 <box style={{ height: 1 }} />
@@ -154,47 +207,59 @@ export function DbSync() {
       )
     }
 
-    if (dp === "running") {
-      return (
-        <box style={{ flexDirection: "column", alignItems: "center" }}>
-          <box style={{ flexDirection: "row" }}>
-            <Spinner />
-            <text content={`  ${STAGE_LABEL[progress?.stage ?? "local-backup"] ?? "Working…"}`} fg={theme.textDim} />
-          </box>
-          <box style={{ height: 1 }} />
-          <text content="You can press Esc — it keeps running in the background." fg={theme.textFaint} wrapMode="none" />
-        </box>
-      )
-    }
-
-    if (dp === "done") {
-      return (
-        <Panel title=" Done " active>
-          <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>
-            <box style={{ flexDirection: "row" }}>
-              <text content="✓ " fg={theme.good} />
-              <text content="Local now mirrors production." fg={theme.text} wrapMode="none" />
-              {progress?.ranHook ? <text content="  (hook ran)" fg={theme.textFaint} wrapMode="none" /> : null}
-            </box>
-            <box style={{ height: 1 }} />
-            <text content="prod dump saved" fg={theme.textFaint} />
-            {progress?.downloadPath ? <DestPath path={progress.downloadPath} fileColor={theme.accent} width={64} /> : null}
-            <text content="local DB backup" fg={theme.textFaint} />
-            {progress?.localBackupPath ? <DestPath path={progress.localBackupPath} fileColor={theme.textDim} width={64} /> : null}
-            <box style={{ height: 1 }} />
-            <text content="Esc to close" fg={theme.textFaint} />
-          </box>
-        </Panel>
-      )
-    }
+    // running | done | error share one bordered checklist so the whole pull
+    // reads as a building stack; the footer carries the live/result/error status.
+    const steps = SYNC_STEPS.filter((s) => s.stage !== "hook" || !!plan?.hookPath)
+    const order = steps.map((s) => s.stage)
+    const curIdx = order.indexOf((progress?.stage ?? "local-backup") as DbSyncStage)
+    const failedIdx = progress?.failedStage ? order.indexOf(progress.failedStage) : order.length - 1
+    const rows: StepRow[] = steps.map(({ label }, i) => {
+      const state: StepRow["state"] =
+        dp === "done"
+          ? "done"
+          : dp === "error"
+            ? i < failedIdx
+              ? "done"
+              : i === failedIdx
+                ? "failed"
+                : "pending"
+            : i < curIdx
+              ? "done"
+              : i === curIdx
+                ? "active"
+                : "pending"
+      return { label, state }
+    })
 
     return (
-      <Panel title=" Sync failed " active>
-        <box style={{ flexDirection: "column", width: 70, paddingTop: 1, paddingBottom: 1 }}>
-          <text content={`✕ ${progress?.error ?? "Something went wrong."}`} fg={theme.bad} wrapMode="none" />
+      <Panel title=" Pull production → local " active>
+        <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
+          <Steps rows={rows} />
           <box style={{ height: 1 }} />
-          <text content="Your local DB backup is in sql/ if you need to restore." fg={theme.textFaint} wrapMode="none" />
-          <text content="Press r to try again · Esc to close" fg={theme.textFaint} wrapMode="none" />
+          {dp === "done" ? (
+            <>
+              <box style={{ flexDirection: "row" }}>
+                <text content="✓ " fg={theme.good} />
+                <text content="Done — local now mirrors production." fg={theme.text} wrapMode="none" />
+              </box>
+              <box style={{ height: 1 }} />
+              <text content="prod dump saved" fg={theme.textFaint} />
+              {progress?.downloadPath ? <DestPath path={progress.downloadPath} fileColor={theme.accent} width={62} /> : null}
+              <text content="local DB backup" fg={theme.textFaint} />
+              {progress?.localBackupPath ? <DestPath path={progress.localBackupPath} fileColor={theme.textDim} width={62} /> : null}
+              <box style={{ height: 1 }} />
+              <text content="Esc to close" fg={theme.textFaint} />
+            </>
+          ) : dp === "error" ? (
+            <>
+              <text content={`✕ ${progress?.error ?? "Something went wrong."}`} fg={theme.bad} />
+              <box style={{ height: 1 }} />
+              <text content="Your local DB backup is in sql/ if you need to restore." fg={theme.textFaint} wrapMode="none" />
+              <text content="Press r to try again · Esc to close" fg={theme.textFaint} wrapMode="none" />
+            </>
+          ) : (
+            <text content="You can press Esc — it keeps running in the background." fg={theme.textFaint} wrapMode="none" />
+          )}
         </box>
       </Panel>
     )
@@ -205,6 +270,7 @@ export function DbSync() {
       case "confirm":
         return [
           { key: "y/⏎", label: "pull" },
+          ...(plan && !plan.hookPath ? [{ key: "s", label: "sample hook" }] : []),
           { key: "esc", label: "cancel" },
         ]
       case "error":

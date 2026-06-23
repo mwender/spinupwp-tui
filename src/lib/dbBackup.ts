@@ -97,6 +97,7 @@ export interface DbBackupProgress {
   destPath?: string
   bytes?: number
   error?: string
+  failedStage?: DbBackupStage // which step broke, so the UI can mark it ✕
 }
 
 export function isDbBackupInFlight(p: DbBackupProgress | undefined): boolean {
@@ -149,8 +150,8 @@ export async function runDbBackup(
   onProgress: (p: DbBackupProgress) => void,
 ): Promise<DbBackupProgress> {
   const target = `${plan.user}@${plan.host}`
-  const fail = (error: string): DbBackupProgress => {
-    const p: DbBackupProgress = { stage: "error", domain, error }
+  const fail = (error: string, failedStage: DbBackupStage): DbBackupProgress => {
+    const p: DbBackupProgress = { stage: "error", domain, error, failedStage }
     onProgress(p)
     return p
   }
@@ -165,7 +166,7 @@ export async function runDbBackup(
     `wp db export "$HOME/${sql}" --single-transaction >/dev/null; ` +
     `gzip -f "$HOME/${sql}"`
   const exp = await runProcess(["ssh", ...SSH_OPTS, ...sshPort(plan.port), target, remoteScript], 300_000)
-  if (exp.code !== 0) return fail(`Remote export failed — ${meaningfulError(exp.stderr, `ssh exit ${exp.code}.`)}`)
+  if (exp.code !== 0) return fail(`Remote export failed — ${meaningfulError(exp.stderr, `ssh exit ${exp.code}.`)}`, "export")
 
   // 2) Download the gzip into the project's sql/ dir.
   onProgress({ stage: "download", domain })
@@ -178,7 +179,7 @@ export async function runDbBackup(
   if (dl.code !== 0) {
     // Still try to remove the remote stage file so it doesn't linger.
     void runProcess(["ssh", ...SSH_OPTS, ...sshPort(plan.port), target, `rm -f "$HOME/${plan.remoteGz}"`], 30_000)
-    return fail(`Download failed — ${meaningfulError(dl.stderr, `scp exit ${dl.code}.`)}`)
+    return fail(`Download failed — ${meaningfulError(dl.stderr, `scp exit ${dl.code}.`)}`, "download")
   }
 
   // 3) Remove the remote stage file.

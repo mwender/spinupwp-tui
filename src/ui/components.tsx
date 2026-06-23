@@ -40,6 +40,33 @@ export function Spinner({ color = theme.brand, interval = 80 }: { color?: string
   return <text content={SPINNER_FRAMES[frame]} fg={color} />
 }
 
+// A vertical checklist of stages that fills in as work progresses: completed
+// rows get a green ✓, the in-flight row spins, not-yet-reached rows are faint
+// ○, and a failed row gets a red ✕. Used by the DB backup/sync overlays so the
+// whole operation reads as one building stack rather than a swapping spinner.
+export type StepState = "done" | "active" | "pending" | "failed"
+export interface StepRow {
+  label: string
+  state: StepState
+}
+
+export function Steps({ rows }: { rows: StepRow[] }) {
+  return (
+    <box style={{ flexDirection: "column" }}>
+      {rows.map((r, i) => (
+        <box key={i} style={{ flexDirection: "row", height: 1 }}>
+          {r.state === "active" ? (
+            <Spinner color={theme.brand} />
+          ) : (
+            <text content={r.state === "done" ? "✓" : r.state === "failed" ? "✕" : "○"} fg={r.state === "done" ? theme.good : r.state === "failed" ? theme.bad : theme.textFaint} />
+          )}
+          <text content={` ${r.label}`} fg={r.state === "pending" ? theme.textFaint : theme.text} wrapMode="none" />
+        </box>
+      ))}
+    </box>
+  )
+}
+
 // A bordered panel with a consistent title style. `active` highlights the border.
 export function Panel({
   title,

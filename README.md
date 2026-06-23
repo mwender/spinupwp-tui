@@ -354,8 +354,17 @@ Everything is detected automatically, for Standard WP **and** Bedrock:
 If your project already has a `bin/sync.d/post-import.sh` (e.g. Elementor URL
 swaps, plugin toggles), it runs with `WEB_DIR`, `SYNC_REMOTE_HOST`, and
 `SYNC_LOCAL_HOST` set — so existing per-project tweaks carry over with no extra
-configuration. Backups stay **gzipped** in `sql/`; decompress with `gunzip` when
-you need one.
+configuration. When a project has **no** hook yet, the `p` confirm screen
+explains what the hook is and offers `s` to scaffold an **inert** sample
+`bin/sync.d/post-import.sh` (every example commented out, documented with the env
+vars above) for you to edit. Backups stay **gzipped** in `sql/`; decompress with
+`gunzip` when you need one.
+
+Both `d` and `p` show their progress as a **building checklist** inside the
+overlay — each step gets a `✓` as it completes, the running step spins, and a
+failure marks the exact step with `✕` — so you can see everything that happened,
+ending with the saved paths. It keeps running if you close the overlay (`Esc`);
+reopen with the same key to watch it through.
 
 ## DNS hosts, access & editing
 
