@@ -9,6 +9,8 @@ import { createContext, useContext, useCallback, useEffect, useMemo, useRef, use
 import { SpinupWPClient, ApiError, type ServerService } from "../api/client.ts"
 import type { Server, Site, Event } from "../api/types.ts"
 import { loadConfig, saveConfig } from "../config.ts"
+import { APP_VERSION } from "../version.ts"
+import { cachedUpdateInfo, refreshUpdateInfo, type UpdateInfo } from "../lib/appUpdate.ts"
 import { resolveLocalLink, expandPath, normalizeLink, type LocalLink } from "../lib/local.ts"
 import type { Stack } from "../lib/stack.ts"
 import { openTerminalAt, openUrl, openSshSession } from "../lib/open.ts"
@@ -37,6 +39,7 @@ import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.t
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
 import { planDbSync, runDbSync, type DbSyncProgress, type SyncPlanResult } from "../lib/dbSync.ts"
+import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
 
 export type Route = "dashboard" | "servers" | "stacks" | "search" | "events"
 
@@ -115,6 +118,8 @@ export interface DataState {
   ready: boolean
   error: string | null
   lastUpdated: Date | null
+  // Latest released version vs. the running one (null until/unless we learn it).
+  updateInfo: UpdateInfo | null
 }
 
 interface StoreValue extends DataState {
@@ -214,6 +219,12 @@ interface StoreValue extends DataState {
   // import → search-replace URLs → run post-import hook. Destructive on LOCAL.
   startDbSync: (site: Site) => void
   clearDbSync: (siteId: number) => void
+
+  // Production media fallback overlay (mu-plugin in the linked local copy). State
+  // is the plugin file's presence, resolved fresh by planMediaFallbackFor.
+  mediaFallbackSite: Site | null
+  setMediaFallbackSite: (s: Site | null) => void
+  planMediaFallbackFor: (site: Site) => MediaFallbackResult
   // Local git drift for linked sites, keyed by site id (null = not a git repo,
   // undefined = not yet computed). Computed lazily + cached; cleared on refresh.
   drift: Map<number, Drift | null>
@@ -328,6 +339,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  // Update check: show any cached result immediately, then refresh once per launch
+  // (disk-cached, 6h TTL — see appUpdate.ts).
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(() => cachedUpdateInfo(APP_VERSION))
+  useEffect(() => {
+    void refreshUpdateInfo(APP_VERSION).then((info) => {
+      if (info) setUpdateInfo(info)
+    })
+  }, [])
   const [route, setRoute] = useState<Route>("dashboard")
   const [inputMode, setInputMode] = useState(false)
   const [overlayOpen, setOverlayOpen] = useState(false)
@@ -341,6 +360,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [dbBackups, setDbBackups] = useState<Map<number, DbBackupProgress>>(new Map())
   const [dbSyncSite, setDbSyncSite] = useState<Site | null>(null)
   const [dbSyncs, setDbSyncs] = useState<Map<number, DbSyncProgress>>(new Map())
+  const [mediaFallbackSite, setMediaFallbackSite] = useState<Site | null>(null)
   const [localRoots, setLocalRoots] = useState<string[]>(() => [...cfgRef.current.localRoots])
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const [forgottenOpen, setForgottenOpen] = useState(false)
@@ -804,6 +824,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [servers, localLinks],
   )
 
+  const planMediaFallbackFor = useCallback((site: Site): MediaFallbackResult => planMediaFallback(site, localLinks.get(site.id)), [localLinks])
+
   const startDbSync = useCallback(
     (site: Site) => {
       const existing = dbSyncs.get(site.id)
@@ -1208,6 +1230,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ready,
     error,
     lastUpdated,
+    updateInfo,
     client,
     route,
     setRoute,
@@ -1254,6 +1277,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     clearDbBackup,
     dbSyncSite,
     setDbSyncSite,
+    mediaFallbackSite,
+    setMediaFallbackSite,
+    planMediaFallbackFor,
     dbSyncs,
     planDbSyncFor,
     startDbSync,

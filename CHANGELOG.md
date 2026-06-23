@@ -11,6 +11,36 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-23
+
+### Added
+- **Production media fallback (`m`).** After a `p` DB pull, your local site shows
+  broken images because the media library isn't synced. Press `m` on a linked
+  WordPress site to drop a small, self-contained mu-plugin that serves any
+  **missing-locally** upload straight from production — so images resolve without
+  copying a single file. It runs in WordPress (pure PHP), so it works the same on
+  any local stack (Valet / Herd / LocalWP / DDEV / MAMP) with no web-server config.
+  It decides "missing" from the real document root and redirects to the **same
+  path** on production, so it covers page-builder URLs (Elementor inline CSS &
+  gallery data), **legacy `/wp-content/uploads` paths** left from a Bedrock
+  conversion, and CDN/S3 redirects (production's own routing resolves them).
+  Local-only and read-only on production; self-disables on the production domain
+  so it's inert if ever deployed. The plugin's presence is its on/off state (no
+  config); `m` toggles it and the overlay offers an in-place update when a newer
+  version ships. (See "Production media fallback" in the README.)
+- **App version, About, and update check.** The header now shows the running
+  version next to the wordmark (`◆ Spinup vX.Y.Z`). The `?` help overlay is
+  redesigned into a responsive multi-column layout with an **About** column
+  (version, how to update, repo). On launch the app checks the latest GitHub
+  release (cached on disk for 6h — no background polling) and, when a newer
+  release exists, shows a `✦ vX.Y.Z` hint in the header and the About panel.
+
+### Changed
+- **The app is now called "Spinup".** Renamed the app's own branding — the
+  header wordmark, the help/About panel, and the CLI banner — to **Spinup**, since
+  it's a control center for your *SpinupWP account*. References to the SpinupWP
+  *service* (the web app via `w`, the API, deep links) are unchanged.
+
 ## [0.7.1] - 2026-06-23
 
 ### Added
@@ -282,7 +312,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/mwender/spinupwp-tui/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/mwender/spinupwp-tui/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mwender/spinupwp-tui/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mwender/spinupwp-tui/compare/v0.5.0...v0.6.0

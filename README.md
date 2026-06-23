@@ -2,18 +2,19 @@
   <img src=".github/assets/banner.png" alt="SpinupWP TUI" width="100%">
 </p>
 
-<h1 align="center">SpinupWP TUI</h1>
+<h1 align="center">Spinup</h1>
 
 <p align="center">
-  A fast, keyboard-driven terminal dashboard for browsing and monitoring your
-  <a href="https://spinupwp.com">SpinupWP</a> servers and sites.<br>
+  A fast, keyboard-driven terminal control center for your
+  <a href="https://spinupwp.com">SpinupWP</a> account — browse and monitor your
+  servers and sites, and run local-dev workflows against them.<br>
   Built with <a href="https://opentui.com">OpenTUI</a> and <a href="https://bun.sh">Bun</a>.
 </p>
 
 Once you're in, the dashboard looks like this:
 
 ```
- ◆ SpinupWP   1 Dashboard   2 Servers   3 Stacks   4 Search   5 Events   20 servers · 171 sites
+ ◆ Spinup v0.8.0   1 Dashboard   2 Servers   3 Stacks   4 Search   5 Events   20 servers · 171 sites
 
  ┌──────────────┐ ┌───────────────┐ ┌───────────────────┐ ┌──────────────────────┐
  │ Servers      │ │ Sites         │ │ Fleet Disk        │ │ WP Updates           │
@@ -69,6 +70,12 @@ Once you're in, the dashboard looks like this:
   your **local** database (backs up local first, rewrites URLs, runs your existing
   `sync.d` hook). Works with Standard WP and Bedrock, no per-site config. (See
   "Database backup & sync" below.)
+- **Production media fallback** — after a DB pull, your local site shows broken
+  images because the (often huge) media library isn't synced. Press `m` on a
+  linked WordPress site to drop a small mu-plugin that serves any **missing-locally**
+  upload from production — so images resolve without copying a single file. Works
+  on any local stack (it's pure PHP, not web-server config). (See "Production media
+  fallback" below.)
 - **Upgrade a site's PHP version** — press `u` on a site to pick a new PHP
   version and apply it (`PUT /sites/{id}/php`), then watch the upgrade event run
   to completion. (See "Upgrading PHP" below.)
@@ -187,6 +194,7 @@ These can be set in `config.json` or via an environment variable:
 | `s` | Open a terminal and SSH into the selected site |
 | `d` | Download a production DB backup into the linked copy (Search; WordPress + linked) |
 | `p` | Pull the production DB into the linked copy — overwrites local; opt-in via `localSync` (Search) |
+| `m` | Production media fallback: serve missing-locally images from production (Search; WordPress + linked) |
 | `L` | Link / edit a site's local working copy |
 | `t` / `v` | Open the linked copy in a terminal / its local URL in your browser |
 | `n` | DNS migration view for a site — its records + TTLs (`⏎` edits a TTL; `a` shows the whole server) |
@@ -365,6 +373,34 @@ overlay — each step gets a `✓` as it completes, the running step spins, and 
 failure marks the exact step with `✕` — so you can see everything that happened,
 ending with the saved paths. It keeps running if you close the overlay (`Esc`);
 reopen with the same key to watch it through.
+
+## Production media fallback
+
+A `p` sync refreshes your local **database**, but not the media library — so the
+local site shows broken images. Syncing the files is often impractical (some
+libraries are hundreds of thousands of items). Instead, press **`m`** on a linked
+WordPress site to serve any image that's **missing locally** straight from
+production.
+
+It works by dropping a small, self-contained mu-plugin into your local copy
+(`wp-content/mu-plugins/` or Bedrock's `web/app/mu-plugins/`). The plugin rewrites
+any uploads URL whose file isn't present locally to the production origin —
+covering the standard media functions, page-builder output (e.g. Elementor inline
+CSS and gallery data), and **legacy paths** left over from a Standard-WP →
+Bedrock conversion. Because it decides "missing" from the real document root and
+redirects to the **same path** on production, your production routing (CDN/S3
+redirects included) resolves whatever it's handed.
+
+- **It runs in WordPress, not your web server**, so it works the same on Valet,
+  Herd, LocalWP, DDEV, MAMP — anything. No nginx/Apache config to get right.
+- **Local-only and read-only on production** — it just hotlinks your own
+  production images. It self-disables when running on the production domain, so
+  it's inert if it ever gets deployed.
+- **The plugin's presence is the on/off state** (no config flag). Press `m` to
+  toggle; `u` from the overlay updates it in place when a newer version ships.
+- Needs production reachable and hotlinking allowed (it won't work behind staging
+  Basic-Auth). Images delivered by external CSS files or async JS/REST are the one
+  thing server-side rewriting can't catch.
 
 ## DNS hosts, access & editing
 

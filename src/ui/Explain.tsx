@@ -82,6 +82,7 @@ const GUIDES: Record<Route, Guide> = {
       ["o / w / u", "Open · open in SpinupWP · change PHP"],
       ["s", "SSH into the site (opens a terminal)"],
       ["t / v / L", "Local copy: terminal · local URL · link or edit"],
+      ["d / p / m", "DB backup · pull prod→local · production media fallback"],
       ["a / h", "Server actions · server health"],
     ],
   },

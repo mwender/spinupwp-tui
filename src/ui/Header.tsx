@@ -4,6 +4,7 @@ import { theme } from "../lib/theme.ts"
 import { useStore, type Route } from "./store.tsx"
 import { timeAgo } from "../lib/format.ts"
 import { Spinner } from "./components.tsx"
+import { APP_NAME, APP_VERSION } from "../version.ts"
 
 const TABS: { route: Route; key: string; label: string }[] = [
   { route: "dashboard", key: "1", label: "Dashboard" },
@@ -25,7 +26,8 @@ const SUBTITLES: Record<Route, string> = {
 }
 
 export function Header() {
-  const { route, servers, sites, loading, lastUpdated } = useStore()
+  const { route, servers, sites, loading, lastUpdated, updateInfo } = useStore()
+  const updateReady = updateInfo?.updateAvailable ?? false
 
   return (
     <box style={{ flexDirection: "column", flexShrink: 0 }}>
@@ -39,7 +41,9 @@ export function Header() {
           alignItems: "center",
         }}
       >
-        <text content="◆ SpinupWP" fg={theme.brand} style={{ flexShrink: 0 }} />
+        <text content={`◆ ${APP_NAME}`} fg={theme.brand} style={{ flexShrink: 0 }} />
+        <text content={` v${APP_VERSION}`} fg={theme.textFaint} style={{ flexShrink: 0 }} />
+        {updateReady && <text content={` ✦ v${updateInfo!.latest}`} fg={theme.brand} style={{ flexShrink: 0 }} />}
         <box style={{ width: 2, flexShrink: 0 }} />
         {TABS.map((tab) => {
           const active = tab.route === route

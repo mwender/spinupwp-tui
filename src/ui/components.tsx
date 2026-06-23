@@ -40,6 +40,19 @@ export function Spinner({ color = theme.brand, interval = 80 }: { color?: string
   return <text content={SPINNER_FRAMES[frame]} fg={color} />
 }
 
+const SPARKLE_FRAMES = ["✦", "✧", "✶", "✧"]
+
+// A gentle twinkling glyph for drawing the eye to a notice (e.g. an available
+// update) without the urgency of a spinner.
+export function Sparkle({ color = theme.brand, interval = 360 }: { color?: string; interval?: number }) {
+  const [frame, setFrame] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setFrame((f) => (f + 1) % SPARKLE_FRAMES.length), interval)
+    return () => clearInterval(id)
+  }, [interval])
+  return <text content={SPARKLE_FRAMES[frame]} fg={color} />
+}
+
 // A vertical checklist of stages that fills in as work progresses: completed
 // rows get a green ✓, the in-flight row spins, not-yet-reached rows are faint
 // ○, and a failed row gets a red ✕. Used by the DB backup/sync overlays so the

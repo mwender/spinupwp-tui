@@ -17,7 +17,7 @@ const command = args.find((a) => !a.startsWith("-"))
 
 if (args.includes("-h") || args.includes("--help") || command === "help") {
   const cfg = loadConfig()
-  console.log(`${pkg.name} v${pkg.version} — terminal dashboard for SpinupWP
+  console.log(`Spinup v${pkg.version} — terminal dashboard for your SpinupWP account
 
 Usage:
   spinup            Launch the dashboard

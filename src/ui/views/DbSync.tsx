@@ -28,7 +28,7 @@ const SYNC_STEPS: { stage: DbSyncStage; label: string }[] = [
 ]
 
 export function DbSync() {
-  const { dbSyncSite: site, setDbSyncSite, serverById, planDbSyncFor, dbSyncs, startDbSync, clearDbSync } = useStore()
+  const { dbSyncSite: site, setDbSyncSite, serverById, planDbSyncFor, dbSyncs, startDbSync, clearDbSync, planMediaFallbackFor, setMediaFallbackSite } = useStore()
 
   const planResult = site ? planDbSyncFor(site) : null
   const progress = site ? dbSyncs.get(site.id) : undefined
@@ -80,11 +80,23 @@ export function DbSync() {
       }
       return
     }
+    if (dp === "done") {
+      // m: hand off to the media-fallback overlay for the just-synced site.
+      if (name === "m" && site) {
+        close()
+        setMediaFallbackSite(site)
+      }
+      return
+    }
   })
 
   if (!site) return null
   const server = serverById(site.server_id)
   const plan = planResult && planResult.ok ? planResult.plan : null
+  // Whether this site already has the production media-fallback plugin (shapes the
+  // Done-screen nudge). Only meaningful on the done screen.
+  const mfPlan = dp === "done" ? planMediaFallbackFor(site) : null
+  const mediaFallbackEnabled = !!(mfPlan && mfPlan.ok && mfPlan.plan.enabled)
 
   return (
     <box
@@ -248,6 +260,11 @@ export function DbSync() {
               <text content="local DB backup" fg={theme.textFaint} />
               {progress?.localBackupPath ? <DestPath path={progress.localBackupPath} fileColor={theme.textDim} width={62} /> : null}
               <box style={{ height: 1 }} />
+              {mediaFallbackEnabled ? (
+                <text content="✓ Missing images load from production (media fallback on)." fg={theme.textFaint} wrapMode="none" />
+              ) : (
+                <text content="Images 404ing locally? Press m to serve them from production." fg={theme.purple} wrapMode="none" />
+              )}
               <text content="Esc to close" fg={theme.textFaint} />
             </>
           ) : dp === "error" ? (
@@ -276,6 +293,11 @@ export function DbSync() {
       case "error":
         return [
           { key: "r", label: "retry" },
+          { key: "esc", label: "close" },
+        ]
+      case "done":
+        return [
+          ...(mediaFallbackEnabled ? [] : [{ key: "m", label: "media fallback" }]),
           { key: "esc", label: "close" },
         ]
       default:

@@ -17,6 +17,7 @@ import { Health } from "./views/Health.tsx"
 import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
 import { DbBackup } from "./views/DbBackup.tsx"
 import { DbSync } from "./views/DbSync.tsx"
+import { MediaFallback } from "./views/MediaFallback.tsx"
 import { ServerActions } from "./views/ServerActions.tsx"
 import { LocalLinkOverlay } from "./views/LocalLink.tsx"
 import { Discover } from "./views/Discover.tsx"
@@ -49,6 +50,7 @@ export function App() {
     store.phpUpgradeSite !== null ||
     store.dbBackupSite !== null ||
     store.dbSyncSite !== null ||
+    store.mediaFallbackSite !== null ||
     store.serverActionsServer !== null ||
     store.localLinkSite !== null ||
     store.discoverOpen ||
@@ -87,6 +89,9 @@ export function App() {
 
     // The DB-sync overlay owns the keyboard while open.
     if (store.dbSyncSite) return
+
+    // The media-fallback overlay owns the keyboard while open.
+    if (store.mediaFallbackSite) return
 
     // The server-actions overlay owns the keyboard while open.
     if (store.serverActionsServer) return
@@ -178,6 +183,7 @@ export function App() {
       {store.phpUpgradeSite && <PhpUpgrade />}
       {store.dbBackupSite && <DbBackup />}
       {store.dbSyncSite && <DbSync />}
+      {store.mediaFallbackSite && <MediaFallback />}
       {store.serverActionsServer && <ServerActions />}
       {store.localLinkSite && <LocalLinkOverlay />}
       {store.discoverOpen && <Discover />}
