@@ -53,7 +53,7 @@ export function App() {
     store.dbSyncSite !== null ||
     store.mediaFallbackSite !== null ||
     store.serverActionsServer !== null ||
-    store.newServerSource !== null ||
+    store.newServerOpen ||
     store.localLinkSite !== null ||
     store.discoverOpen ||
     store.forgottenOpen ||
@@ -99,7 +99,7 @@ export function App() {
     if (store.serverActionsServer) return
 
     // The new-server overlay owns the keyboard while open.
-    if (store.newServerSource) return
+    if (store.newServerOpen) return
 
     // The local-link overlay owns the keyboard while open.
     if (store.localLinkSite) return
@@ -190,7 +190,7 @@ export function App() {
       {store.dbSyncSite && <DbSync />}
       {store.mediaFallbackSite && <MediaFallback />}
       {store.serverActionsServer && <ServerActions />}
-      {store.newServerSource && <NewServer />}
+      {store.newServerOpen && <NewServer />}
       {store.localLinkSite && <LocalLinkOverlay />}
       {store.discoverOpen && <Discover />}
       {store.forgottenOpen && <Forgotten />}

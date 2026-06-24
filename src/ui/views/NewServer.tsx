@@ -58,6 +58,8 @@ type Phase =
 export function NewServer() {
   const store = useStore()
   const {
+    newServerOpen,
+    setNewServerOpen,
     newServerSource: source,
     setNewServerSource,
     servers,
@@ -179,6 +181,7 @@ export function NewServer() {
   const close = () => {
     setInputMode(false)
     if (newServerJob && !isNewServerInFlight(newServerJob)) clearNewServer()
+    setNewServerOpen(false)
     setNewServerSource(null)
   }
 
@@ -211,7 +214,7 @@ export function NewServer() {
   }
 
   const fire = () => {
-    if (!source || !providerRef || !regionSlug || !sizeSlug) return
+    if (!providerRef || !regionSlug || !sizeSlug) return
     const name = hostname.trim()
     if (!name) return setPhase("name")
     const payload: CreateServerPayload = {
@@ -222,7 +225,7 @@ export function NewServer() {
         enable_backups: backups,
       },
       hostname: name,
-      ...(source.timezone ? { timezone: source.timezone } : {}),
+      ...(source?.timezone ? { timezone: source.timezone } : {}),
       ...(providerRef.databaseProviderId ? { database_provider: { id: providerRef.databaseProviderId } } : {}),
     }
     startNewServer(payload, name)
@@ -361,7 +364,7 @@ export function NewServer() {
     }
   })
 
-  if (!source) return null
+  if (!newServerOpen) return null
 
   const titleProvider = selectedProviderKey ? providerLabel(selectedProviderKey) : "choose a provider"
 

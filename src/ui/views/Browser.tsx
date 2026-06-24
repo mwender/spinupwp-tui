@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -141,9 +141,12 @@ export function Browser({ rows }: { rows: number }) {
         if (focus === "servers" && server) setServerActionsServer(server)
         return
       case "c":
-        // Create a new server, seeding the form from the selected server's specs
-        // (match-source). Server-scoped, so only from the Servers pane (like `a`).
-        if (focus === "servers" && server) setNewServerSource(server)
+        // Create a new server. Seed from the highlighted server when there is one;
+        // open from scratch otherwise (incl. an empty fleet). Servers-pane only.
+        if (focus === "servers") {
+          setNewServerSource(server ?? null)
+          setNewServerOpen(true)
+        }
         return
       case "h":
         // Open the live health view for the current server (works from either pane).
@@ -200,7 +203,7 @@ export function Browser({ rows }: { rows: number }) {
             viewportRows={listRows}
             focused={focus === "servers"}
             keyFor={(s) => s.id}
-            emptyText="No servers"
+            emptyText="No servers yet — press c to create one"
             renderRow={(s, selected) => {
               const count = sitesForServer(s.id).length
               const op = serverOps.get(s.id)

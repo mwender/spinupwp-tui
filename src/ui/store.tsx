@@ -174,8 +174,13 @@ interface StoreValue extends DataState {
   // Fire a server op (reboot or service restart) and poll its event in the background.
   startServerOp: (server: Server, kind: ServerOpKind, label: string) => void
   clearServerOp: (serverId: number) => void
-  // The "create a server" overlay target: the source server whose specs we seed
-  // the form with (match-source default), or null when the overlay is closed.
+  // Whether the "create a server" overlay is open. Separate from the source so the
+  // flow can run with no seed (general "from scratch" create, and the empty-fleet
+  // case where there's no server to select).
+  newServerOpen: boolean
+  setNewServerOpen: (v: boolean) => void
+  // The source server whose specs seed the form (match-source default), or null
+  // for a from-scratch create.
   newServerSource: Server | null
   setNewServerSource: (s: Server | null) => void
   // The single in-flight (or just-settled) provisioning job, tracked in the store
@@ -394,6 +399,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [phpUpgrades, setPhpUpgrades] = useState<Map<number, PhpUpgradeProgress>>(new Map())
   const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
   const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
+  const [newServerOpen, setNewServerOpen] = useState(false)
   const [newServerSource, setNewServerSource] = useState<Server | null>(null)
   const [newServerJob, setNewServerJob] = useState<NewServerJob | null>(null)
   const [providerMetadata, setProviderMetadata] = useState<Map<string, ProviderMetadata>>(new Map())
@@ -1384,6 +1390,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     serverOps,
     startServerOp,
     clearServerOp,
+    newServerOpen,
+    setNewServerOpen,
     newServerSource,
     setNewServerSource,
     newServerJob,
