@@ -106,6 +106,53 @@ export interface Site {
   status: string
 }
 
+// Server-provider metadata (GET /providers/{provider}/metadata) — the catalog of
+// sizes and regions a provider offers, including pricing. Used to show "match
+// source" specs + a monthly cost before creating a server.
+export interface ProviderSize {
+  slug: string
+  type?: string
+  memory: number // MB
+  vcpus: number
+  disk: number // GB
+  transfer?: number
+  priceMonthly: number
+  backupPriceMonthly?: number
+  available?: boolean
+  processor?: string
+}
+
+export interface ProviderRegion {
+  slug: string
+  name: string
+  available?: boolean
+  continent?: string
+  sizes: string[] // size slugs offered in this region
+}
+
+export interface ProviderMetadata {
+  regions: Record<string, ProviderRegion[]> // grouped by continent name
+  sizes: ProviderSize[]
+}
+
+// Request body for POST /servers (provision a managed server). The API uses
+// bracketed form keys (server_provider[id], …) which map to these nested objects.
+export interface CreateServerPayload {
+  server_provider: {
+    id?: number // an existing provider connection (from SpinupWP Account Settings)
+    name?: string // or provider name + token to use an unsaved provider
+    api_token?: string
+    region: string
+    size: string
+    enable_backups?: boolean
+  }
+  hostname: string
+  timezone?: string
+  database?: { root_password?: string }
+  database_provider?: { id: number }
+  post_provision_script?: string
+}
+
 export interface Event {
   id: number
   initiated_by: string | null

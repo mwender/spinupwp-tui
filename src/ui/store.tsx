@@ -7,8 +7,8 @@
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { SpinupWPClient, ApiError, type ServerService } from "../api/client.ts"
-import type { Server, Site, Event } from "../api/types.ts"
-import { loadConfig, saveConfig } from "../config.ts"
+import type { Server, Site, Event, ProviderMetadata, CreateServerPayload } from "../api/types.ts"
+import { loadConfig, saveConfig, type ServerProviderRef } from "../config.ts"
 import { APP_VERSION } from "../version.ts"
 import { cachedUpdateInfo, refreshUpdateInfo, type UpdateInfo } from "../lib/appUpdate.ts"
 import { resolveLocalLink, expandPath, normalizeLink, type LocalLink } from "../lib/local.ts"
@@ -74,6 +74,25 @@ export interface ServerOpProgress {
 
 export function isServerOpInFlight(p: ServerOpProgress | undefined): boolean {
   return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
+}
+
+// Progress of a server-provisioning job (POST /servers), tracked in the store so
+// it survives the New-server overlay being closed (provisioning takes ~10 min).
+// `status`: queued → <event status> → done | failed. Single-slot (one create at a
+// time). serverId is filled once we learn it from the settled event/refresh.
+export interface NewServerJob {
+  hostname: string
+  status: string
+  serverId?: number
+  error?: string
+}
+// Server provisioning events settle with one of these (broader than PHP/site
+// writes, whose terminal is "deployed"); finished_at also implies done.
+const SERVER_DONE = new Set(["deployed", "completed", "provisioned", "finished", "success"])
+const SERVER_FAIL = new Set(["failed", "errored", "error"])
+
+export function isNewServerInFlight(j: NewServerJob | null | undefined): boolean {
+  return j != null && j.status !== "done" && j.status !== "failed"
 }
 
 // A record TTL change (Phase 3), tracked in the store (same model as the other
@@ -155,6 +174,24 @@ interface StoreValue extends DataState {
   // Fire a server op (reboot or service restart) and poll its event in the background.
   startServerOp: (server: Server, kind: ServerOpKind, label: string) => void
   clearServerOp: (serverId: number) => void
+  // The "create a server" overlay target: the source server whose specs we seed
+  // the form with (match-source default), or null when the overlay is closed.
+  newServerSource: Server | null
+  setNewServerSource: (s: Server | null) => void
+  // The single in-flight (or just-settled) provisioning job, tracked in the store
+  // so it survives closing the overlay. Null when no create is pending/recent.
+  newServerJob: NewServerJob | null
+  // Fire POST /servers and poll its event to completion in the background.
+  startNewServer: (payload: CreateServerPayload, hostname: string) => void
+  clearNewServer: () => void
+  // Provider size/region catalog (with pricing), cached per provider key for the
+  // session. loadProviderMetadata fetches lazily on demand.
+  providerMetadata: Map<string, ProviderMetadata>
+  providerMetadataLoading: Set<string>
+  providerMetadataError: Map<string, string>
+  loadProviderMetadata: (providerKey: string) => void
+  // SpinupWP server-provider connections (provider key → {id}), from config.
+  serverProviders: Record<string, ServerProviderRef>
   // Reboot "why" — SSH-probed Ubuntu reboot-required detail, keyed by server id.
   rebootInfo: Map<number, RebootInfo>
   rebootInfoLoading: Set<number>
@@ -355,6 +392,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [phpUpgrades, setPhpUpgrades] = useState<Map<number, PhpUpgradeProgress>>(new Map())
   const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
   const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
+  const [newServerSource, setNewServerSource] = useState<Server | null>(null)
+  const [newServerJob, setNewServerJob] = useState<NewServerJob | null>(null)
+  const [providerMetadata, setProviderMetadata] = useState<Map<string, ProviderMetadata>>(new Map())
+  const [providerMetadataLoading, setProviderMetadataLoading] = useState<Set<string>>(new Set())
+  const [providerMetadataError, setProviderMetadataError] = useState<Map<string, string>>(new Map())
   const [localLinkSite, setLocalLinkSite] = useState<Site | null>(null)
   const [dbBackupSite, setDbBackupSite] = useState<Site | null>(null)
   const [dbBackups, setDbBackups] = useState<Map<number, DbBackupProgress>>(new Map())
@@ -656,6 +698,83 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void run()
     },
     [client, refresh, clearServerOp, serverOps],
+  )
+
+  // ---- Create a server (POST /servers) ----------------------------------
+
+  // Fetch a provider's size/region catalog once per session (lazy, cached).
+  const loadProviderMetadata = useCallback(
+    (providerKey: string) => {
+      // Skip if already cached or a fetch is in flight for this provider.
+      if (providerMetadata.has(providerKey)) return
+      if (providerMetadataLoading.has(providerKey)) return
+      setProviderMetadataLoading((prev) => new Set(prev).add(providerKey))
+      setProviderMetadataError((prev) => {
+        if (!prev.has(providerKey)) return prev
+        const next = new Map(prev)
+        next.delete(providerKey)
+        return next
+      })
+      void (async () => {
+        try {
+          const md = await client.providerMetadata(providerKey)
+          setProviderMetadata((prev) => new Map(prev).set(providerKey, md))
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setProviderMetadataError((prev) => new Map(prev).set(providerKey, msg))
+        } finally {
+          setProviderMetadataLoading((prev) => {
+            const next = new Set(prev)
+            next.delete(providerKey)
+            return next
+          })
+        }
+      })()
+    },
+    [client, providerMetadata, providerMetadataLoading],
+  )
+
+  const clearNewServer = useCallback(() => setNewServerJob(null), [])
+
+  const startNewServer = useCallback(
+    (payload: CreateServerPayload, hostname: string) => {
+      // One create at a time; ignore a duplicate fire while one is in flight.
+      if (newServerJob && newServerJob.status !== "done" && newServerJob.status !== "failed") return
+
+      const run = async () => {
+        setNewServerJob({ hostname, status: "queued" })
+        let eventId: number
+        try {
+          const res = await client.createServer(payload)
+          eventId = res.event_id
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setNewServerJob({ hostname, status: "failed", error: msg })
+          return
+        }
+
+        const poll = async () => {
+          try {
+            const ev = await client.getEvent(eventId)
+            if (SERVER_FAIL.has(ev.status)) {
+              setNewServerJob({ hostname, status: "failed", error: ev.output?.trim() || "The server build failed on SpinupWP." })
+            } else if (SERVER_DONE.has(ev.status) || ev.finished_at) {
+              await refresh() // pull the new server into the list
+              setNewServerJob({ hostname, status: "done", serverId: ev.server_id ?? undefined })
+            } else {
+              setNewServerJob({ hostname, status: ev.status })
+              setTimeout(() => void poll(), UPGRADE_POLL_MS)
+            }
+          } catch (err) {
+            const msg = err instanceof ApiError ? err.message : (err as Error).message
+            setNewServerJob({ hostname, status: "failed", error: msg })
+          }
+        }
+        setTimeout(() => void poll(), UPGRADE_POLL_MS)
+      }
+      void run()
+    },
+    [client, refresh, newServerJob],
   )
 
   // SSH-probe a server's Ubuntu reboot-required detail (the "why"). On-demand,
@@ -1251,6 +1370,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     serverOps,
     startServerOp,
     clearServerOp,
+    newServerSource,
+    setNewServerSource,
+    newServerJob,
+    startNewServer,
+    clearNewServer,
+    providerMetadata,
+    providerMetadataLoading,
+    providerMetadataError,
+    loadProviderMetadata,
+    serverProviders: cfgRef.current.serverProviders,
     localLinkSite,
     setLocalLinkSite,
     localLinks,

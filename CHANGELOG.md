@@ -11,6 +11,21 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Create a new server (`c`).** Press `c` on a server in the Servers tab to
+  provision a new one, pre-filled to **match** the selected server's provider,
+  region, and size. The form prices the build from the provider's catalog
+  (DigitalOcean / Vultr / Linode / Hetzner) so you see a monthly cost before
+  confirming, suggests a hostname from your fleet's naming convention (e.g. the
+  next `webN.example.com`), and lets you change the size or toggle backups. The
+  build fires `POST /servers` and tracks the ~10-minute provisioning in the
+  background, so closing the overlay doesn't abandon it. Because the SpinupWP API
+  doesn't expose your configured server providers, set the provider id once in
+  `config.json` (`"serverProviders": { "hetzner": { "id": 12345 } }` — found in
+  SpinupWP → Account Settings → Server Providers); the overlay explains this if
+  it's unset. First step of the clone-to-new-server workflow (see
+  `docs/2026-06-24_clone-to-server-spec.md`).
+
 ## [0.8.0] - 2026-06-23
 
 ### Added

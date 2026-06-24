@@ -45,6 +45,17 @@ export interface AppConfig {
   // from the stored config and the environment. Env-sourced connections carry
   // `env: true` and are read-only in the UI. Secrets live here (file is chmod 600).
   providerConnections: Record<ConnProvider, Connection[]>
+  // SpinupWP server-provider connections, keyed by provider name
+  // (digitalocean | vultr | linode | hetzner). The API exposes no endpoint to
+  // list these, so — like accountSlug — the id is configured. Required to create
+  // a server on that provider (POST /servers needs server_provider[id]). Find the
+  // id in SpinupWP → Account Settings → Server Providers.
+  serverProviders: Record<string, ServerProviderRef>
+}
+
+export interface ServerProviderRef {
+  id: number
+  databaseProviderId?: number
 }
 
 // Stored connection (no `provider`/`env` discriminators — added on load).
@@ -82,6 +93,7 @@ export interface StoredConfig {
   localSites?: Record<string, LocalLink>
   localSync?: boolean
   providers?: StoredProviders
+  serverProviders?: Record<string, ServerProviderRef>
 }
 
 export function configDir(): string {
@@ -159,6 +171,7 @@ export function loadConfig(): AppConfig {
     localRoots: stored.localRoots ?? [],
     localSites: stored.localSites ?? {},
     providerConnections,
+    serverProviders: stored.serverProviders ?? {},
   }
 }
 

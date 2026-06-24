@@ -19,6 +19,7 @@ import { DbBackup } from "./views/DbBackup.tsx"
 import { DbSync } from "./views/DbSync.tsx"
 import { MediaFallback } from "./views/MediaFallback.tsx"
 import { ServerActions } from "./views/ServerActions.tsx"
+import { NewServer } from "./views/NewServer.tsx"
 import { LocalLinkOverlay } from "./views/LocalLink.tsx"
 import { Discover } from "./views/Discover.tsx"
 import { Forgotten } from "./views/Forgotten.tsx"
@@ -52,6 +53,7 @@ export function App() {
     store.dbSyncSite !== null ||
     store.mediaFallbackSite !== null ||
     store.serverActionsServer !== null ||
+    store.newServerSource !== null ||
     store.localLinkSite !== null ||
     store.discoverOpen ||
     store.forgottenOpen ||
@@ -95,6 +97,9 @@ export function App() {
 
     // The server-actions overlay owns the keyboard while open.
     if (store.serverActionsServer) return
+
+    // The new-server overlay owns the keyboard while open.
+    if (store.newServerSource) return
 
     // The local-link overlay owns the keyboard while open.
     if (store.localLinkSite) return
@@ -185,6 +190,7 @@ export function App() {
       {store.dbSyncSite && <DbSync />}
       {store.mediaFallbackSite && <MediaFallback />}
       {store.serverActionsServer && <ServerActions />}
+      {store.newServerSource && <NewServer />}
       {store.localLinkSite && <LocalLinkOverlay />}
       {store.discoverOpen && <Discover />}
       {store.forgottenOpen && <Forgotten />}

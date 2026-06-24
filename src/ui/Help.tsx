@@ -37,6 +37,7 @@ const NAV: Section = {
     ["h", "Server health (SSH)"],
     ["w", "Open in SpinupWP web app"],
     ["a", "Server actions (reboot/restart)"],
+    ["c", "Create a new server"],
     ["u", "Change PHP version"],
     ["d", "Identify a site's app (SSH)"],
   ],

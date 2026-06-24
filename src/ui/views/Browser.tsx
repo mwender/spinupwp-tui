@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -140,6 +140,11 @@ export function Browser({ rows }: { rows: number }) {
         // the context is the site (server actions are dropped there).
         if (focus === "servers" && server) setServerActionsServer(server)
         return
+      case "c":
+        // Create a new server, seeding the form from the selected server's specs
+        // (match-source). Server-scoped, so only from the Servers pane (like `a`).
+        if (focus === "servers" && server) setNewServerSource(server)
+        return
       case "h":
         // Open the live health view for the current server (works from either pane).
         if (server) setHealthServer(server)
@@ -167,6 +172,7 @@ export function Browser({ rows }: { rows: number }) {
       ? [
           { key: "↑↓/jk", label: "select" },
           { key: "→/⏎", label: "view sites" },
+          { key: "c", label: "new server" },
           { key: "a", label: "server actions" },
           { key: "N", label: "DNS hosts" },
           { key: "h", label: "health" },
