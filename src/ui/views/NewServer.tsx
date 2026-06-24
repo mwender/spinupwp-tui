@@ -449,7 +449,8 @@ export function NewServer() {
             <text content={hostname || "—"} fg={hostname ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
           </box>
           <box style={{ height: 1 }} />
-          <text content="p provider · g region · e size · b backups · r rename · ⏎ review" fg={theme.textFaint} wrapMode="none" />
+          <text content="p provider · g region · e size" fg={theme.textFaint} wrapMode="none" />
+          <text content="b backups · r rename · ⏎ review" fg={theme.textFaint} wrapMode="none" />
         </box>
       </Panel>
     )
