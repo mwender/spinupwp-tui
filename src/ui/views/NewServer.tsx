@@ -141,8 +141,9 @@ export function NewServer() {
 
     const sizes = sizesForRegion(md, rSlug)
     if (!sizes.find((s) => s.slug === sizeSlug)) {
-      const matched = sameProvider ? matchSizeSlug(md, source?.size) : null
-      const next = matched && sizes.find((s) => s.slug === matched) ? matched : (sizes[0]?.slug ?? "")
+      // Match within the region's sizes so we never pick one it doesn't offer.
+      const matched = sameProvider ? matchSizeSlug(sizes, source?.size) : null
+      const next = matched ?? sizes[0]?.slug ?? ""
       if (next !== sizeSlug) setSizeSlug(next)
     }
   }, [md, selectedProviderKey, regionSlug]) // eslint-disable-line react-hooks/exhaustive-deps

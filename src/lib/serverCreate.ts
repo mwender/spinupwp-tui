@@ -67,13 +67,18 @@ export function parseSizeSpec(display: string | null | undefined): { vcpus: numb
   return { vcpus, memoryMb }
 }
 
-// Match a Server's display `size` to a catalog size slug by closest vCPU+memory.
-// Returns null only when the catalog is empty.
-export function matchSizeSlug(md: ProviderMetadata | undefined, display: string | null | undefined): string | null {
-  if (!md || md.sizes.length === 0) return null
+// Match a Server's display `size` to a size slug from a CANDIDATE list, by closest
+// vCPU+memory. Pass the region's available sizes (sizesForRegion) — NOT the whole
+// catalog — so we never match a size that isn't offered in the chosen region. (A
+// provider can have several sizes with identical specs across region-specific
+// lines, e.g. Hetzner's EU-only `cx33` vs the global `cpx31`, both 4 vCPU / 8 GB;
+// matching globally can pick one the region doesn't sell, which then gets dropped.)
+// Returns null only when the candidate list is empty.
+export function matchSizeSlug(sizes: ProviderSize[], display: string | null | undefined): string | null {
+  if (sizes.length === 0) return null
   const { vcpus, memoryMb } = parseSizeSpec(display)
-  const byCpu = vcpus != null ? md.sizes.filter((s) => s.vcpus === vcpus) : []
-  const pool = byCpu.length ? byCpu : md.sizes
+  const byCpu = vcpus != null ? sizes.filter((s) => s.vcpus === vcpus) : []
+  const pool = byCpu.length ? byCpu : sizes
   if (memoryMb == null) return pool[0].slug
   let best = pool[0]
   let bestDiff = Infinity
