@@ -7,8 +7,8 @@ safely. Everything else in the zone — MX, TXT, DKIM, service CNAMEs — is inv
 to this module and is **never touched**. That untouchability is a designed-in
 feature, not a limitation (see "Safety is the product" below).
 
-Builds on Phase 1 (`docs/dns-zone-host-spec.md`, zone-host detection) and Phase 2
-(`docs/dns-access-phase2-spec.md`, access detection + the connections model).
+Builds on Phase 1 (`docs/2026-06-20_dns-zone-host-spec.md`, zone-host detection) and Phase 2
+(`docs/2026-06-20_dns-access-phase2-spec.md`, access detection + the connections model).
 
 ## Why "Phase 3, re-scoped"
 
