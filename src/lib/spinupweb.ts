@@ -19,3 +19,8 @@ export function serverWebUrl(id: number, accountSlug: string | null): string {
 export function siteWebUrl(id: number, accountSlug: string | null): string {
   return accountSlug ? `${WEB_BASE}/${accountSlug}/sites/${id}` : WEB_BASE
 }
+
+// Account Settings → Server Providers (where the server_provider ids live).
+export function serverProvidersSettingsUrl(accountSlug: string | null): string {
+  return accountSlug ? `${WEB_BASE}/${accountSlug}/settings#server-providers` : WEB_BASE
+}

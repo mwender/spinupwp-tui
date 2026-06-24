@@ -23,6 +23,7 @@ import { StatusBar } from "../StatusBar.tsx"
 import { useStore, isNewServerInFlight } from "../store.tsx"
 import { moveSelection } from "../List.tsx"
 import { openUrl } from "../../lib/open.ts"
+import { serverProvidersSettingsUrl } from "../../lib/spinupweb.ts"
 import {
   providerKeyFromName,
   providerLabel,
@@ -250,7 +251,7 @@ export function NewServer() {
         case "l":
           return chooseProvider(PROVIDER_KEYS[providerIndex])
         case "w":
-          if (accountSlug) openUrl(`https://spinupwp.app/${accountSlug}`)
+          if (accountSlug) openUrl(serverProvidersSettingsUrl(accountSlug))
           return
         case "left":
         case "h":
