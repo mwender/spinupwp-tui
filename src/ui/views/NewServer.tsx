@@ -547,7 +547,7 @@ export function NewServer() {
             style={{ backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
           />
           <box style={{ height: 1 }} />
-          <text content="A conventional name like web12.example.com keeps your fleet tidy." fg={theme.textFaint} wrapMode="none" />
+          <text content="A conventional name like web12.example.com keeps your fleet tidy." fg={theme.textFaint} />
           <text content="Enter to accept · Esc to go back" fg={theme.textFaint} wrapMode="none" />
         </box>
       </Panel>
