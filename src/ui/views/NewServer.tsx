@@ -7,10 +7,12 @@
 // before firing POST /servers. The actual create + ~10-min event poll live in the
 // store (`startNewServer`), so closing this modal (Esc) doesn't abandon the build.
 //
-// The API exposes no endpoint to list an account's server providers, so the
-// numeric server_provider id is configured (config.json `serverProviders`), the
-// same way accountSlug is. Without it the overlay opens in a "blocked" state that
-// explains how to set it.
+// You can switch to any supported provider (DigitalOcean / Vultr / Linode /
+// Hetzner). The API exposes no endpoint to list an account's server providers, so
+// each provider's numeric id is captured in-app the first time it's used and saved
+// to config.json (the same way accountSlug is configured). Region + size are
+// provider-specific, so switching provider re-defaults them from that provider's
+// catalog.
 
 import { useEffect, useState } from "react"
 import { useKeyboard } from "@opentui/react"
@@ -28,13 +30,28 @@ import {
   regionBySlug,
   sizesForRegion,
   matchSizeSlug,
+  allRegions,
+  firstRegion,
   formatSize,
   formatCost,
   suggestServerName,
+  PROVIDER_KEYS,
+  type ProviderKey,
 } from "../../lib/serverCreate.ts"
 import type { CreateServerPayload } from "../../api/types.ts"
 
-type Phase = "blocked" | "provider" | "loading" | "form" | "sizes" | "name" | "confirm" | "tracking" | "done" | "error"
+type Phase =
+  | "providers"
+  | "provider"
+  | "loading"
+  | "form"
+  | "regions"
+  | "sizes"
+  | "name"
+  | "confirm"
+  | "tracking"
+  | "done"
+  | "error"
 
 export function NewServer() {
   const store = useStore()
@@ -55,34 +72,38 @@ export function NewServer() {
     setInputMode,
   } = store
 
-  const providerKey = providerKeyFromName(source?.provider_name)
-  const providerRef = providerKey ? serverProviders[providerKey] : undefined
-  const md = providerKey ? providerMetadata.get(providerKey) : undefined
-  const mdLoading = providerKey ? providerMetadataLoading.has(providerKey) : false
-  const mdError = providerKey ? providerMetadataError.get(providerKey) : undefined
+  const sourceProviderKey = providerKeyFromName(source?.provider_name)
 
-  // Why we can't proceed, if anything (checked before touching the network).
-  const blockedReason: "provider-map" | "no-id" | "no-specs" | null = !source
-    ? null
-    : !providerKey
-      ? "provider-map"
-      : !providerRef
-        ? "no-id"
-        : !source.region || !source.size
-          ? "no-specs"
-          : null
+  // The active provider (may differ from the source). Null only when the source's
+  // provider can't be mapped — then we open the picker so the user chooses one.
+  const [selectedProviderKey, setSelectedProviderKey] = useState<ProviderKey | null>(sourceProviderKey)
+  // Which provider the id-capture form is collecting for (transient).
+  const [providerCaptureKey, setProviderCaptureKey] = useState<ProviderKey | null>(null)
+
+  const providerRef = selectedProviderKey ? serverProviders[selectedProviderKey] : undefined
+  const md = selectedProviderKey ? providerMetadata.get(selectedProviderKey) : undefined
+  const mdLoading = selectedProviderKey ? providerMetadataLoading.has(selectedProviderKey) : false
+  const mdError = selectedProviderKey ? providerMetadataError.get(selectedProviderKey) : undefined
+  const sameProvider = selectedProviderKey != null && selectedProviderKey === sourceProviderKey
 
   const [phase, setPhase] = useState<Phase>(() => {
     if (newServerJob && isNewServerInFlight(newServerJob)) return "tracking"
-    if (blockedReason === "no-id") return "provider" // capture the id in-app
-    if (blockedReason) return "blocked"
-    return "loading"
+    // Land on the form (defaulting to the source's provider) when it's already
+    // linked; otherwise open the picker so the user can choose or add a provider.
+    if (sourceProviderKey && serverProviders[sourceProviderKey]) return "loading"
+    return "providers"
   })
-  // Starts empty; seeded with a real catalog slug once metadata loads (the source
-  // server's `size` is a display string, not a slug — see the matching effect).
+  // Region + size start empty; seeded with real catalog values once metadata loads
+  // (a Server's region/size are display codes, not slugs — see the seeding effect).
+  const [regionSlug, setRegionSlug] = useState<string>("")
   const [sizeSlug, setSizeSlug] = useState<string>("")
   const [backups, setBackups] = useState(false)
   const [hostname, setHostname] = useState<string>("")
+  const [providerIndex, setProviderIndex] = useState(() => {
+    const i = sourceProviderKey ? PROVIDER_KEYS.indexOf(sourceProviderKey) : 0
+    return i >= 0 ? i : 0
+  })
+  const [regionIndex, setRegionIndex] = useState(0)
   const [sizeIndex, setSizeIndex] = useState(0)
   const [providerIdInput, setProviderIdInput] = useState("")
 
@@ -93,13 +114,10 @@ export function NewServer() {
 
   // Kick off the metadata fetch while in "loading"; flip to the form once it's in.
   useEffect(() => {
-    if (phase !== "loading" || !providerKey) return
-    if (md) {
-      setPhase("form")
-    } else if (!mdLoading && !mdError) {
-      loadProviderMetadata(providerKey)
-    }
-  }, [phase, providerKey, md, mdLoading, mdError, loadProviderMetadata])
+    if (phase !== "loading" || !selectedProviderKey) return
+    if (md) setPhase("form")
+    else if (!mdLoading && !mdError) loadProviderMetadata(selectedProviderKey)
+  }, [phase, selectedProviderKey, md, mdLoading, mdError, loadProviderMetadata])
 
   // Text sub-forms own the keyboard (suppress global shortcuts while typing).
   useEffect(() => {
@@ -107,15 +125,26 @@ export function NewServer() {
     return () => setInputMode(false)
   }, [phase, setInputMode])
 
-  // The source server's `size` is a human string ("8 GB / 4 vCPUs"), not a slug,
-  // so once the catalog loads, match it to a real slug by vCPU+memory.
+  // Default/validate region + size against the active provider's catalog. Runs on
+  // load and whenever the provider or region changes. Source region/size are
+  // display codes, so for the same provider we match by code/specs; for a
+  // different provider we fall back to that catalog's first region + size.
   useEffect(() => {
     if (!md) return
-    if (!sizeBySlug(md, sizeSlug)) {
-      const matched = matchSizeSlug(md, source?.size) ?? sizesForRegion(md, source?.region)[0]?.slug ?? ""
-      if (matched) setSizeSlug(matched)
+    let region = regionBySlug(md, regionSlug)
+    if (!region) {
+      region = (sameProvider ? regionBySlug(md, source?.region) : undefined) ?? firstRegion(md)
     }
-  }, [md]) // eslint-disable-line react-hooks/exhaustive-deps
+    const rSlug = region?.slug ?? ""
+    if (rSlug !== regionSlug) setRegionSlug(rSlug)
+
+    const sizes = sizesForRegion(md, rSlug)
+    if (!sizes.find((s) => s.slug === sizeSlug)) {
+      const matched = sameProvider ? matchSizeSlug(md, source?.size) : null
+      const next = matched && sizes.find((s) => s.slug === matched) ? matched : (sizes[0]?.slug ?? "")
+      if (next !== sizeSlug) setSizeSlug(next)
+    }
+  }, [md, selectedProviderKey, regionSlug]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Follow the store job once we've fired (mirrors PhpUpgrade): a settled failure
   // shows the error; "done" shows success; anything else is still in flight.
@@ -130,26 +159,53 @@ export function NewServer() {
             ? "done"
             : "tracking"
 
-  const region = regionBySlug(md, source?.region)
+  const region = regionBySlug(md, regionSlug)
   const size = sizeBySlug(md, sizeSlug)
-  const regionSizes = sizesForRegion(md, source?.region)
+  const regionSizes = sizesForRegion(md, regionSlug)
+  const regionList = allRegions(md)
 
   const close = () => {
     setInputMode(false)
-    // Leave an in-flight build running; only drop a settled job so reopening is fresh.
     if (newServerJob && !isNewServerInFlight(newServerJob)) clearNewServer()
     setNewServerSource(null)
   }
 
+  // Switch to (or add) a provider from the picker.
+  const chooseProvider = (key: ProviderKey) => {
+    if (!serverProviders[key]) {
+      // Not linked yet → capture its id first.
+      setProviderCaptureKey(key)
+      setProviderIdInput("")
+      return setPhase("provider")
+    }
+    if (key !== selectedProviderKey) {
+      setSelectedProviderKey(key)
+      setRegionSlug("") // re-default region + size for the new provider's catalog
+      setSizeSlug("")
+      return setPhase(providerMetadata.has(key) ? "form" : "loading")
+    }
+    setPhase("form")
+  }
+
+  const saveProviderId = () => {
+    const id = parseInt(providerIdInput.trim(), 10)
+    const key = providerCaptureKey
+    if (!key || !Number.isFinite(id) || id <= 0) return
+    saveServerProviderId(key, id)
+    setSelectedProviderKey(key)
+    setRegionSlug("")
+    setSizeSlug("")
+    setPhase("loading") // metadata loads next, then the form
+  }
+
   const fire = () => {
-    if (!source || !providerRef || !source.region || !sizeSlug) return
+    if (!source || !providerRef || !regionSlug || !sizeSlug) return
     const name = hostname.trim()
     if (!name) return setPhase("name")
     const payload: CreateServerPayload = {
       server_provider: {
         id: providerRef.id,
-        // Prefer the canonical catalog slug; the Server's region is a code (HIL).
-        region: region?.slug ?? source.region,
+        region: region?.slug ?? regionSlug,
         size: sizeSlug,
         enable_backups: backups,
       },
@@ -161,21 +217,12 @@ export function NewServer() {
     setPhase("tracking")
   }
 
-  const saveProviderId = () => {
-    const id = parseInt(providerIdInput.trim(), 10)
-    if (!providerKey || !Number.isFinite(id) || id <= 0) return
-    saveServerProviderId(providerKey, id)
-    setPhase("loading") // metadata loads next, then the form
-  }
-
   useKeyboard((key) => {
     const name = key.name ?? ""
 
-    // Text sub-forms: the <input> handles text + Enter (onSubmit); we only cancel
-    // (provider id) or step back (rename).
+    // Text sub-forms: the <input> handles text + Enter (onSubmit); we only cancel.
     if (dp === "provider") {
-      if (name === "escape") return close()
-      if (name === "w" && accountSlug) openUrl(`https://spinupwp.app/${accountSlug}`)
+      if (name === "escape") return setPhase("providers")
       return
     }
     if (dp === "name") {
@@ -185,19 +232,43 @@ export function NewServer() {
 
     if (name === "escape" || name === "q") return close()
 
-    if (dp === "blocked") {
-      if (name === "w" && accountSlug) openUrl(`https://spinupwp.app/${accountSlug}`)
+    if (dp === "loading") {
+      if (name === "r" && selectedProviderKey && mdError) loadProviderMetadata(selectedProviderKey)
       return
     }
 
-    if (dp === "loading") {
-      // Retry a failed metadata fetch (clears the error and re-requests).
-      if (name === "r" && providerKey && mdError) loadProviderMetadata(providerKey)
+    if (dp === "providers") {
+      switch (name) {
+        case "up":
+        case "k":
+          return setProviderIndex((i) => moveSelection(i, -1, PROVIDER_KEYS.length))
+        case "down":
+        case "j":
+          return setProviderIndex((i) => moveSelection(i, 1, PROVIDER_KEYS.length))
+        case "return":
+        case "right":
+        case "l":
+          return chooseProvider(PROVIDER_KEYS[providerIndex])
+        case "w":
+          if (accountSlug) openUrl(`https://spinupwp.app/${accountSlug}`)
+          return
+        case "left":
+        case "h":
+          if (selectedProviderKey && md) return setPhase("form")
+          return
+      }
       return
     }
 
     if (dp === "form") {
       switch (name) {
+        case "p":
+          setProviderIndex(Math.max(0, PROVIDER_KEYS.indexOf(selectedProviderKey as ProviderKey)))
+          return setPhase("providers")
+        case "g":
+          if (!md) return
+          setRegionIndex(Math.max(0, regionList.findIndex((r) => r.slug === regionSlug)))
+          return setPhase("regions")
         case "e":
           if (!md) return
           setSizeIndex(Math.max(0, regionSizes.findIndex((s) => s.slug === sizeSlug)))
@@ -209,7 +280,30 @@ export function NewServer() {
         case "return":
         case "right":
         case "l":
-          return setPhase("confirm")
+          if (regionSlug && sizeSlug) setPhase("confirm")
+          return
+      }
+      return
+    }
+
+    if (dp === "regions") {
+      switch (name) {
+        case "up":
+        case "k":
+          return setRegionIndex((i) => moveSelection(i, -1, regionList.length))
+        case "down":
+        case "j":
+          return setRegionIndex((i) => moveSelection(i, 1, regionList.length))
+        case "return":
+        case "right":
+        case "l": {
+          const picked = regionList[regionIndex]
+          if (picked) setRegionSlug(picked.slug)
+          return setPhase("form")
+        }
+        case "left":
+        case "h":
+          return setPhase("form")
       }
       return
     }
@@ -245,13 +339,15 @@ export function NewServer() {
     if (dp === "error") {
       if (name === "r") {
         clearNewServer()
-        setPhase(blockedReason ? "blocked" : "form")
+        setPhase("form")
       }
       return
     }
   })
 
   if (!source) return null
+
+  const titleProvider = selectedProviderKey ? providerLabel(selectedProviderKey) : "choose a provider"
 
   return (
     <box
@@ -280,7 +376,7 @@ export function NewServer() {
         <text content="✦ New server  " fg={theme.brand} style={{ flexShrink: 0 }} />
         <text content={hostname || "name it below"} fg={hostname ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
         <box style={{ flexGrow: 1 }} />
-        <text content={`match ${truncate(source.name, 24)}`} fg={theme.textFaint} style={{ flexShrink: 0 }} />
+        <text content={truncate(titleProvider, 24)} fg={theme.textFaint} style={{ flexShrink: 0 }} />
       </box>
 
       <Centered>{renderBody()}</Centered>
@@ -290,7 +386,7 @@ export function NewServer() {
   )
 
   function renderBody() {
-    if (dp === "blocked") return renderBlocked()
+    if (dp === "providers") return renderProviders()
     if (dp === "provider") return renderProvider()
 
     if (dp === "loading") {
@@ -305,13 +401,14 @@ export function NewServer() {
           ) : (
             <box style={{ flexDirection: "row" }}>
               <Spinner />
-              <text content={`  Loading ${providerKey ? providerLabel(providerKey) : ""} sizes & pricing…`} fg={theme.textDim} />
+              <text content={`  Loading ${selectedProviderKey ? providerLabel(selectedProviderKey) : ""} sizes & pricing…`} fg={theme.textDim} />
             </box>
           )}
         </box>
       )
     }
 
+    if (dp === "regions") return renderRegions()
     if (dp === "sizes") return renderSizes()
     if (dp === "name") return renderName()
     if (dp === "confirm") return renderConfirm()
@@ -323,15 +420,11 @@ export function NewServer() {
 
   function renderForm() {
     return (
-      <Panel title=" New server — matching specs " active>
+      <Panel title=" New server " active>
         <box style={{ flexDirection: "column", width: 62, paddingTop: 1, paddingBottom: 1 }}>
-          <Field label="Provider" value={providerKey ? providerLabel(providerKey) : (source!.provider_name ?? "—")} />
-          <Field label="Region" value={region ? `${region.slug} (${region.name})` : (source!.region ?? "—")} />
-          <Field
-            label="Size"
-            value={size ? `${size.slug} — ${formatSize(size)}` : (sizeSlug || "—")}
-            valueColor={theme.text}
-          />
+          <Field label="Provider" value={selectedProviderKey ? providerLabel(selectedProviderKey) : "—"} />
+          <Field label="Region" value={region ? `${region.slug} (${region.name})` : (regionSlug || "—")} />
+          <Field label="Size" value={size ? `${size.slug} — ${formatSize(size)}` : (sizeSlug || "—")} />
           <Field label="Cost" value={formatCost(size, backups)} valueColor={theme.good} />
           <Field label="Backups" value={backups ? "on" : "off"} valueColor={backups ? theme.good : theme.textFaint} />
           <box style={{ height: 1 }} />
@@ -340,7 +433,61 @@ export function NewServer() {
             <text content={hostname || "—"} fg={hostname ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
           </box>
           <box style={{ height: 1 }} />
-          <text content="e size · b backups · r rename · ⏎ review" fg={theme.textFaint} wrapMode="none" />
+          <text content="p provider · g region · e size · b backups · r rename · ⏎ review" fg={theme.textFaint} wrapMode="none" />
+        </box>
+      </Panel>
+    )
+  }
+
+  function renderProviders() {
+    return (
+      <Panel title=" Choose a provider " active>
+        <box style={{ flexDirection: "column", width: 60 }}>
+          {PROVIDER_KEYS.map((key, i) => {
+            const selected = i === providerIndex
+            const ref = serverProviders[key]
+            const isCurrent = key === selectedProviderKey
+            const fg = selected ? theme.text : isCurrent ? theme.accent : theme.textDim
+            const status = ref ? `id ${ref.id}` : "needs id"
+            const statusFg = selected ? theme.text : ref ? theme.textFaint : theme.warn
+            return (
+              <box key={key} style={{ flexDirection: "row", height: 1, backgroundColor: selected ? theme.selectedBg : undefined }}>
+                <text content={(selected ? "❯ " : "  ") + providerLabel(key) + (isCurrent ? " ●" : "")} fg={fg} style={{ flexGrow: 1, flexShrink: 1 }} wrapMode="none" />
+                <text content={status} fg={statusFg} style={{ flexShrink: 0 }} wrapMode="none" />
+              </box>
+            )
+          })}
+          <box style={{ height: 1 }} />
+          <text content="Pick a linked provider, or one marked “needs id” to add it." fg={theme.textFaint} wrapMode="none" />
+          <text
+            content={accountSlug ? "↑↓ choose · ⏎ select / add · w find ids in SpinupWP" : "↑↓ choose · ⏎ select / add"}
+            fg={theme.textFaint}
+            wrapMode="none"
+          />
+        </box>
+      </Panel>
+    )
+  }
+
+  function renderRegions() {
+    return (
+      <Panel title=" Choose a region " active>
+        <box style={{ flexDirection: "column", width: 60 }}>
+          {regionList.map((rg, i) => {
+            const selected = i === regionIndex
+            const isCurrent = rg.slug === regionSlug
+            const unavailable = rg.available === false
+            const fg = selected ? theme.text : unavailable ? theme.textFaint : isCurrent ? theme.accent : theme.textDim
+            return (
+              <box key={rg.slug} style={{ flexDirection: "row", height: 1, backgroundColor: selected ? theme.selectedBg : undefined }}>
+                <text content={(selected ? "❯ " : "  ") + rg.slug} fg={fg} style={{ flexShrink: 0 }} wrapMode="none" />
+                <text content={`  ${rg.name}`} fg={selected ? theme.text : theme.textFaint} style={{ flexGrow: 1, flexShrink: 1 }} wrapMode="none" />
+                {unavailable ? <text content="full" fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} /> : null}
+              </box>
+            )
+          })}
+          <box style={{ height: 1 }} />
+          <text content="↑↓ choose · ⏎ select · ← back" fg={theme.textFaint} wrapMode="none" />
         </box>
       </Panel>
     )
@@ -369,6 +516,27 @@ export function NewServer() {
     )
   }
 
+  function renderName() {
+    return (
+      <Panel title=" Name the server " active>
+        <box style={{ flexDirection: "column", width: 62, paddingTop: 1, paddingBottom: 1 }}>
+          <text content="Hostname (letters, numbers, dashes, periods)" fg={theme.accent} wrapMode="none" />
+          <input
+            focused
+            value={hostname}
+            placeholder="web1.example.com"
+            onInput={setHostname}
+            onSubmit={() => setPhase("form")}
+            style={{ backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
+          />
+          <box style={{ height: 1 }} />
+          <text content="A conventional name like web12.example.com keeps your fleet tidy." fg={theme.textFaint} wrapMode="none" />
+          <text content="Enter to accept · Esc to go back" fg={theme.textFaint} wrapMode="none" />
+        </box>
+      </Panel>
+    )
+  }
+
   function renderConfirm() {
     return (
       <Panel title=" Confirm — this provisions a real server " active>
@@ -378,8 +546,8 @@ export function NewServer() {
             <text content={hostname} fg={theme.accent} wrapMode="none" />
           </box>
           <box style={{ height: 1 }} />
-          <Field label="Provider" value={providerKey ? providerLabel(providerKey) : "—"} />
-          <Field label="Region" value={region ? `${region.slug} (${region.name})` : (source!.region ?? "—")} />
+          <Field label="Provider" value={selectedProviderKey ? providerLabel(selectedProviderKey) : "—"} />
+          <Field label="Region" value={region ? `${region.slug} (${region.name})` : regionSlug} />
           <Field label="Size" value={size ? `${size.slug} — ${formatSize(size)}` : sizeSlug} />
           <Field label="Backups" value={backups ? "on" : "off"} valueColor={backups ? theme.good : theme.textFaint} />
           <box style={{ flexDirection: "row" }}>
@@ -438,36 +606,12 @@ export function NewServer() {
     )
   }
 
-  function renderBlocked() {
-    if (blockedReason === "provider-map") {
-      return (
-        <Panel title=" Can't match this provider " active>
-          <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
-            <text content={`Couldn't map "${source!.provider_name ?? "this server"}" to a SpinupWP provider.`} fg={theme.warn} wrapMode="none" />
-            <text content="Server creation supports DigitalOcean, Vultr, Linode, Hetzner." fg={theme.textDim} wrapMode="none" />
-            <box style={{ height: 1 }} />
-            <text content="Esc to close" fg={theme.textFaint} />
-          </box>
-        </Panel>
-      )
-    }
-    // no-specs (the only remaining blocked reason; no-id is handled by renderProvider)
-    return (
-      <Panel title=" Can't read the source specs " active>
-        <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
-          <text content="This server is missing a region or size, so there's nothing to match." fg={theme.warn} wrapMode="none" />
-          <box style={{ height: 1 }} />
-          <text content="Esc to close" fg={theme.textFaint} />
-        </box>
-      </Panel>
-    )
-  }
-
   function renderProvider() {
+    const key = providerCaptureKey ?? selectedProviderKey
     return (
       <Panel title=" Link your server provider " active>
         <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
-          <text content={`${providerKey ? providerLabel(providerKey) : "This provider"} isn't linked in Spinup yet.`} fg={theme.text} wrapMode="none" />
+          <text content={`${key ? providerLabel(key) : "This provider"} isn't linked in Spinup yet.`} fg={theme.text} wrapMode="none" />
           <text content="Paste its SpinupWP provider id (Account Settings →" fg={theme.textDim} wrapMode="none" />
           <text content="Server Providers — the ID column):" fg={theme.textDim} wrapMode="none" />
           <box style={{ height: 1 }} />
@@ -481,32 +625,7 @@ export function NewServer() {
           />
           <box style={{ height: 1 }} />
           <text content="It's saved to your config — you only do this once per provider." fg={theme.textFaint} wrapMode="none" />
-          <text
-            content={accountSlug ? "⏎ save · w open SpinupWP · Esc cancel" : "⏎ save · Esc cancel"}
-            fg={theme.textFaint}
-            wrapMode="none"
-          />
-        </box>
-      </Panel>
-    )
-  }
-
-  function renderName() {
-    return (
-      <Panel title=" Name the server " active>
-        <box style={{ flexDirection: "column", width: 62, paddingTop: 1, paddingBottom: 1 }}>
-          <text content="Hostname (letters, numbers, dashes, periods)" fg={theme.accent} wrapMode="none" />
-          <input
-            focused
-            value={hostname}
-            placeholder="web1.example.com"
-            onInput={setHostname}
-            onSubmit={() => setPhase("form")}
-            style={{ backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
-          />
-          <box style={{ height: 1 }} />
-          <text content="A conventional name like web12.example.com keeps your fleet tidy." fg={theme.textFaint} wrapMode="none" />
-          <text content="Enter to accept · Esc to go back" fg={theme.textFaint} wrapMode="none" />
+          <text content="⏎ save · Esc back to providers" fg={theme.textFaint} wrapMode="none" />
         </box>
       </Panel>
     )
@@ -514,23 +633,32 @@ export function NewServer() {
 
   function hints() {
     switch (dp) {
+      case "providers":
+        return [
+          { key: "↑↓/jk", label: "provider" },
+          { key: "⏎", label: "select / add" },
+          ...(accountSlug ? [{ key: "w", label: "SpinupWP" }] : []),
+          ...(selectedProviderKey && md ? [{ key: "←", label: "back" }] : []),
+          { key: "esc", label: "cancel" },
+        ]
       case "provider":
         return [
           { key: "⏎", label: "save" },
-          ...(accountSlug ? [{ key: "w", label: "SpinupWP" }] : []),
-          { key: "esc", label: "cancel" },
+          { key: "esc", label: "back" },
         ]
       case "form":
         return [
+          { key: "p", label: "provider" },
+          { key: "g", label: "region" },
           { key: "e", label: "size" },
           { key: "b", label: "backups" },
           { key: "r", label: "rename" },
           { key: "⏎", label: "review" },
-          { key: "esc", label: "cancel" },
         ]
+      case "regions":
       case "sizes":
         return [
-          { key: "↑↓/jk", label: "size" },
+          { key: "↑↓/jk", label: dp === "regions" ? "region" : "size" },
           { key: "⏎", label: "select" },
           { key: "←", label: "back" },
         ]

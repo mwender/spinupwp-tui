@@ -17,7 +17,8 @@ versions; such changes are called out here.
   region, and size. The form prices the build from the provider's catalog
   (DigitalOcean / Vultr / Linode / Hetzner) so you see a monthly cost before
   confirming, suggests a hostname from your fleet's naming convention (e.g. the
-  next `webN.example.com`), and lets you change the size or toggle backups. The
+  next `webN.example.com`), and lets you switch provider (`p`), region (`g`), or
+  size (`e`) and toggle backups. The
   build fires `POST /servers` and tracks the ~10-minute provisioning in the
   background, so closing the overlay doesn't abandon it. Because the SpinupWP API
   can't list your configured server providers, the first time you create on a

@@ -7,6 +7,19 @@ import type { Server, ProviderMetadata, ProviderSize, ProviderRegion } from "../
 
 // The provider keys the API recognizes for metadata + create.
 export type ProviderKey = "digitalocean" | "vultr" | "linode" | "hetzner"
+export const PROVIDER_KEYS: ProviderKey[] = ["digitalocean", "vultr", "linode", "hetzner"]
+
+// All regions across continents, flattened in catalog order (for the picker).
+export function allRegions(md: ProviderMetadata | undefined): ProviderRegion[] {
+  if (!md) return []
+  return Object.values(md.regions).flat()
+}
+
+// A sensible default region (first available, else first overall).
+export function firstRegion(md: ProviderMetadata | undefined): ProviderRegion | undefined {
+  const all = allRegions(md)
+  return all.find((r) => r.available !== false) ?? all[0]
+}
 
 // Normalize the API's free-form provider_name ("DigitalOcean", "Akamai/Linode",
 // "Hetzner Cloud") to the key the metadata + create endpoints use.
