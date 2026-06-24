@@ -29,14 +29,49 @@ export function sizeBySlug(md: ProviderMetadata | undefined, slug: string | null
   return md.sizes.find((s) => s.slug === slug)
 }
 
-// Flatten the continent-grouped regions to find one by slug.
+// Flatten the continent-grouped regions to find one by slug. Case-insensitive
+// because a Server's `region` comes back as a code ("HIL") while the metadata
+// slugs are lowercase ("hil").
 export function regionBySlug(md: ProviderMetadata | undefined, slug: string | null | undefined): ProviderRegion | undefined {
   if (!md || !slug) return undefined
+  const target = slug.toLowerCase()
   for (const group of Object.values(md.regions)) {
-    const hit = group.find((r) => r.slug === slug)
+    const hit = group.find((r) => r.slug.toLowerCase() === target)
     if (hit) return hit
   }
   return undefined
+}
+
+// Parse a Server's human-readable `size` ("8 GB / 4 vCPUs") into specs. The API
+// returns this display string, NOT a size slug, so matching to the catalog is by
+// vCPU + memory rather than by slug.
+export function parseSizeSpec(display: string | null | undefined): { vcpus: number | null; memoryMb: number | null } {
+  const d = display ?? ""
+  const mem = /(\d+(?:\.\d+)?)\s*(gb|mb)/i.exec(d)
+  const memoryMb = mem ? Math.round(parseFloat(mem[1]) * (/gb/i.test(mem[2]) ? 1024 : 1)) : null
+  const cpu = /(\d+)\s*v?cpu/i.exec(d)
+  const vcpus = cpu ? parseInt(cpu[1], 10) : null
+  return { vcpus, memoryMb }
+}
+
+// Match a Server's display `size` to a catalog size slug by closest vCPU+memory.
+// Returns null only when the catalog is empty.
+export function matchSizeSlug(md: ProviderMetadata | undefined, display: string | null | undefined): string | null {
+  if (!md || md.sizes.length === 0) return null
+  const { vcpus, memoryMb } = parseSizeSpec(display)
+  const byCpu = vcpus != null ? md.sizes.filter((s) => s.vcpus === vcpus) : []
+  const pool = byCpu.length ? byCpu : md.sizes
+  if (memoryMb == null) return pool[0].slug
+  let best = pool[0]
+  let bestDiff = Infinity
+  for (const s of pool) {
+    const diff = Math.abs(s.memory - memoryMb)
+    if (diff < bestDiff) {
+      bestDiff = diff
+      best = s
+    }
+  }
+  return best.slug
 }
 
 // The sizes a given region offers, as full size objects, in catalog order.

@@ -192,6 +192,8 @@ interface StoreValue extends DataState {
   loadProviderMetadata: (providerKey: string) => void
   // SpinupWP server-provider connections (provider key → {id}), from config.
   serverProviders: Record<string, ServerProviderRef>
+  // Persist a provider id supplied in-app (writes config.json).
+  saveServerProviderId: (providerKey: string, id: number) => void
   // Reboot "why" — SSH-probed Ubuntu reboot-required detail, keyed by server id.
   rebootInfo: Map<number, RebootInfo>
   rebootInfoLoading: Set<number>
@@ -397,6 +399,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [providerMetadata, setProviderMetadata] = useState<Map<string, ProviderMetadata>>(new Map())
   const [providerMetadataLoading, setProviderMetadataLoading] = useState<Set<string>>(new Set())
   const [providerMetadataError, setProviderMetadataError] = useState<Map<string, string>>(new Map())
+  const [serverProviders, setServerProviders] = useState<Record<string, ServerProviderRef>>(() => cfgRef.current.serverProviders)
   const [localLinkSite, setLocalLinkSite] = useState<Site | null>(null)
   const [dbBackupSite, setDbBackupSite] = useState<Site | null>(null)
   const [dbBackups, setDbBackups] = useState<Map<number, DbBackupProgress>>(new Map())
@@ -735,6 +738,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   const clearNewServer = useCallback(() => setNewServerJob(null), [])
+
+  // Persist a SpinupWP server-provider id (the API can't list these, so the user
+  // supplies it once; saved to config.json like accountSlug). cfgRef is the source
+  // of truth so this never closes over a stale map.
+  const saveServerProviderId = useCallback((providerKey: string, id: number) => {
+    const prev = cfgRef.current.serverProviders
+    const next = { ...prev, [providerKey]: { ...(prev[providerKey] ?? {}), id } }
+    cfgRef.current.serverProviders = next
+    setServerProviders(next)
+    void saveConfig({ serverProviders: next })
+  }, [])
 
   const startNewServer = useCallback(
     (payload: CreateServerPayload, hostname: string) => {
@@ -1379,7 +1393,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     providerMetadataLoading,
     providerMetadataError,
     loadProviderMetadata,
-    serverProviders: cfgRef.current.serverProviders,
+    serverProviders,
+    saveServerProviderId,
     localLinkSite,
     setLocalLinkSite,
     localLinks,

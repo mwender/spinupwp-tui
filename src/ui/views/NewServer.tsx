@@ -27,13 +27,14 @@ import {
   sizeBySlug,
   regionBySlug,
   sizesForRegion,
+  matchSizeSlug,
   formatSize,
   formatCost,
   suggestServerName,
 } from "../../lib/serverCreate.ts"
 import type { CreateServerPayload } from "../../api/types.ts"
 
-type Phase = "blocked" | "loading" | "form" | "sizes" | "name" | "confirm" | "tracking" | "done" | "error"
+type Phase = "blocked" | "provider" | "loading" | "form" | "sizes" | "name" | "confirm" | "tracking" | "done" | "error"
 
 export function NewServer() {
   const store = useStore()
@@ -49,6 +50,7 @@ export function NewServer() {
     newServerJob,
     startNewServer,
     clearNewServer,
+    saveServerProviderId,
     accountSlug,
     setInputMode,
   } = store
@@ -72,13 +74,17 @@ export function NewServer() {
 
   const [phase, setPhase] = useState<Phase>(() => {
     if (newServerJob && isNewServerInFlight(newServerJob)) return "tracking"
+    if (blockedReason === "no-id") return "provider" // capture the id in-app
     if (blockedReason) return "blocked"
     return "loading"
   })
-  const [sizeSlug, setSizeSlug] = useState<string>(source?.size ?? "")
+  // Starts empty; seeded with a real catalog slug once metadata loads (the source
+  // server's `size` is a display string, not a slug — see the matching effect).
+  const [sizeSlug, setSizeSlug] = useState<string>("")
   const [backups, setBackups] = useState(false)
   const [hostname, setHostname] = useState<string>("")
   const [sizeIndex, setSizeIndex] = useState(0)
+  const [providerIdInput, setProviderIdInput] = useState("")
 
   // Seed the hostname suggestion once the fleet is known.
   useEffect(() => {
@@ -95,11 +101,21 @@ export function NewServer() {
     }
   }, [phase, providerKey, md, mdLoading, mdError, loadProviderMetadata])
 
-  // The name sub-form owns the keyboard (suppress global shortcuts while typing).
+  // Text sub-forms own the keyboard (suppress global shortcuts while typing).
   useEffect(() => {
-    setInputMode(phase === "name")
+    setInputMode(phase === "name" || phase === "provider")
     return () => setInputMode(false)
   }, [phase, setInputMode])
+
+  // The source server's `size` is a human string ("8 GB / 4 vCPUs"), not a slug,
+  // so once the catalog loads, match it to a real slug by vCPU+memory.
+  useEffect(() => {
+    if (!md) return
+    if (!sizeBySlug(md, sizeSlug)) {
+      const matched = matchSizeSlug(md, source?.size) ?? sizesForRegion(md, source?.region)[0]?.slug ?? ""
+      if (matched) setSizeSlug(matched)
+    }
+  }, [md]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Follow the store job once we've fired (mirrors PhpUpgrade): a settled failure
   // shows the error; "done" shows success; anything else is still in flight.
@@ -132,7 +148,8 @@ export function NewServer() {
     const payload: CreateServerPayload = {
       server_provider: {
         id: providerRef.id,
-        region: source.region,
+        // Prefer the canonical catalog slug; the Server's region is a code (HIL).
+        region: region?.slug ?? source.region,
         size: sizeSlug,
         enable_backups: backups,
       },
@@ -144,10 +161,23 @@ export function NewServer() {
     setPhase("tracking")
   }
 
+  const saveProviderId = () => {
+    const id = parseInt(providerIdInput.trim(), 10)
+    if (!providerKey || !Number.isFinite(id) || id <= 0) return
+    saveServerProviderId(providerKey, id)
+    setPhase("loading") // metadata loads next, then the form
+  }
+
   useKeyboard((key) => {
     const name = key.name ?? ""
 
-    // Name sub-form: the <input> handles text + Enter (onSubmit); we only cancel.
+    // Text sub-forms: the <input> handles text + Enter (onSubmit); we only cancel
+    // (provider id) or step back (rename).
+    if (dp === "provider") {
+      if (name === "escape") return close()
+      if (name === "w" && accountSlug) openUrl(`https://spinupwp.app/${accountSlug}`)
+      return
+    }
     if (dp === "name") {
       if (name === "escape") return setPhase("form")
       return
@@ -261,6 +291,7 @@ export function NewServer() {
 
   function renderBody() {
     if (dp === "blocked") return renderBlocked()
+    if (dp === "provider") return renderProvider()
 
     if (dp === "loading") {
       return (
@@ -420,31 +451,38 @@ export function NewServer() {
         </Panel>
       )
     }
-    if (blockedReason === "no-specs") {
-      return (
-        <Panel title=" Can't read the source specs " active>
-          <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
-            <text content="This server is missing a region or size, so there's nothing to match." fg={theme.warn} wrapMode="none" />
-            <box style={{ height: 1 }} />
-            <text content="Esc to close" fg={theme.textFaint} />
-          </box>
-        </Panel>
-      )
-    }
-    // no-id
+    // no-specs (the only remaining blocked reason; no-id is handled by renderProvider)
     return (
-      <Panel title=" Set your provider id first " active>
-        <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
-          <text content={`Creating a ${providerKey ? providerLabel(providerKey) : ""} server needs its SpinupWP`} fg={theme.warn} wrapMode="none" />
-          <text content="server-provider id, which the API doesn't expose." fg={theme.warn} wrapMode="none" />
+      <Panel title=" Can't read the source specs " active>
+        <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
+          <text content="This server is missing a region or size, so there's nothing to match." fg={theme.warn} wrapMode="none" />
           <box style={{ height: 1 }} />
-          <text content="Find it in SpinupWP → Account Settings → Server Providers," fg={theme.textDim} wrapMode="none" />
-          <text content="then add it to your config.json:" fg={theme.textDim} wrapMode="none" />
+          <text content="Esc to close" fg={theme.textFaint} />
+        </box>
+      </Panel>
+    )
+  }
+
+  function renderProvider() {
+    return (
+      <Panel title=" Link your server provider " active>
+        <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
+          <text content={`${providerKey ? providerLabel(providerKey) : "This provider"} isn't linked in Spinup yet.`} fg={theme.text} wrapMode="none" />
+          <text content="Paste its SpinupWP provider id (Account Settings →" fg={theme.textDim} wrapMode="none" />
+          <text content="Server Providers — the ID column):" fg={theme.textDim} wrapMode="none" />
           <box style={{ height: 1 }} />
-          <text content={`  "serverProviders": { "${providerKey}": { "id": 12345 } }`} fg={theme.accent} wrapMode="none" />
+          <input
+            focused
+            value={providerIdInput}
+            placeholder="e.g. 7577"
+            onInput={setProviderIdInput}
+            onSubmit={saveProviderId}
+            style={{ backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
+          />
           <box style={{ height: 1 }} />
+          <text content="It's saved to your config — you only do this once per provider." fg={theme.textFaint} wrapMode="none" />
           <text
-            content={accountSlug ? "w opens SpinupWP · Esc to close" : "Esc to close"}
+            content={accountSlug ? "⏎ save · w open SpinupWP · Esc cancel" : "⏎ save · Esc cancel"}
             fg={theme.textFaint}
             wrapMode="none"
           />
@@ -476,6 +514,12 @@ export function NewServer() {
 
   function hints() {
     switch (dp) {
+      case "provider":
+        return [
+          { key: "⏎", label: "save" },
+          ...(accountSlug ? [{ key: "w", label: "SpinupWP" }] : []),
+          { key: "esc", label: "cancel" },
+        ]
       case "form":
         return [
           { key: "e", label: "size" },
