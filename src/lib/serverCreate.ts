@@ -67,16 +67,16 @@ export function parseSizeSpec(display: string | null | undefined): { vcpus: numb
   return { vcpus, memoryMb }
 }
 
-// Match a Server's display `size` to a size slug from a CANDIDATE list, by closest
-// vCPU+memory. Pass the region's available sizes (sizesForRegion) — NOT the whole
-// catalog — so we never match a size that isn't offered in the chosen region. (A
-// provider can have several sizes with identical specs across region-specific
-// lines, e.g. Hetzner's EU-only `cx33` vs the global `cpx31`, both 4 vCPU / 8 GB;
-// matching globally can pick one the region doesn't sell, which then gets dropped.)
-// Returns null only when the candidate list is empty.
-export function matchSizeSlug(sizes: ProviderSize[], display: string | null | undefined): string | null {
+// Match a vCPU+memory spec to the closest size slug from a CANDIDATE list. Pass
+// the region's available sizes (sizesForRegion) — NOT the whole catalog — so we
+// never match a size that isn't offered in the chosen region. (A provider can have
+// several sizes with identical specs across region-specific lines, e.g. Hetzner's
+// EU-only `cx33` vs the global `cpx31`, both 4 vCPU / 8 GB; matching globally can
+// pick one the region doesn't sell, which then gets dropped.) This is the basis
+// for carrying a chosen spec across providers when switching. Returns null only
+// when the candidate list is empty.
+export function matchSizeBySpec(sizes: ProviderSize[], vcpus: number | null, memoryMb: number | null): string | null {
   if (sizes.length === 0) return null
-  const { vcpus, memoryMb } = parseSizeSpec(display)
   const byCpu = vcpus != null ? sizes.filter((s) => s.vcpus === vcpus) : []
   const pool = byCpu.length ? byCpu : sizes
   if (memoryMb == null) return pool[0].slug
@@ -90,6 +90,13 @@ export function matchSizeSlug(sizes: ProviderSize[], display: string | null | un
     }
   }
   return best.slug
+}
+
+// Convenience: match a Server's display `size` string ("8 GB / 4 vCPUs") against a
+// candidate list.
+export function matchSizeSlug(sizes: ProviderSize[], display: string | null | undefined): string | null {
+  const { vcpus, memoryMb } = parseSizeSpec(display)
+  return matchSizeBySpec(sizes, vcpus, memoryMb)
 }
 
 // The sizes a given region offers, as full size objects, in catalog order.

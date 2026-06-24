@@ -30,7 +30,8 @@ import {
   sizeBySlug,
   regionBySlug,
   sizesForRegion,
-  matchSizeSlug,
+  matchSizeBySpec,
+  parseSizeSpec,
   allRegions,
   firstRegion,
   formatSize,
@@ -85,7 +86,6 @@ export function NewServer() {
   const md = selectedProviderKey ? providerMetadata.get(selectedProviderKey) : undefined
   const mdLoading = selectedProviderKey ? providerMetadataLoading.has(selectedProviderKey) : false
   const mdError = selectedProviderKey ? providerMetadataError.get(selectedProviderKey) : undefined
-  const sameProvider = selectedProviderKey != null && selectedProviderKey === sourceProviderKey
 
   const [phase, setPhase] = useState<Phase>(() => {
     if (newServerJob && isNewServerInFlight(newServerJob)) return "tracking"
@@ -98,6 +98,11 @@ export function NewServer() {
   // (a Server's region/size are display codes, not slugs — see the seeding effect).
   const [regionSlug, setRegionSlug] = useState<string>("")
   const [sizeSlug, setSizeSlug] = useState<string>("")
+  // The desired specs to carry across provider/region switches. Seeded from the
+  // source server; updated whenever the user picks a size. So switching providers
+  // keeps "the same size" (closest match in that provider's catalog) rather than
+  // resetting to the cheapest, and a manual size choice sticks across switches.
+  const [desiredSpec, setDesiredSpec] = useState(() => parseSizeSpec(source?.size))
   const [backups, setBackups] = useState(false)
   const [hostname, setHostname] = useState<string>("")
   const [providerIndex, setProviderIndex] = useState(() => {
@@ -134,19 +139,24 @@ export function NewServer() {
     if (!md) return
     let region = regionBySlug(md, regionSlug)
     if (!region) {
-      region = (sameProvider ? regionBySlug(md, source?.region) : undefined) ?? firstRegion(md)
+      // Prefer the source server's region only when we're on its provider (a DO
+      // region slug won't exist in Hetzner's catalog, and vice versa).
+      const preferSource = selectedProviderKey === sourceProviderKey
+      region = (preferSource ? regionBySlug(md, source?.region) : undefined) ?? firstRegion(md)
     }
     const rSlug = region?.slug ?? ""
     if (rSlug !== regionSlug) setRegionSlug(rSlug)
 
     const sizes = sizesForRegion(md, rSlug)
     if (!sizes.find((s) => s.slug === sizeSlug)) {
-      // Match within the region's sizes so we never pick one it doesn't offer.
-      const matched = sameProvider ? matchSizeSlug(sizes, source?.size) : null
+      // Carry the desired spec into this region's sizes (closest match); only fall
+      // back to the cheapest when nothing matches. Region-scoped so we never pick a
+      // size the region doesn't offer.
+      const matched = matchSizeBySpec(sizes, desiredSpec.vcpus, desiredSpec.memoryMb)
       const next = matched ?? sizes[0]?.slug ?? ""
       if (next !== sizeSlug) setSizeSlug(next)
     }
-  }, [md, selectedProviderKey, regionSlug]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [md, selectedProviderKey, regionSlug, desiredSpec]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Follow the store job once we've fired (mirrors PhpUpgrade): a settled failure
   // shows the error; "done" shows success; anything else is still in flight.
@@ -322,7 +332,11 @@ export function NewServer() {
         case "right":
         case "l": {
           const picked = regionSizes[sizeIndex]
-          if (picked) setSizeSlug(picked.slug)
+          if (picked) {
+            setSizeSlug(picked.slug)
+            // Remember this choice so switching providers keeps the same size.
+            setDesiredSpec({ vcpus: picked.vcpus, memoryMb: picked.memory })
+          }
           return setPhase("form")
         }
         case "left":
