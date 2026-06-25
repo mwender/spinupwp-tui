@@ -51,11 +51,32 @@ export interface AppConfig {
   // a server on that provider (POST /servers needs server_provider[id]). Find the
   // id in SpinupWP → Account Settings → Server Providers.
   serverProviders: Record<string, ServerProviderRef>
+  // In-flight resumable jobs, keyed by job id. Hydrated at startup so a build
+  // (e.g. a server provision) keeps its tracker across a quit/relaunch.
+  jobs: Record<string, StoredJob>
 }
 
 export interface ServerProviderRef {
   id: number
   databaseProviderId?: number
+}
+
+// A long-running, fire-and-forget job persisted across restarts so the app can
+// resume tracking it (see docs/2026-06-24_clone-to-server-spec.md "Resumable
+// jobs"). `eventId` is the resume key — the SpinupWP event we re-attach a poller
+// to on startup. `inputs` is the kind-specific payload needed to continue/retry
+// (e.g. { hostname } for a server create). Only in-flight jobs are persisted;
+// they're removed once terminal.
+export interface StoredJob {
+  id: string
+  kind: string
+  status: string
+  step?: string
+  failedStep?: string
+  error?: string
+  startedAt: number
+  eventId?: number
+  inputs?: unknown
 }
 
 // Stored connection (no `provider`/`env` discriminators — added on load).
@@ -94,6 +115,7 @@ export interface StoredConfig {
   localSync?: boolean
   providers?: StoredProviders
   serverProviders?: Record<string, ServerProviderRef>
+  jobs?: Record<string, StoredJob>
 }
 
 export function configDir(): string {
@@ -172,6 +194,7 @@ export function loadConfig(): AppConfig {
     localSites: stored.localSites ?? {},
     providerConnections,
     serverProviders: stored.serverProviders ?? {},
+    jobs: stored.jobs ?? {},
   }
 }
 

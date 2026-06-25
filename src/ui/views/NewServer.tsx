@@ -55,6 +55,12 @@ type Phase =
   | "done"
   | "error"
 
+// m:ss elapsed since a build was fired.
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+}
+
 export function NewServer() {
   const store = useStore()
   const {
@@ -115,9 +121,11 @@ export function NewServer() {
   const [sizeIndex, setSizeIndex] = useState(0)
   const [providerIdInput, setProviderIdInput] = useState("")
 
-  // Seed the hostname suggestion once the fleet is known.
+  // Seed a hostname suggestion from the fleet, but never clobber a value the user
+  // has already typed/submitted. The servers list refreshes mid-build, and an
+  // unguarded re-seed here would overwrite the in-flight name with a new suggestion.
   useEffect(() => {
-    setHostname(suggestServerName(servers))
+    setHostname((h) => h || suggestServerName(servers))
   }, [servers])
 
   // Kick off the metadata fetch while in "loading"; flip to the form once it's in.
@@ -177,6 +185,18 @@ export function NewServer() {
   const size = sizeBySlug(md, sizeSlug)
   const regionSizes = sizesForRegion(md, regionSlug)
   const regionList = allRegions(md)
+
+  // What to DISPLAY as the server name: once fired, the job holds the actual
+  // submitted name (source of truth); before that, it's the editable field.
+  const displayName = newServerJob?.hostname || hostname
+
+  // Tick once a second while a build is in flight so the elapsed readout advances.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (dp !== "tracking") return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [dp])
 
   const close = () => {
     setInputMode(false)
@@ -243,6 +263,16 @@ export function NewServer() {
     if (dp === "name") {
       if (name === "escape") return setPhase("form")
       return
+    }
+
+    // Esc steps back one level from the list sub-screens (q still abandons the
+    // whole overlay via the catch-all below). regions/sizes are only reachable
+    // from the form, so Esc always returns there; the providers screen doubles as
+    // the entry point when no provider is linked, so it only steps back when we
+    // came from a loaded form (same guard ←/h uses).
+    if (name === "escape") {
+      if (dp === "regions" || dp === "sizes" || dp === "confirm") return setPhase("form")
+      if (dp === "providers") return selectedProviderKey && md ? setPhase("form") : close()
     }
 
     if (name === "escape" || name === "q") return close()
@@ -393,7 +423,7 @@ export function NewServer() {
         }}
       >
         <text content="✦ New server  " fg={theme.brand} style={{ flexShrink: 0 }} />
-        <text content={hostname || "name it below"} fg={hostname ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
+        <text content={displayName || "name it below"} fg={displayName ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
         <box style={{ flexGrow: 1 }} />
         <text content={truncate(titleProvider, 24)} fg={theme.textFaint} style={{ flexShrink: 0 }} />
       </box>
@@ -507,7 +537,7 @@ export function NewServer() {
             )
           })}
           <box style={{ height: 1 }} />
-          <text content="↑↓ choose · ⏎ select · ← back" fg={theme.textFaint} wrapMode="none" />
+          <text content="↑↓ choose · ⏎ select · ←/esc back" fg={theme.textFaint} wrapMode="none" />
         </box>
       </Panel>
     )
@@ -530,7 +560,7 @@ export function NewServer() {
             )
           })}
           <box style={{ height: 1 }} />
-          <text content="↑↓ choose · ⏎ select · ← back" fg={theme.textFaint} wrapMode="none" />
+          <text content="↑↓ choose · ⏎ select · ←/esc back" fg={theme.textFaint} wrapMode="none" />
         </box>
       </Panel>
     )
@@ -577,21 +607,29 @@ export function NewServer() {
           </box>
           <box style={{ height: 1 }} />
           <text content="Provisioning takes ~10 minutes." fg={theme.textDim} wrapMode="none" />
-          <text content="Press y to create · ← to go back · Esc to cancel" fg={theme.textFaint} wrapMode="none" />
+          <text content="Press y to create · ←/esc to go back · q to cancel" fg={theme.textFaint} wrapMode="none" />
         </box>
       </Panel>
     )
   }
 
   function renderTracking() {
+    const status = newServerJob?.status ?? "queued"
+    const elapsed = newServerJob?.startedAt ? fmtElapsed(now - newServerJob.startedAt) : null
     return (
       <box style={{ flexDirection: "column", alignItems: "center" }}>
         <box style={{ flexDirection: "row" }}>
           <Spinner />
-          <text content={`  Provisioning ${hostname} — ${newServerJob?.status ?? "queued"}…`} fg={theme.textDim} />
+          <text content={`  Provisioning ${displayName}…`} fg={theme.textDim} />
         </box>
         <box style={{ height: 1 }} />
-        <text content="This takes ~10 min. Press Esc — it keeps running in the background." fg={theme.textFaint} wrapMode="none" />
+        <box style={{ flexDirection: "row" }}>
+          <text content="Status " fg={theme.textFaint} />
+          <text content={status} fg={theme.text} wrapMode="none" />
+          {elapsed ? <text content={`   ·   elapsed ${elapsed}`} fg={theme.textFaint} wrapMode="none" /> : null}
+        </box>
+        <box style={{ height: 1 }} />
+        <text content="Typically ~10 min. Press Esc — it keeps running in the background." fg={theme.textFaint} wrapMode="none" />
       </box>
     )
   }
@@ -599,14 +637,18 @@ export function NewServer() {
   function renderDone() {
     return (
       <Panel title=" Server created " active>
-        <box style={{ flexDirection: "column", width: 56, paddingTop: 1, paddingBottom: 1 }}>
+        <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
           <box style={{ flexDirection: "row" }}>
-            <text content="✓ " fg={theme.good} />
-            <text content={hostname} fg={theme.accent} wrapMode="none" />
-            <text content=" is up." fg={theme.text} />
+            <text content="✓ " fg={theme.good} style={{ flexShrink: 0 }} />
+            <text content={displayName} fg={theme.accent} wrapMode="none" style={{ flexShrink: 1 }} />
           </box>
+          <text content="It's up — and in your Servers list now." fg={theme.text} wrapMode="none" />
           <box style={{ height: 1 }} />
-          <text content="It's in your Servers list now." fg={theme.textDim} wrapMode="none" />
+          <text content="Next: connect it with a vanity site" fg={theme.accent} wrapMode="none" />
+          <text content="A brand-new server has no site, so there's nothing to attach an" fg={theme.textDim} />
+          <text content="SSH key to and no way to reach it from Spinup. Creating a vanity" fg={theme.textDim} />
+          <text content="site — a tiny placeholder at the server's own hostname — gives" fg={theme.textDim} />
+          <text content="you that foothold. Open the server in your Servers list to do it." fg={theme.textDim} />
           <box style={{ height: 1 }} />
           <text content="Esc to close" fg={theme.textFaint} />
         </box>
@@ -653,14 +695,15 @@ export function NewServer() {
 
   function hints() {
     switch (dp) {
-      case "providers":
+      case "providers": {
+        const canGoBack = !!(selectedProviderKey && md)
         return [
           { key: "↑↓/jk", label: "provider" },
           { key: "⏎", label: "select / add" },
           ...(accountSlug ? [{ key: "w", label: "SpinupWP" }] : []),
-          ...(selectedProviderKey && md ? [{ key: "←", label: "back" }] : []),
-          { key: "esc", label: "cancel" },
+          canGoBack ? { key: "←/esc", label: "back" } : { key: "esc", label: "cancel" },
         ]
+      }
       case "provider":
         return [
           { key: "⏎", label: "save" },
@@ -680,7 +723,7 @@ export function NewServer() {
         return [
           { key: "↑↓/jk", label: dp === "regions" ? "region" : "size" },
           { key: "⏎", label: "select" },
-          { key: "←", label: "back" },
+          { key: "←/esc", label: "back" },
         ]
       case "name":
         return [
@@ -690,8 +733,8 @@ export function NewServer() {
       case "confirm":
         return [
           { key: "y", label: "create" },
-          { key: "←", label: "back" },
-          { key: "esc", label: "cancel" },
+          { key: "←/esc", label: "back" },
+          { key: "q", label: "cancel" },
         ]
       case "error":
         return [

@@ -210,7 +210,7 @@ export function Browser({ rows }: { rows: number }) {
               return (
                 <>
                   <text content={statusDot(s.connection_status) + " "} fg={statusColor(s.connection_status)} style={{ flexShrink: 0 }} />
-                  <text content={truncate(s.name, 22)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+                  <text content={truncate(s.name, 22)} fg={selected ? theme.text : count === 0 ? theme.warn : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
                   {op && isServerOpInFlight(op) ? (
                     <box style={{ flexDirection: "row", flexShrink: 0 }}>
                       <Spinner color={selected ? theme.text : theme.brand} interval={120} />
@@ -222,7 +222,9 @@ export function Browser({ rows }: { rows: number }) {
                     s.reboot_required && <text content="↻rbt " fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />
                   )}
                   {s.upgrade_required && <text content="⬆upg " fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />}
-                  <text content={" " + count} fg={selected ? theme.text : theme.textFaint} style={{ flexShrink: 0 }} />
+                  {/* A server with no sites is a dead end (can't connect/SSH until it
+                      has a site) — flag the 0 in amber so it's easy to spot. */}
+                  <text content={" " + count} fg={selected ? theme.text : count === 0 ? theme.warn : theme.textFaint} style={{ flexShrink: 0 }} />
                 </>
               )
             }}

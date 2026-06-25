@@ -76,6 +76,81 @@ overlay renders, App.tsx keyboard early-returns). Polling and SSH orchestration
 run in `store.startClone()` / `advanceClone()` — fire-and-forget, exactly like
 `startPhpUpgrade`/`startDbSync` — so closing the overlay never abandons work.
 
+## Resumable jobs (shared mechanism)
+
+`CloneJob` is the most demanding case of a pattern the app already has several of
+(`newServerJob`, `dbSyncs`, `phpUpgrades`, `serverOps`): a long-running,
+fire-and-forget job whose progress lives in the store so closing its overlay
+doesn't abandon it. Today they share that *in-memory* shape but each is bespoke,
+and **none survive a quit** — the state is `useState`-only and the polled
+`event_id` lives in a closure, so restarting Spinup forgets the job (the work
+continues server-side; the app just loses the tracker). The clone wizard — minutes
+to ~an hour, multi-step — makes that gap unacceptable, so we generalize.
+
+Build a single **resumable-job registry** that all of these adopt:
+
+```ts
+type JobStatus = "queued" | "running" | "done" | "failed"
+
+interface ResumableJob<Inputs = unknown, Progress = unknown> {
+  id: string            // stable: `${kind}:${eventId}` or a seeded counter
+  kind: "newServer" | "clone" | "dbSync" | "phpUpgrade" | "serverOp"
+  status: JobStatus
+  step?: string         // fine-grained step for multi-step jobs (CloneStep, etc.)
+  failedStep?: string
+  error?: string
+  startedAt: number
+  eventId?: number      // the SpinupWP event being polled — THE resume key
+  inputs: Inputs        // everything needed to continue/retry (payload, hostname…)
+  progress?: Progress   // step-specific live readout (StepRow[], VerifyResult…)
+}
+```
+
+Three shared pieces:
+
+1. **Persistence.** Jobs are mirrored to `config.json` under a `jobs` map (same
+   `loadConfig`/`saveConfig` plumbing as provider ids and local links). Only
+   in-flight jobs persist; a terminal job is removed on dismissal. Every
+   `updateJob()` writes through.
+2. **One poll loop.** Extract the `getEvent`-poll-to-terminal loop currently inlined
+   in `startNewServer` into `pollEvent(eventId, { onStatus, onDone, onFail })`. Every
+   event-backed step (server create, site create, DNS change, PHP upgrade, reboot)
+   uses it. This is the single place that knows `SERVER_DONE`/`SERVER_FAIL` +
+   `finished_at`.
+3. **Startup hydration + per-kind resume.** On boot, hydrate `jobs` from config; for
+   each in-flight job dispatch to a `resume(job)` handler from a `kind → handler`
+   registry. Single-step jobs (`newServer`, `phpUpgrade`) resume trivially —
+   re-attach `pollEvent(job.eventId)`. The header badge + overlays re-render from the
+   hydrated job automatically.
+
+**The honest hard part — multi-step resume.** A `CloneJob` mixes step types: some
+are API-event polls (resumable purely by `eventId`), but others are SSH/WP-CLI
+orchestration (file/DB copy) with no SpinupWP event to re-attach to. Resuming those
+means **idempotent, state-checking step runners**: on resume, `advanceClone()`
+re-enters at `job.step` and each runner first *detects* whether its work already
+landed (does the dest site exist? is the dump already staged?) before redoing it.
+That's a per-step contract, not something the envelope solves for free — the
+envelope just guarantees we still know *which* step we were on and *what inputs* it
+needs. Single-step jobs get full resume now; clone steps get resume incrementally as
+each runner is made idempotent.
+
+Roll-out: build the registry + `newServerJob` migration first (it's the simplest
+real case and the one already under test), then fold `dbSync`/`phpUpgrade` in, then
+`CloneJob` adopts it natively rather than inventing its own persistence.
+
+**Status (2026-06-25).** Built: the persisted `jobs` map (`config.ts`),
+`saveJob`/`removeJob`/`isJobInFlight` (`src/lib/jobs.ts`), and a generalized
+mount-time resume effect in the store that iterates all jobs and dispatches by
+kind. Adopted:
+- **newServer** + **phpUpgrade** — event-backed, **true resume** (re-attach
+  `getEvent` poll via stored `eventId`); per-site ids let multiple run/resume at
+  once.
+- **dbSync** + **dbBackup** — SSH-orchestrated, **no event to re-attach**, so they
+  persist only for visibility and are surfaced as **interrupted** on restart
+  (dbSync warns the local DB may be partial → re-run), never fake-resumed. This is
+  the same "can't replay a dead SSH step" constraint the clone wizard's copy/verify
+  steps hit — `CloneJob` will mix event-resume and interrupted-on-restart per step.
+
 ## API findings (verified 2026-06-24 against api.spinupwp.com)
 
 **Pricing is available** — the cost line the user wanted is fully backed:

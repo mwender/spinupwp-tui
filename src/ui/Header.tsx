@@ -1,8 +1,8 @@
 // Top navigation bar: brand mark, tab strip, and live account summary.
 
 import { theme } from "../lib/theme.ts"
-import { useStore, type Route } from "./store.tsx"
-import { timeAgo } from "../lib/format.ts"
+import { useStore, isNewServerInFlight, type Route } from "./store.tsx"
+import { timeAgo, truncate } from "../lib/format.ts"
 import { Spinner } from "./components.tsx"
 import { APP_NAME, APP_VERSION } from "../version.ts"
 
@@ -26,8 +26,9 @@ const SUBTITLES: Record<Route, string> = {
 }
 
 export function Header() {
-  const { route, servers, sites, loading, lastUpdated, updateInfo } = useStore()
+  const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob } = useStore()
   const updateReady = updateInfo?.updateAvailable ?? false
+  const building = isNewServerInFlight(newServerJob)
 
   return (
     <box style={{ flexDirection: "column", flexShrink: 0 }}>
@@ -59,6 +60,15 @@ export function Header() {
           )
         })}
         <box style={{ flexGrow: 1 }} />
+        {/* A server provision runs for ~10 min in the background; surface it from
+            any tab so it isn't invisible once the New Server overlay is closed
+            (press c on the Servers tab to reopen the live tracker). */}
+        {building && (
+          <box style={{ flexDirection: "row", flexShrink: 0, alignItems: "center" }}>
+            <Spinner interval={120} color={theme.warn} />
+            <text content={`  Provisioning ${truncate(newServerJob!.hostname, 22)}  `} fg={theme.warn} wrapMode="none" />
+          </box>
+        )}
         {loading && <Spinner interval={100} />}
         <text content={`  ${servers.length} servers · ${sites.length} sites  `} fg={theme.textDim} style={{ flexShrink: 0 }} />
         <text content={lastUpdated ? `updated ${timeAgo(lastUpdated.toISOString())}` : "loading…"} fg={theme.textFaint} style={{ flexShrink: 0 }} />

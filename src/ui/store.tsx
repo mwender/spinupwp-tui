@@ -9,6 +9,7 @@ import { createContext, useContext, useCallback, useEffect, useMemo, useRef, use
 import { SpinupWPClient, ApiError, type ServerService } from "../api/client.ts"
 import type { Server, Site, Event, ProviderMetadata, CreateServerPayload } from "../api/types.ts"
 import { loadConfig, saveConfig, type ServerProviderRef } from "../config.ts"
+import { saveJob, removeJob } from "../lib/jobs.ts"
 import { APP_VERSION } from "../version.ts"
 import { cachedUpdateInfo, refreshUpdateInfo, type UpdateInfo } from "../lib/appUpdate.ts"
 import { resolveLocalLink, expandPath, normalizeLink, type LocalLink } from "../lib/local.ts"
@@ -85,7 +86,22 @@ export interface NewServerJob {
   status: string
   serverId?: number
   error?: string
+  startedAt?: number // ms epoch when the create was fired (drives the elapsed readout)
+  eventId?: number // SpinupWP event being polled — the key that lets us resume after a restart
 }
+
+// Resumable-job ids. The server create is a singleton; the per-site jobs are
+// keyed by site id so several can be in flight (and resume) at once.
+const NEW_SERVER_JOB_ID = "newServer"
+const phpJobId = (siteId: number) => `phpUpgrade:${siteId}`
+const dbSyncJobId = (siteId: number) => `dbSync:${siteId}`
+const dbBackupJobId = (siteId: number) => `dbBackup:${siteId}`
+
+// SSH-orchestrated jobs (no SpinupWP event to re-attach to) can't truly resume —
+// their child processes died with the app. On restart we surface them as
+// interrupted rather than pretend, since the local DB may be half-applied.
+const INTERRUPTED_SYNC_MSG = "Interrupted by a restart — your local database may be partially imported. Re-run the sync (p)."
+const INTERRUPTED_BACKUP_MSG = "Interrupted by a restart — the download didn't finish. Re-run the backup (d)."
 // Server provisioning events settle with one of these (broader than PHP/site
 // writes, whose terminal is "deployed"); finished_at also implies done.
 const SERVER_DONE = new Set(["deployed", "completed", "provisioned", "finished", "success"])
@@ -596,14 +612,45 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setPhpUpgrades((prev) => new Map(prev).set(siteId, progress))
 
   const clearPhpUpgrade = useCallback(
-    (siteId: number) =>
+    (siteId: number) => {
+      void removeJob(phpJobId(siteId))
       setPhpUpgrades((prev) => {
         if (!prev.has(siteId)) return prev
         const next = new Map(prev)
         next.delete(siteId)
         return next
-      }),
+      })
+    },
     [],
+  )
+
+  // Poll a PHP-upgrade event to completion, mirroring status into the per-site
+  // marker and clearing the persisted job once settled. Shared by a fresh upgrade
+  // and resume-on-startup (event-backed, so it reconnects cleanly).
+  const trackPhpUpgradeEvent = useCallback(
+    (siteId: number, version: string, eventId: number) => {
+      const poll = async () => {
+        try {
+          const ev = await client.getEvent(eventId)
+          if (ev.status === UPGRADE_DONE) {
+            await refresh() // pull the new php_version into the store…
+            clearPhpUpgrade(siteId) // …then the row reflects truth, no marker needed
+          } else if (ev.status === UPGRADE_FAIL) {
+            setUpgrade(siteId, { target: version, status: UPGRADE_FAIL, error: ev.output?.trim() || "The upgrade event failed on SpinupWP." })
+            void removeJob(phpJobId(siteId))
+          } else {
+            setUpgrade(siteId, { target: version, status: ev.status })
+            setTimeout(() => void poll(), UPGRADE_POLL_MS)
+          }
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setUpgrade(siteId, { target: version, status: UPGRADE_FAIL, error: msg })
+          void removeJob(phpJobId(siteId))
+        }
+      }
+      setTimeout(() => void poll(), UPGRADE_POLL_MS)
+    },
+    [client, refresh, clearPhpUpgrade],
   )
 
   const startPhpUpgrade = useCallback(
@@ -612,6 +659,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const existing = phpUpgrades.get(site.id)
       if (existing && existing.status !== UPGRADE_DONE && existing.status !== UPGRADE_FAIL) return
 
+      const startedAt = Date.now()
       const run = async () => {
         setUpgrade(site.id, { target: version, status: "queued" })
         let eventId: number
@@ -623,33 +671,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setUpgrade(site.id, { target: version, status: UPGRADE_FAIL, error: msg })
           return
         }
-
-        const poll = async () => {
-          try {
-            const ev = await client.getEvent(eventId)
-            if (ev.status === UPGRADE_DONE) {
-              await refresh() // pull the new php_version into the store…
-              clearPhpUpgrade(site.id) // …then the row reflects truth, no marker needed
-            } else if (ev.status === UPGRADE_FAIL) {
-              setUpgrade(site.id, {
-                target: version,
-                status: UPGRADE_FAIL,
-                error: ev.output?.trim() || "The upgrade event failed on SpinupWP.",
-              })
-            } else {
-              setUpgrade(site.id, { target: version, status: ev.status })
-              setTimeout(() => void poll(), UPGRADE_POLL_MS)
-            }
-          } catch (err) {
-            const msg = err instanceof ApiError ? err.message : (err as Error).message
-            setUpgrade(site.id, { target: version, status: UPGRADE_FAIL, error: msg })
-          }
-        }
-        setTimeout(() => void poll(), UPGRADE_POLL_MS)
+        // Persist so a restart resumes tracking this site's upgrade, then poll.
+        setUpgrade(site.id, { target: version, status: "running" })
+        void saveJob({ id: phpJobId(site.id), kind: "phpUpgrade", status: "running", startedAt, eventId, inputs: { siteId: site.id, version, domain: site.domain } })
+        trackPhpUpgradeEvent(site.id, version, eventId)
       }
       void run()
     },
-    [client, refresh, clearPhpUpgrade, phpUpgrades],
+    [client, trackPhpUpgradeEvent, phpUpgrades],
   )
 
   // ---- Server operations (reboot / service restart) ---------------------
@@ -743,7 +772,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [client, providerMetadata, providerMetadataLoading],
   )
 
-  const clearNewServer = useCallback(() => setNewServerJob(null), [])
+  const clearNewServer = useCallback(() => {
+    setNewServerJob(null)
+    void removeJob(NEW_SERVER_JOB_ID)
+  }, [])
 
   // Persist a SpinupWP server-provider id (the API can't list these, so the user
   // supplies it once; saved to config.json like accountSlug). cfgRef is the source
@@ -756,45 +788,61 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void saveConfig({ serverProviders: next })
   }, [])
 
+  // Poll a server-create event to completion, mirroring its status into the job
+  // and clearing the persisted entry once it settles. Shared by a fresh create
+  // and by resume-on-startup, so the job survives a quit/relaunch.
+  const trackServerEvent = useCallback(
+    (eventId: number, hostname: string, startedAt: number) => {
+      const poll = async () => {
+        try {
+          const ev = await client.getEvent(eventId)
+          if (SERVER_FAIL.has(ev.status)) {
+            setNewServerJob({ hostname, status: "failed", error: ev.output?.trim() || "The server build failed on SpinupWP.", startedAt, eventId })
+            void removeJob(NEW_SERVER_JOB_ID)
+          } else if (SERVER_DONE.has(ev.status) || ev.finished_at) {
+            await refresh() // pull the new server into the list
+            setNewServerJob({ hostname, status: "done", serverId: ev.server_id ?? undefined, startedAt, eventId })
+            void removeJob(NEW_SERVER_JOB_ID)
+          } else {
+            setNewServerJob({ hostname, status: ev.status, startedAt, eventId })
+            setTimeout(() => void poll(), UPGRADE_POLL_MS)
+          }
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setNewServerJob({ hostname, status: "failed", error: msg, startedAt, eventId })
+          void removeJob(NEW_SERVER_JOB_ID)
+        }
+      }
+      setTimeout(() => void poll(), UPGRADE_POLL_MS)
+    },
+    [client, refresh],
+  )
+
   const startNewServer = useCallback(
     (payload: CreateServerPayload, hostname: string) => {
       // One create at a time; ignore a duplicate fire while one is in flight.
       if (newServerJob && newServerJob.status !== "done" && newServerJob.status !== "failed") return
 
+      const startedAt = Date.now()
       const run = async () => {
-        setNewServerJob({ hostname, status: "queued" })
+        setNewServerJob({ hostname, status: "queued", startedAt })
         let eventId: number
         try {
           const res = await client.createServer(payload)
           eventId = res.event_id
         } catch (err) {
           const msg = err instanceof ApiError ? err.message : (err as Error).message
-          setNewServerJob({ hostname, status: "failed", error: msg })
+          setNewServerJob({ hostname, status: "failed", error: msg, startedAt })
           return
         }
-
-        const poll = async () => {
-          try {
-            const ev = await client.getEvent(eventId)
-            if (SERVER_FAIL.has(ev.status)) {
-              setNewServerJob({ hostname, status: "failed", error: ev.output?.trim() || "The server build failed on SpinupWP." })
-            } else if (SERVER_DONE.has(ev.status) || ev.finished_at) {
-              await refresh() // pull the new server into the list
-              setNewServerJob({ hostname, status: "done", serverId: ev.server_id ?? undefined })
-            } else {
-              setNewServerJob({ hostname, status: ev.status })
-              setTimeout(() => void poll(), UPGRADE_POLL_MS)
-            }
-          } catch (err) {
-            const msg = err instanceof ApiError ? err.message : (err as Error).message
-            setNewServerJob({ hostname, status: "failed", error: msg })
-          }
-        }
-        setTimeout(() => void poll(), UPGRADE_POLL_MS)
+        // Event id known → persist so a restart can resume tracking, then poll.
+        setNewServerJob({ hostname, status: "running", startedAt, eventId })
+        void saveJob({ id: NEW_SERVER_JOB_ID, kind: "newServer", status: "running", startedAt, eventId, inputs: { hostname } })
+        trackServerEvent(eventId, hostname, startedAt)
       }
       void run()
     },
-    [client, refresh, newServerJob],
+    [client, newServerJob, trackServerEvent],
   )
 
   // SSH-probe a server's Ubuntu reboot-required detail (the "why"). On-demand,
@@ -936,7 +984,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setBackup(site.id, { stage: "error", domain: site.domain, error: res.error })
         return
       }
-      void runDbBackup(res.plan, site.domain, (p) => setBackup(site.id, p))
+      // SSH-orchestrated (no event): persist only for visibility/interrupted
+      // detection on restart; drop it the moment it settles.
+      void saveJob({ id: dbBackupJobId(site.id), kind: "dbBackup", status: "running", startedAt: Date.now(), inputs: { siteId: site.id, domain: site.domain } })
+      void runDbBackup(res.plan, site.domain, (p) => {
+        setBackup(site.id, p)
+        if (p.stage === "done" || p.stage === "error") void removeJob(dbBackupJobId(site.id))
+      })
     },
     [dbBackups, planDbBackupFor],
   )
@@ -974,10 +1028,53 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setSync(site.id, { stage: "error", domain: site.domain, error: res.error })
         return
       }
-      void runDbSync(res.plan, site.domain, (p) => setSync(site.id, p))
+      // SSH-orchestrated (no event): persist only so a restart can flag it as
+      // interrupted (local DB may be partial); drop it the moment it settles.
+      void saveJob({ id: dbSyncJobId(site.id), kind: "dbSync", status: "running", startedAt: Date.now(), inputs: { siteId: site.id, domain: site.domain } })
+      void runDbSync(res.plan, site.domain, (p) => {
+        setSync(site.id, p)
+        if (p.stage === "done" || p.stage === "error") void removeJob(dbSyncJobId(site.id))
+      })
     },
     [dbSyncs, planDbSyncFor],
   )
+
+  // Resume persisted jobs after a restart (runs once on mount). Iterates every
+  // in-flight job in config and dispatches by kind. Event-backed jobs (newServer,
+  // phpUpgrade) reconnect their poller via the stored event id; SSH-orchestrated
+  // jobs (dbSync, dbBackup) can't reconnect a dead process, so they're surfaced as
+  // interrupted and dropped from the persisted set.
+  useEffect(() => {
+    for (const job of Object.values(cfgRef.current.jobs ?? {})) {
+      if (job.status === "done" || job.status === "failed") continue
+      const inp = (job.inputs ?? {}) as { hostname?: string; siteId?: number; version?: string; domain?: string }
+      switch (job.kind) {
+        case "newServer":
+          if (job.eventId == null) { void removeJob(job.id); break }
+          {
+            const hostname = inp.hostname ?? "your server"
+            setNewServerJob({ hostname, status: job.status, startedAt: job.startedAt, eventId: job.eventId })
+            trackServerEvent(job.eventId, hostname, job.startedAt)
+          }
+          break
+        case "phpUpgrade":
+          if (job.eventId == null || inp.siteId == null || !inp.version) { void removeJob(job.id); break }
+          setUpgrade(inp.siteId, { target: inp.version, status: job.status })
+          trackPhpUpgradeEvent(inp.siteId, inp.version, job.eventId)
+          break
+        case "dbSync":
+          if (inp.siteId != null) setSync(inp.siteId, { stage: "error", domain: inp.domain ?? "", error: INTERRUPTED_SYNC_MSG })
+          void removeJob(job.id)
+          break
+        case "dbBackup":
+          if (inp.siteId != null) setBackup(inp.siteId, { stage: "error", domain: inp.domain ?? "", error: INTERRUPTED_BACKUP_MSG })
+          void removeJob(job.id)
+          break
+        default:
+          void removeJob(job.id) // unknown/unresumable kind — clear it
+      }
+    }
+  }, [trackServerEvent, trackPhpUpgradeEvent])
 
   // Compute a linked site's git drift once (cached), fire-and-forget. Stable
   // across renders (uses a ref for the dedup set), so views can call it freely
