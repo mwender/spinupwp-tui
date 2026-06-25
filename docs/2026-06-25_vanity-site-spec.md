@@ -93,8 +93,9 @@ New Server success screen now hands off here in words.
    … })` → `getEvent` poll, mirroring `startNewServer`.
 5. **Enable HTTPS** — `client.enableHttps(siteId)` → `getEvent` poll. Gated on the
    A record having resolved (step 3).
-6. **SSH key** — deep-link handoff into SpinupWP to add the user's key (no API for
-   this); the job parks here until the user confirms it's done.
+6. **SSH key** — deep-link handoff to the SITE's SFTP & SSH → Site User
+   (`/sites/{siteId}#sftp`), where the key is added to the per-site user (NOT a
+   server sudo user). No API for this; the job parks here until the user confirms.
 7. **Seed `index.php`** — once SSH reaches the site user, push
    `docs/vanity-site/index.php` into the site webroot via the existing SSH/SCP
    helpers (`dbBackup.ts` exports `SSH_OPTS`/`scpPort`/`runProcess`).

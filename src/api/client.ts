@@ -205,11 +205,12 @@ export class SpinupWPClient {
     return this.mutate<{ event_id: number }>("/sites", "POST", payload)
   }
 
-  // Enable HTTPS (Let's Encrypt) on a site. Async → returns an event_id to poll.
-  // The site's domain must already resolve to the server for LE to issue, so this
-  // runs after the DNS A record has propagated. Needs a Read/Write token.
+  // Enable HTTPS on a site. `type: "webroot"` requests a Let's Encrypt cert (the
+  // domain must already resolve to the server for LE to issue, so this runs after
+  // the DNS A record has propagated). Async → returns an event_id to poll. Needs a
+  // Read/Write token.
   enableHttps(siteId: number): Promise<{ event_id: number }> {
-    return this.mutate<{ event_id: number }>(`/sites/${siteId}/https`, "POST", { enabled: true })
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/https`, "POST", { type: "webroot" })
   }
 
   // ---- Events -----------------------------------------------------------

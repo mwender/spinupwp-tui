@@ -34,6 +34,7 @@ import {
 } from "../lib/providers.ts"
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
+import { deriveSiteUser, seedVanityIndex, aRecordResolves } from "../lib/vanitySite.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
@@ -90,9 +91,39 @@ export interface NewServerJob {
   eventId?: number // SpinupWP event being polled — the key that lets us resume after a restart
 }
 
+// The vanity-site build: a multi-step orchestration (DNS A record → propagate →
+// create site → enable HTTPS → SSH-key handoff → seed index.php) that connects a
+// fresh, empty server. Steps dns/site/https are event/poll-backed (true resume);
+// sshkey is a manual park; seed is an idempotent SSH push.
+export type VanityStep = "dns" | "propagate" | "site" | "https" | "sshkey" | "seed" | "done" | "error"
+export interface VanityJob {
+  serverId: number
+  serverIp: string
+  hostname: string // = domain = server name
+  apex: string // the zone apex the A record is written into
+  siteUser: string
+  publicFolder: string | null
+  port: number | null // server ssh_port, captured for the seed step
+  step: VanityStep
+  failedStep?: VanityStep
+  error?: string
+  startedAt: number
+  connId?: string // the DNS provider connection serving the zone
+  siteId?: number // the created site (for the HTTPS call + deep links)
+  sslSkipped?: boolean
+  propagateTimedOut?: boolean // DNS hasn't resolved within the window → offer skip/wait
+  propagateStartedAt?: number
+}
+export function isVanityInFlight(j: VanityJob | null | undefined): boolean {
+  return j != null && j.step !== "done" && j.step !== "error"
+}
+
 // Resumable-job ids. The server create is a singleton; the per-site jobs are
 // keyed by site id so several can be in flight (and resume) at once.
 const NEW_SERVER_JOB_ID = "newServer"
+const VANITY_JOB_ID = "vanity"
+const VANITY_POLL_MS = 2500
+const VANITY_PROPAGATE_TIMEOUT_MS = 120_000 // ~2 min, then offer skip/keep-waiting
 const phpJobId = (siteId: number) => `phpUpgrade:${siteId}`
 const dbSyncJobId = (siteId: number) => `dbSync:${siteId}`
 const dbBackupJobId = (siteId: number) => `dbBackup:${siteId}`
@@ -205,6 +236,17 @@ interface StoreValue extends DataState {
   // Fire POST /servers and poll its event to completion in the background.
   startNewServer: (payload: CreateServerPayload, hostname: string) => void
   clearNewServer: () => void
+  // Vanity-site build (connect a fresh, empty server). `vanityServer` opens the
+  // overlay; `vanityJob` is the resumable multi-step progress.
+  vanityServer: Server | null
+  setVanityServer: (s: Server | null) => void
+  vanityJob: VanityJob | null
+  startVanity: (server: Server, opts: { siteUser: string; skipSsl?: boolean }) => void
+  vanitySshKeyDone: () => void // user confirms the SSH key is on the server → seed
+  vanitySkipSsl: () => void // from the propagation-timeout prompt: create site, skip HTTPS
+  vanityKeepWaiting: () => void // from the prompt: reset the propagation window
+  vanityRetry: () => void // re-enter the failed step
+  clearVanity: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
   // session. loadProviderMetadata fetches lazily on demand.
   providerMetadata: Map<string, ProviderMetadata>
@@ -418,6 +460,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [newServerOpen, setNewServerOpen] = useState(false)
   const [newServerSource, setNewServerSource] = useState<Server | null>(null)
   const [newServerJob, setNewServerJob] = useState<NewServerJob | null>(null)
+  // Vanity-site build. `vanityServer` drives the overlay (the server we're connecting);
+  // `vanityJob` is the resumable progress that outlives the overlay.
+  const [vanityServer, setVanityServer] = useState<Server | null>(null)
+  const [vanityJob, setVanityJob] = useState<VanityJob | null>(null)
   const [providerMetadata, setProviderMetadata] = useState<Map<string, ProviderMetadata>>(new Map())
   const [providerMetadataLoading, setProviderMetadataLoading] = useState<Set<string>>(new Set())
   const [providerMetadataError, setProviderMetadataError] = useState<Map<string, string>>(new Map())
@@ -1039,43 +1085,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [dbSyncs, planDbSyncFor],
   )
 
-  // Resume persisted jobs after a restart (runs once on mount). Iterates every
-  // in-flight job in config and dispatches by kind. Event-backed jobs (newServer,
-  // phpUpgrade) reconnect their poller via the stored event id; SSH-orchestrated
-  // jobs (dbSync, dbBackup) can't reconnect a dead process, so they're surfaced as
-  // interrupted and dropped from the persisted set.
-  useEffect(() => {
-    for (const job of Object.values(cfgRef.current.jobs ?? {})) {
-      if (job.status === "done" || job.status === "failed") continue
-      const inp = (job.inputs ?? {}) as { hostname?: string; siteId?: number; version?: string; domain?: string }
-      switch (job.kind) {
-        case "newServer":
-          if (job.eventId == null) { void removeJob(job.id); break }
-          {
-            const hostname = inp.hostname ?? "your server"
-            setNewServerJob({ hostname, status: job.status, startedAt: job.startedAt, eventId: job.eventId })
-            trackServerEvent(job.eventId, hostname, job.startedAt)
-          }
-          break
-        case "phpUpgrade":
-          if (job.eventId == null || inp.siteId == null || !inp.version) { void removeJob(job.id); break }
-          setUpgrade(inp.siteId, { target: inp.version, status: job.status })
-          trackPhpUpgradeEvent(inp.siteId, inp.version, job.eventId)
-          break
-        case "dbSync":
-          if (inp.siteId != null) setSync(inp.siteId, { stage: "error", domain: inp.domain ?? "", error: INTERRUPTED_SYNC_MSG })
-          void removeJob(job.id)
-          break
-        case "dbBackup":
-          if (inp.siteId != null) setBackup(inp.siteId, { stage: "error", domain: inp.domain ?? "", error: INTERRUPTED_BACKUP_MSG })
-          void removeJob(job.id)
-          break
-        default:
-          void removeJob(job.id) // unknown/unresumable kind — clear it
-      }
-    }
-  }, [trackServerEvent, trackPhpUpgradeEvent])
-
   // Compute a linked site's git drift once (cached), fire-and-forget. Stable
   // across renders (uses a ref for the dedup set), so views can call it freely
   // from an effect when a linked site comes into view.
@@ -1458,6 +1467,287 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [allConnections, ttlWrites],
   )
 
+  // ---- Vanity site (connect a fresh, empty server) ----------------------
+
+  // The step machine. Each step performs its work then hands off to the next; it
+  // re-enters at job.step (so resume continues mid-flight). Steps are written to be
+  // idempotent where they can't re-attach to a remote handle (site/seed), so a
+  // resume never duplicates work.
+  const driveVanity = useCallback(
+    (job: VanityJob) => {
+      const persist = (j: VanityJob) => {
+        setVanityJob(j)
+        // Forget only a truly-finished build. An errored/incomplete one stays
+        // persisted so it's reopenable (and survives a restart) until the user
+        // retries it to completion or explicitly discards it.
+        if (j.step === "done") void removeJob(VANITY_JOB_ID)
+        else void saveJob({ id: VANITY_JOB_ID, kind: "vanity", status: "running", startedAt: j.startedAt, inputs: j })
+      }
+      const fail = (j: VanityJob, step: VanityStep, error: string) => persist({ ...j, step: "error", failedStep: step, error })
+      const apiMsg = (err: unknown) => (err instanceof ApiError ? err.message : (err as Error).message)
+
+      const pollEvent = (eventId: number, step: VanityStep, j: VanityJob, onDone: () => void) => {
+        const poll = async () => {
+          try {
+            const e = await client.getEvent(eventId)
+            if (SERVER_FAIL.has(e.status)) return fail(j, step, e.output?.trim() || `The ${step} step failed on SpinupWP.`)
+            if (SERVER_DONE.has(e.status) || e.finished_at) return onDone()
+            setTimeout(() => void poll(), VANITY_POLL_MS)
+          } catch (err) {
+            fail(j, step, apiMsg(err))
+          }
+        }
+        setTimeout(() => void poll(), VANITY_POLL_MS)
+      }
+
+      async function doDns(j: VanityJob) {
+        persist({ ...j, step: "dns" })
+        const conn = j.connId ? allConnections.find((c) => c.id === j.connId) : null
+        const provider = conn ? recordProviderFor(conn.provider) : null
+        if (!conn || !provider?.createRecord) {
+          return fail(j, "dns", "No DNS provider connection serves this zone — connect one in the DNS view first.")
+        }
+        let res
+        try {
+          res = await provider.createRecord(conn.creds, j.apex, j.hostname, "A", j.serverIp, 300)
+        } catch (err) {
+          return fail(j, "dns", (err as Error).message)
+        }
+        if (!res.ok) return fail(j, "dns", res.error || "The DNS provider rejected the A record.")
+        const next: VanityJob = { ...j, step: "propagate", propagateStartedAt: Date.now(), propagateTimedOut: false }
+        if (res.pollId && provider.pollChange) {
+          const pollId = res.pollId
+          const poll = async () => {
+            try {
+              const st = await provider.pollChange!(conn.creds, pollId)
+              if (st === "failed") return fail(j, "dns", "The DNS change failed to apply at the provider.")
+              if (st === "done") return void doPropagate(next)
+              setTimeout(() => void poll(), VANITY_POLL_MS)
+            } catch (err) {
+              fail(j, "dns", (err as Error).message)
+            }
+          }
+          setTimeout(() => void poll(), VANITY_POLL_MS)
+        } else {
+          void doPropagate(next)
+        }
+      }
+
+      async function doPropagate(j: VanityJob) {
+        const startedAt = j.propagateStartedAt ?? Date.now()
+        persist({ ...j, step: "propagate", propagateStartedAt: startedAt, propagateTimedOut: false })
+        const check = async () => {
+          if (await aRecordResolves(j.hostname, j.serverIp)) return void doSite({ ...j, step: "site" })
+          if (Date.now() - startedAt > VANITY_PROPAGATE_TIMEOUT_MS) {
+            return persist({ ...j, step: "propagate", propagateStartedAt: startedAt, propagateTimedOut: true })
+          }
+          setTimeout(() => void check(), VANITY_POLL_MS)
+        }
+        void check()
+      }
+
+      async function doSite(j: VanityJob) {
+        persist({ ...j, step: "site", propagateTimedOut: false })
+        // Idempotent: if the site already exists (e.g. resuming), reuse it.
+        let existing
+        try {
+          existing = (await client.listSites(j.serverId)).find((s) => s.domain === j.hostname)
+        } catch {
+          /* fall through to create */
+        }
+        const afterSite = (siteId: number | undefined, httpsOn: boolean) => {
+          const withSite = { ...j, siteId }
+          if (j.sslSkipped || httpsOn) return void doSshkey({ ...withSite, step: "sshkey" })
+          return void doHttps({ ...withSite, step: "https" })
+        }
+        if (existing) return afterSite(existing.id, existing.https?.enabled === true)
+        let ev
+        try {
+          ev = await client.createSite({ server_id: j.serverId, domain: j.hostname, site_user: j.siteUser, installation_method: "blank" })
+        } catch (err) {
+          return fail(j, "site", apiMsg(err))
+        }
+        pollEvent(ev.event_id, "site", j, async () => {
+          await refresh()
+          let siteId: number | undefined
+          try {
+            siteId = (await client.listSites(j.serverId)).find((s) => s.domain === j.hostname)?.id
+          } catch {
+            /* https step guards on a missing siteId */
+          }
+          afterSite(siteId, false)
+        })
+      }
+
+      async function doHttps(j: VanityJob) {
+        if (!j.siteId) return fail(j, "https", "Couldn't find the new site to enable HTTPS — open it in SpinupWP to add SSL.")
+        persist({ ...j, step: "https" })
+        let ev
+        try {
+          ev = await client.enableHttps(j.siteId)
+        } catch (err) {
+          return fail(j, "https", apiMsg(err))
+        }
+        pollEvent(ev.event_id, "https", j, () => void doSshkey({ ...j, step: "sshkey" }))
+      }
+
+      // Manual park: the user adds their SSH key in SpinupWP (deep-link), then
+      // advances via vanitySshKeyDone(). We just surface the step.
+      function doSshkey(j: VanityJob) {
+        persist({ ...j, step: "sshkey" })
+      }
+
+      async function doSeed(j: VanityJob) {
+        persist({ ...j, step: "seed" })
+        const res = await seedVanityIndex({ host: j.serverIp, user: j.siteUser, port: j.port, domain: j.hostname, publicFolder: j.publicFolder })
+        if (!res.ok) return fail(j, "seed", res.error || "Couldn't seed index.php over SSH.")
+        await refresh()
+        persist({ ...j, step: "done" })
+      }
+
+      switch (job.step) {
+        case "dns":
+          return void doDns(job)
+        case "propagate":
+          return void doPropagate(job)
+        case "site":
+          return void doSite(job)
+        case "https":
+          return void doHttps(job)
+        case "sshkey":
+          return doSshkey(job)
+        case "seed":
+          return void doSeed(job)
+        default:
+          return
+      }
+    },
+    [client, allConnections, refresh],
+  )
+
+  const startVanity = useCallback(
+    (server: Server, opts: { siteUser: string; skipSsl?: boolean }) => {
+      if (vanityJob && isVanityInFlight(vanityJob)) return // one vanity build at a time
+      const startedAt = Date.now()
+      const base: VanityJob = {
+        serverId: server.id,
+        serverIp: server.ip_address ?? "",
+        hostname: server.name,
+        apex: "",
+        siteUser: opts.siteUser,
+        publicFolder: "/",
+        port: server.ssh_port ?? null,
+        step: "dns",
+        startedAt,
+        sslSkipped: opts.skipSsl ?? false,
+      }
+      const run = async () => {
+        const zone = await resolveZone(server.name)
+        if (!zone) return setVanityJob({ ...base, step: "error", failedStep: "dns", error: `Couldn't find the DNS zone for ${server.name}.` })
+        const conn = connForZone(zone.apex, zone.providerKey, zone.nameservers)
+        const job: VanityJob = { ...base, apex: zone.apex, connId: conn?.id }
+        if (!conn) return setVanityJob({ ...job, step: "error", failedStep: "dns", error: `No editable DNS connection serves ${zone.apex} — connect one in the DNS view first.` })
+        driveVanity(job)
+      }
+      void run()
+    },
+    [vanityJob, connForZone, driveVanity],
+  )
+
+  const vanitySshKeyDone = useCallback(() => {
+    if (!vanityJob || vanityJob.step !== "sshkey") return
+    const next: VanityJob = { ...vanityJob, step: "seed" }
+    setVanityJob(next)
+    driveVanity(next)
+  }, [vanityJob, driveVanity])
+
+  // From the propagation-timeout prompt: skip SSL → create the site now and bypass
+  // the HTTPS step (SSL can be added later in SpinupWP).
+  const vanitySkipSsl = useCallback(() => {
+    if (!vanityJob || vanityJob.step !== "propagate") return
+    const next: VanityJob = { ...vanityJob, sslSkipped: true, propagateTimedOut: false, step: "site" }
+    setVanityJob(next)
+    driveVanity(next)
+  }, [vanityJob, driveVanity])
+
+  const vanityKeepWaiting = useCallback(() => {
+    if (!vanityJob || vanityJob.step !== "propagate") return
+    const next: VanityJob = { ...vanityJob, propagateTimedOut: false, propagateStartedAt: Date.now() }
+    setVanityJob(next)
+    driveVanity(next)
+  }, [vanityJob, driveVanity])
+
+  const vanityRetry = useCallback(() => {
+    if (!vanityJob || vanityJob.step !== "error") return
+    const next: VanityJob = { ...vanityJob, step: vanityJob.failedStep ?? "dns", error: undefined, failedStep: undefined }
+    setVanityJob(next)
+    driveVanity(next)
+  }, [vanityJob, driveVanity])
+
+  const clearVanity = useCallback(() => {
+    setVanityJob(null)
+    void removeJob(VANITY_JOB_ID)
+  }, [])
+
+  // Resume persisted jobs after a restart. Runs exactly once (the ref guards
+  // against dep churn re-firing it). Iterates every in-flight job and dispatches by
+  // kind: event-backed jobs (newServer, phpUpgrade) reconnect their poller via the
+  // stored event id; the vanity job re-enters its step machine (idempotent steps);
+  // SSH-orchestrated jobs (dbSync, dbBackup) can't reconnect a dead process, so
+  // they're surfaced as interrupted and dropped from the persisted set.
+  const resumedRef = useRef(false)
+  useEffect(() => {
+    if (resumedRef.current) return
+    resumedRef.current = true
+    for (const job of Object.values(cfgRef.current.jobs ?? {})) {
+      if (job.status === "done" || job.status === "failed") continue
+      const inp = (job.inputs ?? {}) as { hostname?: string; siteId?: number; version?: string; domain?: string }
+      switch (job.kind) {
+        case "newServer":
+          if (job.eventId == null) {
+            void removeJob(job.id)
+            break
+          }
+          {
+            const hostname = inp.hostname ?? "your server"
+            setNewServerJob({ hostname, status: job.status, startedAt: job.startedAt, eventId: job.eventId })
+            trackServerEvent(job.eventId, hostname, job.startedAt)
+          }
+          break
+        case "phpUpgrade":
+          if (job.eventId == null || inp.siteId == null || !inp.version) {
+            void removeJob(job.id)
+            break
+          }
+          setUpgrade(inp.siteId, { target: inp.version, status: job.status })
+          trackPhpUpgradeEvent(inp.siteId, inp.version, job.eventId)
+          break
+        case "vanity": {
+          const vj = job.inputs as VanityJob | undefined
+          if (!vj) {
+            void removeJob(job.id)
+            break
+          }
+          setVanityJob(vj)
+          // sshkey is a manual park — just re-show it. Every other step re-enters
+          // the (idempotent) machine and continues.
+          if (vj.step !== "sshkey") driveVanity(vj)
+          break
+        }
+        case "dbSync":
+          if (inp.siteId != null) setSync(inp.siteId, { stage: "error", domain: inp.domain ?? "", error: INTERRUPTED_SYNC_MSG })
+          void removeJob(job.id)
+          break
+        case "dbBackup":
+          if (inp.siteId != null) setBackup(inp.siteId, { stage: "error", domain: inp.domain ?? "", error: INTERRUPTED_BACKUP_MSG })
+          void removeJob(job.id)
+          break
+        default:
+          void removeJob(job.id) // unknown/unresumable kind — clear it
+      }
+    }
+  }, [trackServerEvent, trackPhpUpgradeEvent, driveVanity])
+
   const value: StoreValue = {
     servers,
     sites,
@@ -1494,6 +1784,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     newServerJob,
     startNewServer,
     clearNewServer,
+    vanityServer,
+    setVanityServer,
+    vanityJob,
+    startVanity,
+    vanitySshKeyDone,
+    vanitySkipSsl,
+    vanityKeepWaiting,
+    vanityRetry,
+    clearVanity,
     providerMetadata,
     providerMetadataLoading,
     providerMetadataError,

@@ -1,7 +1,7 @@
 // Top navigation bar: brand mark, tab strip, and live account summary.
 
 import { theme } from "../lib/theme.ts"
-import { useStore, isNewServerInFlight, type Route } from "./store.tsx"
+import { useStore, isNewServerInFlight, isVanityInFlight, type Route } from "./store.tsx"
 import { timeAgo, truncate } from "../lib/format.ts"
 import { Spinner } from "./components.tsx"
 import { APP_NAME, APP_VERSION } from "../version.ts"
@@ -26,9 +26,11 @@ const SUBTITLES: Record<Route, string> = {
 }
 
 export function Header() {
-  const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob } = useStore()
+  const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob, vanityJob } = useStore()
   const updateReady = updateInfo?.updateAvailable ?? false
   const building = isNewServerInFlight(newServerJob)
+  const connecting = isVanityInFlight(vanityJob)
+  const vanityStuck = vanityJob != null && vanityJob.step === "error"
 
   return (
     <box style={{ flexDirection: "column", flexShrink: 0 }}>
@@ -69,6 +71,16 @@ export function Header() {
             <text content={`  Provisioning ${truncate(newServerJob!.hostname, 22)}  `} fg={theme.warn} wrapMode="none" />
           </box>
         )}
+        {/* Vanity build runs in the background too — surface it so it's reachable
+            after the site is created (press V on its server to reopen). A stuck
+            (errored) build is flagged too so it isn't lost. */}
+        {connecting && (
+          <box style={{ flexDirection: "row", flexShrink: 0, alignItems: "center" }}>
+            <Spinner interval={120} color={theme.warn} />
+            <text content={`  Connecting ${truncate(vanityJob!.hostname, 22)}  `} fg={theme.warn} wrapMode="none" />
+          </box>
+        )}
+        {vanityStuck && <text content={`  ⚠ ${truncate(vanityJob!.hostname, 20)} — press V  `} fg={theme.bad} style={{ flexShrink: 0 }} wrapMode="none" />}
         {loading && <Spinner interval={100} />}
         <text content={`  ${servers.length} servers · ${sites.length} sites  `} fg={theme.textDim} style={{ flexShrink: 0 }} />
         <text content={lastUpdated ? `updated ${timeAgo(lastUpdated.toISOString())}` : "loading…"} fg={theme.textFaint} style={{ flexShrink: 0 }} />

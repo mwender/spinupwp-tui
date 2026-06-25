@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -148,6 +148,15 @@ export function Browser({ rows }: { rows: number }) {
           setNewServerOpen(true)
         }
         return
+      case "V":
+        // Connect an empty server: create a vanity site at its hostname. Also
+        // reopens an unfinished build for this server (in-flight, parked at the
+        // SSH-key step, or errored — all after the site may already exist).
+        // Otherwise only for 0-site servers.
+        if (server && ((vanityJob && vanityJob.step !== "done" && vanityJob.serverId === server.id) || sitesForServer(server.id).length === 0)) {
+          setVanityServer(server)
+        }
+        return
       case "h":
         // Open the live health view for the current server (works from either pane).
         if (server) setHealthServer(server)
@@ -239,7 +248,7 @@ export function Browser({ rows }: { rows: number }) {
             viewportRows={listRows}
             focused={focus === "sites"}
             keyFor={(s) => s.id}
-            emptyText="No sites on this server"
+            emptyText="No sites yet — press V to create a vanity site and connect this server"
             renderRow={(s, selected) => {
               const updates = (s.wp_plugin_updates || 0) + (s.wp_theme_updates || 0) + (s.wp_core_update ? 1 : 0)
               const stack = classifyStack(s)
