@@ -26,6 +26,26 @@ versions; such changes are called out here.
   Server Providers) and saves it for you — once per provider, no hand-editing
   config. First step of the clone-to-new-server workflow (see
   `docs/2026-06-24_clone-to-server-spec.md`).
+- **Connect a new server with a vanity site (`V`).** A freshly-created server has
+  no site, so there's nothing to attach an SSH key to and no way for Spinup to
+  reach it. Press `V` on a server with no sites to build a small placeholder site
+  at the server's own hostname: Spinup writes the DNS A record (Route 53), waits
+  for it to resolve, creates the site, enables HTTPS (a free Let's Encrypt
+  certificate), hands you off to add your SSH key (the site's **SFTP & SSH → Site
+  User**), then publishes a minimal, brand-neutral status page. Press `o` on the
+  success screen to open the live site. The whole build runs in the background and
+  survives closing the overlay — reopen it with `V`, and a header badge tracks it.
+- **Background jobs survive a restart.** Long-running work — a server provision, a
+  PHP upgrade, a vanity-site build — is now persisted, so quitting and relaunching
+  Spinup reconnects to it instead of forgetting it. SSH-based jobs that can't be
+  reconnected (a production DB backup/sync) are clearly flagged as **interrupted**
+  on restart rather than silently lost.
+
+### Changed
+- **New-server progress shows a live elapsed timer**, and a header badge surfaces
+  an in-flight provision (or vanity-site build) from any tab.
+- **Servers with no sites are flagged in amber** in the Servers list — an empty
+  server is a dead end until it has a site (press `V` to create one).
 
 ## [0.8.0] - 2026-06-23
 

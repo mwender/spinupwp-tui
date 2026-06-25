@@ -83,9 +83,18 @@ Once you're in, the dashboard looks like this:
   (Nginx / PHP-FPM / MySQL / Redis). Servers needing a reboot show a `↻rbt`
   badge, and the overlay reads the box over SSH to show *why* (the pending
   kernel/security packages). (See "Server actions" below.)
+- **Create & connect a server** — press `c` on the Servers tab to provision a new
+  server (DigitalOcean / Vultr / Linode / Hetzner), priced from the provider catalog
+  and pre-filled to match a selected server. Then press `V` on a server with **no
+  sites** to connect it end to end: Spinup writes the DNS A record, creates a
+  placeholder "vanity" site, enables HTTPS, hands you off to add your SSH key, and
+  publishes a status page — turning a bare server into one you can actually work
+  with. Long builds run in the background and survive a restart. (See "Creating &
+  connecting servers" below.)
 
 > The tool is **read-only by default** and works great with a Read Only API
-> token. The write actions — upgrading a site's PHP version and rebooting /
+> token. The write actions — creating a server, connecting it with a vanity site
+> (incl. the DNS A-record write), upgrading a site's PHP version, and rebooting /
 > restarting services — need a **Read/Write** token; everything else keeps
 > working without one.
 
@@ -206,6 +215,8 @@ These can be set in `config.json` or via an environment variable:
 | `f` | Report sites with no usable local copy (Stacks tab) |
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
+| `c` | Create a new server (Servers tab; needs a Read/Write token) |
+| `V` | Connect a 0-site server with a vanity site — DNS + site + HTTPS + SSH-key handoff (Servers tab; needs a Read/Write token) |
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `r` | Refresh data from the API |
@@ -305,6 +316,42 @@ server's row keeps a spinner).
   file 1:1).
 - **Reboot is the big one** — its confirmation calls out that it takes the whole
   server down briefly (every site on it); a service restart is a brief blip.
+
+## Creating & connecting servers
+
+Two write actions on the **Servers** tab that stand up a new server and make it
+usable — both **need a Read/Write token**.
+
+**Create a server (`c`).** Opens a form pre-filled to **match** the selected
+server's provider, region, and size (or from scratch on an empty fleet). It prices
+the build from the provider's catalog (DigitalOcean / Vultr / Linode / Hetzner),
+suggests a hostname from your fleet's naming convention, and lets you switch
+provider (`p`), region (`g`), or size (`e`) and toggle backups (`b`) before
+confirming. Because the SpinupWP API can't list your configured server providers,
+the first time you build on a provider the overlay asks for its SpinupWP provider
+id (Account Settings → Server Providers) and saves it — once per provider. The
+build fires `POST /servers` and tracks the ~10-minute provision in the background.
+
+**Connect it with a vanity site (`V`).** A brand-new server has **no site**, so
+there's nothing to attach an SSH key to and no way for Spinup to reach it — empty
+servers are flagged in **amber** in the Servers list. Press `V` on one to build a
+small placeholder ("vanity") site at the server's own hostname, end to end:
+
+1. **DNS** — writes an `A` record for the hostname → the server IP (AWS Route 53),
+   using the connection from the DNS module.
+2. **Propagate** — waits for the record to resolve (so Let's Encrypt can issue);
+   after ~2 minutes it offers to skip SSL for now or keep waiting.
+3. **Site** — creates a blank site (`installation_method: "blank"`).
+4. **HTTPS** — enables a free Let's Encrypt certificate.
+5. **SSH key** — deep-links you to the site's **SFTP & SSH → Site User** to add
+   your key (the API can't do this), then waits for you to confirm.
+6. **Publish** — seeds a minimal, brand-neutral status page (it reads its own
+   hostname, so it's reusable on any server). Press `o` to open the live site.
+
+The whole build is a **resumable background job**: close the overlay and a header
+badge keeps tracking it; press `V` on the server to reopen it (even after the site
+exists). It survives quitting and relaunching the app. If a step fails, the overlay
+shows where, with `r` to retry or `x` to discard.
 
 ## Local working copies
 
