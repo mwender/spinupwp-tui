@@ -57,52 +57,66 @@ them would defeat fire-and-walk-away. The empty state is also where the dead end
 composes cleanly (server-create stays a standalone, reusable action). The
 New Server success screen now hands off here in words.
 
+## Decisions (user, 2026-06-25)
+
+- **SSH key: manual via deep-link.** No default-key auto-apply on this account, and
+  the API has no SSH-key endpoint, so the flow deep-links the user into SpinupWP to
+  add their key, then resumes to seed `index.php` once SSH reaches the site.
+- **SSL: yes (Let's Encrypt).** Enabled via the separate `POST /sites/{id}/https`
+  call *after* the A record propagates (LE needs the host to resolve).
+- **DNS provider: AWS Route 53** for `wenmarkdigital.com`. Route 53 `UPSERT`
+  creates-or-replaces, so a new A record needs only a thin extension of the existing
+  record-write path (no new POST shape, unlike Cloudflare).
+
+## Verified API contract (SpinupWP REST API, 2026-06-25)
+
+- `POST /sites` — required `server_id`, `domain`, `site_user`, `installation_method`
+  (`wp | wp_subdirectory | wp_subdomain | git | blank`); optional `php_version`
+  (def 8.3), `public_folder` (def "/"), `database[name|username|password|table_prefix]`,
+  `page_cache[enabled]`. **No HTTPS field at creation.** Async → `{ event_id }`.
+- **HTTPS is a separate, post-creation call:** `POST /sites/{id}/https` → `{ event_id }`.
+- Built this session: `CreateSitePayload`, `client.createSite()`, `client.enableHttps()`.
+
 ## The flow (gated, resumable like other writes)
 
 1. **Offer** — in `Browser.tsx` the Sites empty state, when the focused server has
    0 sites, shows a CTA (proposed key: `n` "new vanity site" — verify no collision
    with the Sites pane's existing keys).
 2. **Confirm** — overlay (modeled on `PhpUpgrade.tsx`) showing the domain
-   (= server hostname), the target server IP, and the DNS record that will be
-   written. Hard confirm — this is a real production DNS write.
-3. **DNS A record** — create `A <hostname> → <server.ip>` via the connected zone's
-   provider, then poll to propagation (Route 53 async pollId; Cloudflare immediate).
-4. **Create site** — `POST /sites` (new client method, see gaps) → `getEvent` poll
-   to provisioned, mirroring `startNewServer`.
-5. **SSH key / sudo user** — deep-link handoff to SpinupWP for the parts the API
-   doesn't cover (see gaps): e.g.
-   `…/servers/{id}#sudo-users` to add a sudo user / SSH key.
-6. **Seed `index.php`** — once SSH reaches the site user, push
+   (= server hostname), the target server IP, the A record to be written, the
+   `site_user`, and that SSL + an SSH-key handoff follow. Hard confirm — real
+   production DNS + site writes.
+3. **DNS A record** — `A <hostname> → <server.ip>` via Route 53 `UPSERT` (new
+   `createRecord` path in `dnsRecords.ts`), then poll DNS until it resolves to the
+   server IP (reuse `dnsQuery.ts`) — LE needs this before step 5.
+4. **Create site** — `client.createSite({ installation_method: "blank", site_user,
+   … })` → `getEvent` poll, mirroring `startNewServer`.
+5. **Enable HTTPS** — `client.enableHttps(siteId)` → `getEvent` poll. Gated on the
+   A record having resolved (step 3).
+6. **SSH key** — deep-link handoff into SpinupWP to add the user's key (no API for
+   this); the job parks here until the user confirms it's done.
+7. **Seed `index.php`** — once SSH reaches the site user, push
    `docs/vanity-site/index.php` into the site webroot via the existing SSH/SCP
    helpers (`dbBackup.ts` exports `SSH_OPTS`/`scpPort`/`runProcess`).
-7. **Done** — server now shows 1 site (amber clears); it's connectable.
+8. **Done** — server now shows 1 site (amber clears); it's connectable.
 
 Each step lives in a store-resident job so closing the overlay doesn't abandon it,
 and it adopts the **shared resumable-job mechanism** (config-persisted, resumes on
-restart) defined in `docs/2026-06-24_clone-to-server-spec.md` "Resumable jobs"
-rather than inventing its own; a global header badge surfaces it like the provision
-badge.
+restart) defined in `docs/2026-06-24_clone-to-server-spec.md` "Resumable jobs".
+Steps 3–5 are event/poll-backed (true resume); step 6 is a manual park (resume =
+re-show the handoff); step 7 is an idempotent SSH push (resume = re-check then
+re-run) — the same mixed-resume shape the clone wizard needs. A global header badge
+surfaces the job like the provision badge.
 
-## Known gaps to build (verify against the SpinupWP API before coding)
+## Remaining gaps to build
 
-- **`client.createSite(payload)` does not exist.** Add it + a `CreateSitePayload`
-  type. The clone spec already verified the API (`POST /sites`, async → `{event_id}`):
-  required `server_id`, `domain`, `site_user`, `installation_method`; use
-  **`installation_method: "blank"`** for exactly the no-WP docroot we want to drop
-  `index.php` into. See `docs/2026-06-24_clone-to-server-spec.md` "Create site". The
-  client method is shared with the clone wizard — build it once.
-- **DNS record CREATE vs EDIT.** `dnsRecords.ts` today reads-then-upserts an
-  *existing* record (TTL editing). Route 53 `UPSERT` can create a new record set as
-  is; **Cloudflare** edits via PATCH to a known `recordId`, so creating a new A
-  record needs a `POST` path. Add a `createRecord` capability to the record-provider
-  descriptors (both providers).
-- **SSL/Let's Encrypt ordering.** LE issuance needs the hostname to resolve, so the
-  A record must propagate *before* (or SSL is added after) site creation. Decide:
-  create site without SSL first, or wait out propagation. SpinupWP may handle LE on
-  its own timeline — confirm.
-- **SSH key application.** SpinupWP SSH access is via the site/sudo system user; our
-  client has no SSH-key endpoint. Likely a **deep-link handoff** (consistent with
-  existing patterns) rather than an API write. Confirm whether the API exposes it.
+- **DNS record CREATE.** `dnsRecords.ts` today reads-then-upserts an *existing*
+  record (TTL editing). Add a `createRecord` path; for Route 53 it's the same
+  `UPSERT` action with a fresh record set, so it's a thin extension. (Cloudflare's
+  POST path deferred until a non-Route-53 zone needs it.)
+- **DNS propagation poll** before enabling HTTPS — resolve the new A record via
+  `dnsQuery.ts` until it returns the server IP (with a sane timeout/skip).
+- **The VanityJob model + overlay + Sites-empty-state CTA** — the orchestration.
 
 ## Hard rules
 

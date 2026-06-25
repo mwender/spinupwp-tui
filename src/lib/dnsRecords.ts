@@ -63,6 +63,10 @@ export interface RecordProvider {
   // Change one record's TTL. `zoneId` comes from getRecord; `record` carries the
   // values to preserve (Route 53 needs the full set on an upsert).
   setTtl(creds: Record<string, string>, zoneId: string, record: DnsRecord, ttl: number): Promise<ChangeResult>
+  // Create (or replace) a single record name → value. Used by the vanity-site flow
+  // to add the server hostname's A record. Resolves the zone itself (no prior
+  // getRecord). Optional — providers without it fall back to a web handoff.
+  createRecord?(creds: Record<string, string>, apex: string, name: string, type: string, value: string, ttl: number): Promise<ChangeResult>
   // Poll an async change to completion. Only providers that return a pollId set this.
   pollChange?(creds: Record<string, string>, pollId: string): Promise<ChangeStatus>
 }
@@ -241,6 +245,28 @@ const route53: RecordProvider = {
       `</ResourceRecordSet></Change></Changes></ChangeBatch>` +
       `</ChangeResourceRecordSetsRequest>`
     const r = await awsPost(creds, "route53", R53_HOST, `${R53_BASE}/hostedzone/${zoneId}/rrset/`, body)
+    if (r.status !== 200) return { ok: false, error: awsErrorMessage(r.body) || `Route 53 HTTP ${r.status}` }
+    const changeId = r.body.match(/<Id>([^<]+)<\/Id>/)?.[1]?.replace(/^\/change\//, "")
+    return { ok: true, pollId: changeId }
+  },
+
+  async createRecord(rawCreds, apex, name, type, value, ttl) {
+    const creds = awsCreds(rawCreds)
+    const zone = await awsZoneId(creds, apex)
+    if (!zone.id) return { ok: false, error: zone.error }
+    // UPSERT creates the record, or replaces it if the exact name+type already
+    // exists (the vanity host is purpose-built, so a collision means re-point it
+    // at this server — what we want). The confirm overlay shows the exact write.
+    const body =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<ChangeResourceRecordSetsRequest xmlns="https://route53.amazonaws.com/doc/2013-04-01/">` +
+      `<ChangeBatch><Comment>spinup: create ${type} ${stripDot(name)}</Comment><Changes><Change>` +
+      `<Action>UPSERT</Action><ResourceRecordSet>` +
+      `<Name>${xmlEscape(stripDot(name))}</Name><Type>${type}</Type><TTL>${ttl}</TTL>` +
+      `<ResourceRecords><ResourceRecord><Value>${xmlEscape(value)}</Value></ResourceRecord></ResourceRecords>` +
+      `</ResourceRecordSet></Change></Changes></ChangeBatch>` +
+      `</ChangeResourceRecordSetsRequest>`
+    const r = await awsPost(creds, "route53", R53_HOST, `${R53_BASE}/hostedzone/${zone.id}/rrset/`, body)
     if (r.status !== 200) return { ok: false, error: awsErrorMessage(r.body) || `Route 53 HTTP ${r.status}` }
     const changeId = r.body.match(/<Id>([^<]+)<\/Id>/)?.[1]?.replace(/^\/change\//, "")
     return { ok: true, pollId: changeId }

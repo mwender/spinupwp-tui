@@ -12,6 +12,7 @@ import type {
   Event,
   ProviderMetadata,
   CreateServerPayload,
+  CreateSitePayload,
 } from "./types.ts"
 
 // The restartable services SpinupWP exposes (POST /servers/{id}/services/{svc}/restart).
@@ -195,6 +196,20 @@ export class SpinupWPClient {
   async getSite(id: number): Promise<Site> {
     const res = await this.request<ApiSingle<Site>>(`/sites/${id}`)
     return res.data
+  }
+
+  // Create a site. Async on SpinupWP's side: returns an event_id to poll via
+  // getEvent(). Needs a Read/Write token. HTTPS is enabled separately — see
+  // enableHttps().
+  createSite(payload: CreateSitePayload): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>("/sites", "POST", payload)
+  }
+
+  // Enable HTTPS (Let's Encrypt) on a site. Async → returns an event_id to poll.
+  // The site's domain must already resolve to the server for LE to issue, so this
+  // runs after the DNS A record has propagated. Needs a Read/Write token.
+  enableHttps(siteId: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/https`, "POST", { enabled: true })
   }
 
   // ---- Events -----------------------------------------------------------

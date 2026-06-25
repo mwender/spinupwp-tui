@@ -153,6 +153,20 @@ export interface CreateServerPayload {
   post_provision_script?: string
 }
 
+// POST /sites. HTTPS is NOT a creation field — it's enabled afterward via
+// POST /sites/{id}/https (see SpinupWPClient.enableHttps). For a vanity/placeholder
+// site we use installation_method "blank" (empty docroot we drop an index.php into).
+export interface CreateSitePayload {
+  server_id: number
+  domain: string
+  site_user: string
+  installation_method: "wp" | "wp_subdirectory" | "wp_subdomain" | "git" | "blank"
+  php_version?: string // defaults to 8.3 server-side
+  public_folder?: string // defaults to "/"
+  database?: { name?: string; username?: string; password?: string; table_prefix?: string }
+  page_cache?: { enabled?: boolean }
+}
+
 export interface Event {
   id: number
   initiated_by: string | null
