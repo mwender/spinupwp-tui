@@ -15,6 +15,8 @@ import { Search } from "./views/Search.tsx"
 import { Events } from "./views/Events.tsx"
 import { Health } from "./views/Health.tsx"
 import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
+import { GrantKey } from "./views/GrantKey.tsx"
+import { SudoConnect } from "./views/SudoConnect.tsx"
 import { DbBackup } from "./views/DbBackup.tsx"
 import { DbSync } from "./views/DbSync.tsx"
 import { MediaFallback } from "./views/MediaFallback.tsx"
@@ -50,6 +52,8 @@ export function App() {
     showExplain ||
     store.healthServer !== null ||
     store.phpUpgradeSite !== null ||
+    store.grantKeySite !== null ||
+    store.sudoConnectServer !== null ||
     store.dbBackupSite !== null ||
     store.dbSyncSite !== null ||
     store.mediaFallbackSite !== null ||
@@ -87,6 +91,12 @@ export function App() {
 
     // The PHP-upgrade overlay owns the keyboard while open.
     if (store.phpUpgradeSite) return
+
+    // The grant-SSH-key overlay owns the keyboard while open.
+    if (store.grantKeySite) return
+
+    // The connect-sudo overlay owns the keyboard while open.
+    if (store.sudoConnectServer) return
 
     // The DB-backup overlay owns the keyboard while open.
     if (store.dbBackupSite) return
@@ -191,6 +201,8 @@ export function App() {
       {showExplain && <ExplainOverlay route={store.route} />}
       {store.healthServer && <Health />}
       {store.phpUpgradeSite && <PhpUpgrade />}
+      {store.grantKeySite && <GrantKey />}
+      {store.sudoConnectServer && <SudoConnect />}
       {store.dbBackupSite && <DbBackup />}
       {store.dbSyncSite && <DbSync />}
       {store.mediaFallbackSite && <MediaFallback />}

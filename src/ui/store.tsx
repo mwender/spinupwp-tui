@@ -36,7 +36,7 @@ import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
 import { deriveSiteUser, seedVanityIndex, aRecordResolves } from "../lib/vanitySite.ts"
 import type { StoredProviders } from "../config.ts"
-import { fetchRebootInfo, type RebootInfo } from "../lib/ssh.ts"
+import { fetchRebootInfo, grantSiteSshKey, verifySudo, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
@@ -140,6 +140,19 @@ const SERVER_FAIL = new Set(["failed", "errored", "error"])
 
 export function isNewServerInFlight(j: NewServerJob | null | undefined): boolean {
   return j != null && j.status !== "done" && j.status !== "failed"
+}
+
+// Progress of an SSH-key grant (drop Spinup's machine key into a site user's
+// authorized_keys, via sudo), keyed by site id. SSH-orchestrated and fast, so —
+// unlike the event-backed writes — it isn't persisted/resumed; it just lives for
+// the session so the overlay can follow it. `status`: probing → granting → done | error.
+export interface KeyGrantProgress {
+  status: string
+  target?: string
+  error?: string
+}
+export function isKeyGrantInFlight(p: KeyGrantProgress | undefined): boolean {
+  return p != null && p.status !== "done" && p.status !== "error"
 }
 
 // A record TTL change (Phase 3), tracked in the store (same model as the other
@@ -262,6 +275,27 @@ interface StoreValue extends DataState {
   rebootInfoLoading: Set<number>
   rebootInfoErrors: Map<number, string>
   loadRebootInfo: (server: Server) => void
+  // Grant-SSH-key overlay (privileged write-over-SSH): the site whose machine-key
+  // grant overlay is open, or null. Set by site views.
+  grantKeySite: Site | null
+  setGrantKeySite: (s: Site | null) => void
+  // In-flight (and just-settled) key grants, keyed by site id. Tracked in the
+  // store so the grant survives closing the modal (mirrors the other writes).
+  keyGrants: Map<number, KeyGrantProgress>
+  // Drop Spinup's dedicated machine key into the site user's authorized_keys via
+  // the server's sudo user. Reads the sudo user + (in-memory) password from the store.
+  startGrantKey: (site: Site) => void
+  clearGrantKey: (siteId: number) => void
+  // Per-server sudo user (persisted, username only) for privileged writes.
+  sudoUserFor: (serverId: number) => string | undefined
+  // Sudo "connection" on a server: validate the sudo user + password against the
+  // live server, then hold them for the session so every privileged action on that
+  // server just works (the explicit ● connected model). The password is in-memory only.
+  sudoConnectServer: Server | null
+  setSudoConnectServer: (s: Server | null) => void
+  isSudoConnected: (serverId: number) => boolean
+  connectSudo: (server: Server, user: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>
+  disconnectSudo: (serverId: number) => void
   // The site whose local-link overlay is open, or null. Set by site views.
   localLinkSite: Site | null
   setLocalLinkSite: (s: Site | null) => void
@@ -469,6 +503,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [providerMetadataError, setProviderMetadataError] = useState<Map<string, string>>(new Map())
   const [serverProviders, setServerProviders] = useState<Record<string, ServerProviderRef>>(() => cfgRef.current.serverProviders)
   const [localLinkSite, setLocalLinkSite] = useState<Site | null>(null)
+  // Privileged SSH-key grant. The overlay target + per-site progress; the sudo
+  // user is persisted (state, hydrated from config) while the sudo password is
+  // kept in a ref (in-memory only — never rendered, never written to disk).
+  const [grantKeySite, setGrantKeySite] = useState<Site | null>(null)
+  const [keyGrants, setKeyGrants] = useState<Map<number, KeyGrantProgress>>(new Map())
+  const [sudoUsers, setSudoUsers] = useState<Map<number, string>>(
+    () => new Map(Object.entries(cfgRef.current.sudoUsers).map(([id, v]) => [Number(id), v.user])),
+  )
+  const sudoPwRef = useRef<Map<number, string>>(new Map())
+  // Servers with sudo "connected" this session (validated user + held password). The
+  // password lives in sudoPwRef (in-memory); this set just tracks which servers
+  // are connected so the UI can show ● and privileged actions can gate on it.
+  const [sudoConnected, setSudoConnected] = useState<Set<number>>(new Set())
+  const [sudoConnectServer, setSudoConnectServer] = useState<Server | null>(null)
   const [dbBackupSite, setDbBackupSite] = useState<Site | null>(null)
   const [dbBackups, setDbBackups] = useState<Map<number, DbBackupProgress>>(new Map())
   const [dbSyncSite, setDbSyncSite] = useState<Site | null>(null)
@@ -996,6 +1044,95 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return `Opening SSH to ${site.domain}…`
     },
     [sites, servers],
+  )
+
+  // ---- Privileged SSH-key grant (sudo write-over-SSH) -------------------
+
+  const sudoUserFor = useCallback((serverId: number) => sudoUsers.get(serverId), [sudoUsers])
+
+  // Persist the per-server sudo username (only — the password never touches disk).
+  const persistSudoUser = useCallback((serverId: number, user: string) => {
+    setSudoUsers((prev) => {
+      const next = new Map(prev).set(serverId, user)
+      const record: Record<string, { user: string }> = {}
+      for (const [id, u] of next) record[String(id)] = { user: u }
+      cfgRef.current.sudoUsers = record
+      void saveConfig({ sudoUsers: record })
+      return next
+    })
+  }, [])
+
+  const isSudoConnected = useCallback((serverId: number) => sudoConnected.has(serverId), [sudoConnected])
+
+  // Connect sudo on a server: validate the credentials live, then (on success)
+  // persist the username, hold the password in memory, and mark the server connected
+  // for the session. Returns the verify result so the overlay can show pass/fail.
+  const connectSudo = useCallback(
+    async (server: Server, user: string, password: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+      const sudoUser = user.trim()
+      if (!sudoUser) return { ok: false, error: "Enter a sudo username." }
+      const res = await verifySudo(server, { sudoUser, sudoPassword: password })
+      if (!res.ok) return res
+      persistSudoUser(server.id, sudoUser)
+      sudoPwRef.current.set(server.id, password)
+      setSudoConnected((prev) => new Set(prev).add(server.id))
+      return { ok: true }
+    },
+    [persistSudoUser],
+  )
+
+  // Disconnect sudo on a server: forget the held password and clear the connected flag.
+  const disconnectSudo = useCallback((serverId: number) => {
+    sudoPwRef.current.delete(serverId)
+    setSudoConnected((prev) => {
+      if (!prev.has(serverId)) return prev
+      const next = new Set(prev)
+      next.delete(serverId)
+      return next
+    })
+  }, [])
+
+  const setGrant = (siteId: number, progress: KeyGrantProgress) =>
+    setKeyGrants((prev) => new Map(prev).set(siteId, progress))
+
+  const clearGrantKey = useCallback(
+    (siteId: number) =>
+      setKeyGrants((prev) => {
+        if (!prev.has(siteId)) return prev
+        const next = new Map(prev)
+        next.delete(siteId)
+        return next
+      }),
+    [],
+  )
+
+  const startGrantKey = useCallback(
+    (site: Site) => {
+      const existing = keyGrants.get(site.id)
+      if (existing && existing.status !== "done" && existing.status !== "error") return // already running
+      const server = servers.find((s) => s.id === site.server_id)
+      if (!server) return setGrant(site.id, { status: "error", error: "Couldn't find the site's server." })
+      const sudoUser = sudoUsers.get(server.id)
+      if (!sudoUser) return setGrant(site.id, { status: "error", error: "No sudo user set for this server." })
+      const sudoPassword = sudoPwRef.current.get(server.id) ?? ""
+
+      const run = async () => {
+        setGrant(site.id, { status: "granting" })
+        const res = await grantSiteSshKey(server, site, { sudoUser, sudoPassword })
+        if (res.ok) {
+          setGrant(site.id, { status: "done", target: res.target })
+        } else {
+          // A rejected/stale password means the server is no longer truly connected —
+          // disconnect it so the ● disappears and the user reconnects (re-validates).
+          if (/password was rejected|password is required|can't run sudo|couldn't connect/i.test(res.error)) {
+            disconnectSudo(server.id)
+          }
+          setGrant(site.id, { status: "error", error: res.error, target: res.target })
+        }
+      }
+      void run()
+    },
+    [keyGrants, servers, sudoUsers, disconnectSudo],
   )
 
   // ---- Production DB backup download ------------------------------------
@@ -1799,6 +1936,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     loadProviderMetadata,
     serverProviders,
     saveServerProviderId,
+    grantKeySite,
+    setGrantKeySite,
+    keyGrants,
+    startGrantKey,
+    clearGrantKey,
+    sudoUserFor,
+    sudoConnectServer,
+    setSudoConnectServer,
+    isSudoConnected,
+    connectSudo,
+    disconnectSudo,
     localLinkSite,
     setLocalLinkSite,
     localLinks,

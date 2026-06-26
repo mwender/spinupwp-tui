@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -101,6 +101,12 @@ export function Browser({ rows }: { rows: number }) {
         // Upgrade the selected site's PHP version (first write action).
         if (focus === "sites" && sites[siteIndex]) setPhpUpgradeSite(sites[siteIndex])
         return
+      case "K":
+        // Grant Spinup's machine key to the selected site over SSH (privileged
+        // write via the server's sudo user — the API can't do this). Capital K
+        // (like L/V/N) since lowercase k is the vim "move up" binding.
+        if (focus === "sites" && sites[siteIndex]) setGrantKeySite(sites[siteIndex])
+        return
       case "L":
         // Link / view the selected site's local working copy (Phase 1).
         if (focus === "sites" && sites[siteIndex]) setLocalLinkSite(sites[siteIndex])
@@ -133,6 +139,11 @@ export function Browser({ rows }: { rows: number }) {
       case "N":
         // Server-wide DNS inventory — every site on the server.
         if (server) setDnsInventoryServer(server)
+        return
+      case "S":
+        // Connect sudo on the selected server (open a privileged session for the
+        // rest of the run — S for Sudo). Server-scoped — works from either pane.
+        if (server) setSudoConnectServer(server)
         return
       case "a":
         // Server actions (reboot / restart) are server-scoped, so only offered
@@ -185,6 +196,7 @@ export function Browser({ rows }: { rows: number }) {
           { key: "↑↓/jk", label: "select" },
           { key: "→/⏎", label: "view sites" },
           { key: "c", label: "new server" },
+          { key: "S", label: "connect sudo" },
           { key: "a", label: "server actions" },
           { key: "N", label: "DNS hosts" },
           { key: "h", label: "health" },
@@ -196,6 +208,7 @@ export function Browser({ rows }: { rows: number }) {
           { key: "d", label: "identify app" },
           { key: "n", label: "DNS host" },
           { key: "u", label: "change PHP" },
+          { key: "K", label: "grant key" },
           { key: "o", label: "open" },
           { key: "s", label: "ssh" },
           { key: "h", label: "health" },
@@ -205,7 +218,7 @@ export function Browser({ rows }: { rows: number }) {
     <box style={{ flexGrow: 1, flexDirection: "column" }}>
       <box style={{ flexGrow: 1, flexDirection: "row", padding: 1, gap: 1 }}>
         {/* Servers pane */}
-        <Panel title={` Servers (${sortedServers.length}) `} active={focus === "servers"} width={34}>
+        <Panel title={` Servers (${sortedServers.length}) `} active={focus === "servers"} width={44}>
           <List
             items={sortedServers}
             selectedIndex={serverIndex}
@@ -219,18 +232,20 @@ export function Browser({ rows }: { rows: number }) {
               return (
                 <>
                   <text content={statusDot(s.connection_status) + " "} fg={statusColor(s.connection_status)} style={{ flexShrink: 0 }} />
-                  <text content={truncate(s.name, 22)} fg={selected ? theme.text : count === 0 ? theme.warn : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+                  <text content={truncate(s.name, 30)} fg={selected ? theme.text : count === 0 ? theme.warn : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
                   {op && isServerOpInFlight(op) ? (
                     <box style={{ flexDirection: "row", flexShrink: 0 }}>
+                      <text content=" " style={{ flexShrink: 0 }} />
                       <Spinner color={selected ? theme.text : theme.brand} interval={120} />
-                      <text content={`${op.label} `} fg={selected ? theme.text : theme.warn} wrapMode="none" />
+                      <text content={op.label} fg={selected ? theme.text : theme.warn} wrapMode="none" />
                     </box>
                   ) : op?.status === "failed" ? (
-                    <text content="op! " fg={selected ? theme.text : theme.bad} style={{ flexShrink: 0 }} />
+                    <text content=" op!" fg={selected ? theme.text : theme.bad} style={{ flexShrink: 0 }} />
                   ) : (
-                    s.reboot_required && <text content="↻rbt " fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />
+                    s.reboot_required && <text content=" ↻ rbt" fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />
                   )}
-                  {s.upgrade_required && <text content="⬆upg " fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />}
+                  {s.upgrade_required && <text content=" ⬆ upg" fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />}
+                  {isSudoConnected(s.id) && <text content=" ● sudo" fg={selected ? theme.text : theme.good} style={{ flexShrink: 0 }} />}
                   {/* A server with no sites is a dead end (can't connect/SSH until it
                       has a site) — flag the 0 in amber so it's easy to spot. */}
                   <text content={" " + count} fg={selected ? theme.text : count === 0 ? theme.warn : theme.textFaint} style={{ flexShrink: 0 }} />

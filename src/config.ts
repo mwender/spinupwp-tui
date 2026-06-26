@@ -54,6 +54,11 @@ export interface AppConfig {
   // In-flight resumable jobs, keyed by job id. Hydrated at startup so a build
   // (e.g. a server provision) keeps its tracker across a quit/relaunch.
   jobs: Record<string, StoredJob>
+  // Per-server sudo user for privileged writes-over-SSH (e.g. dropping Spinup's
+  // machine key into a site user's authorized_keys), keyed by server id (string,
+  // since JSON object keys are strings). Only the username is stored — the sudo
+  // PASSWORD is held in-memory for the session and never written to disk.
+  sudoUsers: Record<string, { user: string }>
 }
 
 export interface ServerProviderRef {
@@ -116,6 +121,7 @@ export interface StoredConfig {
   providers?: StoredProviders
   serverProviders?: Record<string, ServerProviderRef>
   jobs?: Record<string, StoredJob>
+  sudoUsers?: Record<string, { user: string }>
 }
 
 export function configDir(): string {
@@ -125,6 +131,12 @@ export function configDir(): string {
 
 export function configPath(): string {
   return join(configDir(), "config.json")
+}
+
+// Where Spinup's dedicated machine keypair (spinup-tui[.pub]) lives. Generated
+// lazily on first privileged use (see lib/ssh.ts ensureSpinupKey).
+export function keysDir(): string {
+  return join(configDir(), "keys")
 }
 
 function readStoredConfig(): StoredConfig {
@@ -195,6 +207,7 @@ export function loadConfig(): AppConfig {
     providerConnections,
     serverProviders: stored.serverProviders ?? {},
     jobs: stored.jobs ?? {},
+    sudoUsers: stored.sudoUsers ?? {},
   }
 }
 

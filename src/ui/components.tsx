@@ -254,13 +254,25 @@ export function SecretInput({
     if (cleaned) setValue(valueRef.current + cleaned)
   })
 
+  // The field always keeps a visible bgAlt box (same as the regular text inputs);
+  // focus is carried by the green ❯ marker + caret, not by dimming the box.
   const hasValue = value.length > 0
-  const content = hasValue
-    ? MASK.repeat(value.length) + (focused ? "▏" : "")
-    : (focused ? "▏ " : "") + (placeholder ?? "")
   return (
-    <box style={{ height: 1, flexDirection: "row", backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1 }}>
-      <text content={content} fg={hasValue ? theme.text : theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+    <box
+      style={{
+        height: 1,
+        flexDirection: "row",
+        backgroundColor: theme.bgAlt,
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <text content={focused ? "❯ " : "  "} fg={focused ? theme.brand : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+      {hasValue ? <text content={MASK.repeat(value.length)} fg={theme.text} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+      {focused ? <text content="▏" fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+      {!hasValue ? (
+        <text content={placeholder ?? ""} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+      ) : null}
     </box>
   )
 }

@@ -12,6 +12,24 @@ versions; such changes are called out here.
 ## [Unreleased]
 
 ### Added
+- **Privileged writes over SSH: connect sudo (`S`) + grant Spinup's SSH key (`K`).**
+  The first things Spinup writes that the SpinupWP API simply can't do (it has no
+  SSH-key or sudo-user surface). Press **`S`** on a server to **connect sudo** for the
+  session: enter the SpinupWP sudo user + its sudo password once, Spinup validates
+  them against the live server, and then holds them **in memory for the session
+  only** (the username persists to config; the **password is never written to
+  disk**). A connected server shows a green **● sudo** on its row; press `S` again to
+  disconnect. With sudo connected, press **`K`** on a site to drop Spinup's
+  **dedicated machine key**
+  into that site user's `authorized_keys` over sudo — an ed25519 identity generated
+  once into the config dir (`keys/spinup-tui`), commented `spinup-tui@<your-host>`,
+  and deliberately **never added to your SpinupWP account** so SpinupWP's
+  `authorized_keys` reconciliation leaves it untouched. The remote script is
+  **idempotent** (`grep -qxF` — re-running never duplicates the line), and a confirm
+  overlay shows the exact remote command before anything fires. v1 is single-site,
+  single-key; a per-run key picker (your personal key / the machine key) and a bulk
+  "every site on the server" pass are next. See
+  `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
 - **Create a new server (`c`).** Press `c` on a server in the Servers tab to
   provision a new one, pre-filled to **match** the selected server's provider,
   region, and size. The form prices the build from the provider's catalog
