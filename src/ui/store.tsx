@@ -282,10 +282,11 @@ interface StoreValue extends DataState {
   // In-flight (and just-settled) key grants, keyed by site id. Tracked in the
   // store so the grant survives closing the modal (mirrors the other writes).
   keyGrants: Map<number, KeyGrantProgress>
-  // Grant the given public keys (machine and/or personal) to the site user's
-  // authorized_keys via the server's sudo user. Reads the sudo user + (in-memory)
-  // password from the store; the overlay resolves which key lines to pass.
-  startGrantKey: (site: Site, pubkeys: string[]) => void
+  // Grant the given public keys (machine and/or personal) to one or many sites'
+  // authorized_keys via the server's sudo user (all sites must share a server).
+  // Reads the sudo user + (in-memory) password from the store; per-site progress
+  // lands in keyGrants. The overlay resolves which key lines and which sites.
+  startGrantKey: (sites: Site[], pubkeys: string[]) => void
   // The key bodies the user last chose to grant (pre-selected next time), persisted.
   preferredGrantKeys: string[]
   setPreferredGrantKeys: (ids: string[]) => void
@@ -1117,32 +1118,57 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  // Grant the keys to one or many sites (all on the same server). Each site's
+  // progress is tracked independently in keyGrants, so the overlay can show a
+  // per-site readout; a bounded pool keeps the SSH fan-out modest (the persistent
+  // ControlMaster connection makes the per-site probes cheap).
   const startGrantKey = useCallback(
-    (site: Site, pubkeys: string[]) => {
-      const existing = keyGrants.get(site.id)
-      if (existing && existing.status !== "done" && existing.status !== "error") return // already running
-      const server = servers.find((s) => s.id === site.server_id)
-      if (!server) return setGrant(site.id, { status: "error", error: "Couldn't find the site's server." })
+    (sites: Site[], pubkeys: string[]) => {
+      if (sites.length === 0) return
+      if (pubkeys.length === 0) {
+        for (const s of sites) setGrant(s.id, { status: "error", error: "No keys selected to grant." })
+        return
+      }
+      const server = servers.find((s) => s.id === sites[0].server_id)
+      if (!server) {
+        for (const s of sites) setGrant(s.id, { status: "error", error: "Couldn't find the site's server." })
+        return
+      }
       const sudoUser = sudoUsers.get(server.id)
-      if (!sudoUser) return setGrant(site.id, { status: "error", error: "No sudo user set for this server." })
-      if (pubkeys.length === 0) return setGrant(site.id, { status: "error", error: "No keys selected to grant." })
+      if (!sudoUser) {
+        for (const s of sites) setGrant(s.id, { status: "error", error: "No sudo user set for this server." })
+        return
+      }
       const sudoPassword = sudoPwRef.current.get(server.id) ?? ""
 
-      const run = async () => {
-        setGrant(site.id, { status: "granting" })
-        const res = await grantSiteSshKey(server, site, { sudoUser, sudoPassword, pubkeys })
-        if (res.ok) {
-          setGrant(site.id, { status: "done", target: res.target })
-        } else {
-          // A rejected/stale password means the server is no longer truly connected —
-          // disconnect it so the ● disappears and the user reconnects (re-validates).
-          if (/password was rejected|password is required|can't run sudo|couldn't connect/i.test(res.error)) {
-            disconnectSudo(server.id)
+      // Skip sites already mid-grant; queue the rest (so the overlay sees them
+      // immediately) and drain with a small worker pool.
+      const queue = sites.filter((s) => {
+        const ex = keyGrants.get(s.id)
+        return !(ex && ex.status !== "done" && ex.status !== "error")
+      })
+      for (const s of queue) setGrant(s.id, { status: "queued" })
+
+      const CONCURRENCY = 4
+      let cursor = 0
+      const worker = async () => {
+        while (cursor < queue.length) {
+          const s = queue[cursor++]
+          setGrant(s.id, { status: "granting" })
+          const res = await grantSiteSshKey(server, s, { sudoUser, sudoPassword, pubkeys })
+          if (res.ok) {
+            setGrant(s.id, { status: "done", target: res.target })
+          } else {
+            // A rejected/stale password means the server is no longer truly connected
+            // — disconnect it so the ● disappears and the user reconnects.
+            if (/password was rejected|password is required|can't run sudo|couldn't connect/i.test(res.error)) {
+              disconnectSudo(server.id)
+            }
+            setGrant(s.id, { status: "error", error: res.error, target: res.target })
           }
-          setGrant(site.id, { status: "error", error: res.error, target: res.target })
         }
       }
-      void run()
+      for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i++) void worker()
     },
     [keyGrants, servers, sudoUsers, disconnectSudo],
   )

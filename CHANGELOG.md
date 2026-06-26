@@ -29,8 +29,10 @@ versions; such changes are called out here.
   overlay shows the exact remote command before anything fires. **`K` shows a key
   picker:** choose any of **your personal keys** (discovered from `~/.ssh/*.pub` and
   the ssh-agent — so you can SSH/SFTP as yourself) and/or the **machine key**, deploy
-  several at once, and your selection is remembered for next time. A bulk "every site
-  on the server" pass is next. See `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
+  several at once, and your selection is remembered for next time. **Choose the scope**
+  too: just this site, or **every site on the server** in one pass (the same idempotent
+  append runs on each, with a per-site progress readout and a retry for any that fail).
+  See `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
 - **Create a new server (`c`).** Press `c` on a server in the Servers tab to
   provision a new one, pre-filled to **match** the selected server's provider,
   region, and size. The form prices the build from the provider's catalog

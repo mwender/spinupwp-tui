@@ -1,11 +1,11 @@
 // Grant SSH key overlay — a privileged write-over-SSH on a sudo-connected server.
 //
-// Opened with `K` on a selected site (Browser). Pick which key(s) to deploy into
-// the site user's authorized_keys — your PERSONAL key(s) (so you can SSH/SFTP as
-// yourself) and/or Spinup's dedicated `spinup-tui` MACHINE key (for unattended
-// automation) — then confirm and grant via the server's SUDO session. Requires sudo
-// to be connected first (press `S` on the server). The grant runs in the store
-// (`startGrantKey`), so closing the modal doesn't abandon it.
+// Opened with `K` on a selected site (Browser). Pick which key(s) to deploy — your
+// PERSONAL key(s) (so you can SSH/SFTP as yourself) and/or Spinup's dedicated
+// `spinup-tui` MACHINE key (for unattended automation) — choose the scope (just
+// this site, or every site on the server), confirm, and grant via the server's
+// SUDO session. Requires sudo to be connected first (press `S` on the server). The
+// grant runs in the store (`startGrantKey`), so closing the modal doesn't abandon it.
 // See docs/2026-06-26_sudo-ssh-key-provisioning-spec.md.
 
 import { useEffect, useState } from "react"
@@ -17,8 +17,9 @@ import { StatusBar } from "../StatusBar.tsx"
 import { useStore, isKeyGrantInFlight } from "../store.tsx"
 import { ensureSpinupKey, listPersonalKeys, buildGrantScript, keyBody, type GrantableKey } from "../../lib/ssh.ts"
 import { moveSelection } from "../List.tsx"
+import type { Site } from "../../api/types.ts"
 
-type Phase = "disconnected" | "loading" | "pick" | "confirm" | "running" | "done" | "error"
+type Phase = "disconnected" | "loading" | "pick" | "scope" | "confirm" | "running" | "done" | "error"
 
 export function GrantKey() {
   const store = useStore()
@@ -26,6 +27,7 @@ export function GrantKey() {
     grantKeySite: site,
     setGrantKeySite,
     serverById,
+    sitesForServer,
     keyGrants,
     startGrantKey,
     clearGrantKey,
@@ -40,6 +42,11 @@ export function GrantKey() {
   const connected = server ? isSudoConnected(server.id) : false
   const sudoUser = server ? sudoUserFor(server.id) : undefined
 
+  // Sites on this server that can receive a key (have a site_user). The anchor
+  // site is always a valid single target.
+  const serverSites = server ? sitesForServer(server.id).filter((s) => s.site_user) : []
+  const canScope = serverSites.length > 1
+
   const [phase, setPhase] = useState<Phase>(() => {
     if (site && keyGrants.has(site.id)) return "running"
     return connected ? "loading" : "disconnected"
@@ -48,9 +55,10 @@ export function GrantKey() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [index, setIndex] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [scope, setScope] = useState<"site" | "server">("site")
+  const [scopeIndex, setScopeIndex] = useState(0)
 
   // Resolve the grantable keys once (machine key + discovered personal keys).
-  // Personal keys first (the daily-driver default for single-site), machine last.
   useEffect(() => {
     if (phase !== "loading") return
     let cancelled = false
@@ -60,9 +68,6 @@ export function GrantKey() {
         const machineKey: GrantableKey = { id: keyBody(machine.pub), kind: "machine", label: machine.comment, line: machine.pub, source: "spinup" }
         const list = [...personal.filter((p) => p.id !== machineKey.id), machineKey]
         setKeys(list)
-        // Pre-select the keys remembered from last time (∩ what's available now);
-        // first run defaults to the top personal key (ed25519-first), or the machine
-        // key if no personal keys were found on this machine.
         const remembered = list.filter((k) => preferredGrantKeys.includes(k.id)).map((k) => k.id)
         setSelected(new Set(remembered.length > 0 ? remembered : [personal[0]?.id ?? machineKey.id]))
         setPhase("pick")
@@ -79,26 +84,27 @@ export function GrantKey() {
     }
   }, [phase])
 
-  const progress = site ? keyGrants.get(site.id) : undefined
-  const dp: Phase =
-    phase !== "running"
-      ? phase
-      : !progress || isKeyGrantInFlight(progress)
-        ? "running"
-        : progress.status === "done"
-          ? "done"
-          : "error"
-
   const selectedKeys = keys.filter((k) => selected.has(k.id))
+  const targetSites: Site[] = scope === "server" ? serverSites : site ? [site] : []
+
+  // Batch progress over the target sites.
+  const targetProgress = targetSites.map((s) => keyGrants.get(s.id))
+  const doneCount = targetProgress.filter((p) => p?.status === "done").length
+  const failedSites = targetSites.filter((s) => keyGrants.get(s.id)?.status === "error")
+  const settledCount = doneCount + failedSites.length
+  const allSettled = targetSites.length > 0 && settledCount === targetSites.length
+
+  const dp: Phase = phase !== "running" ? phase : allSettled ? "done" : "running"
 
   const close = () => {
-    if (site && progress && !isKeyGrantInFlight(progress)) clearGrantKey(site.id)
+    // Drop settled markers for the targets so they don't linger after close.
+    if (phase === "running" && allSettled) for (const s of targetSites) clearGrantKey(s.id)
     setGrantKeySite(null)
   }
 
-  const fire = () => {
-    if (site && selectedKeys.length > 0) {
-      startGrantKey(site, selectedKeys.map((k) => k.line))
+  const fire = (sites: Site[]) => {
+    if (sites.length > 0 && selectedKeys.length > 0) {
+      startGrantKey(sites, selectedKeys.map((k) => k.line))
       setPreferredGrantKeys(selectedKeys.map((k) => k.id)) // remember the choice
     }
     setPhase("running")
@@ -137,27 +143,48 @@ export function GrantKey() {
         case "return":
         case "right":
         case "l":
-          if (selectedKeys.length > 0) setPhase("confirm")
-          return
+          if (selectedKeys.length === 0) return
+          return setPhase(canScope ? "scope" : "confirm")
+      }
+      return
+    }
+
+    if (dp === "scope") {
+      switch (name) {
+        case "up":
+        case "k":
+          setScopeIndex(0)
+          return setScope("site")
+        case "down":
+        case "j":
+          setScopeIndex(1)
+          return setScope("server")
+        case "return":
+        case "right":
+        case "l":
+          return setPhase("confirm")
+        case "left":
+        case "h":
+          return setPhase("pick")
       }
       return
     }
 
     if (dp === "confirm") {
-      if (name === "y") return fire()
-      if (name === "left" || name === "h") return setPhase("pick")
+      if (name === "y") return fire(targetSites)
+      if (name === "left" || name === "h") return setPhase(canScope ? "scope" : "pick")
+      return
+    }
+
+    if (dp === "done") {
+      if (name === "r" && failedSites.length > 0) return fire(failedSites)
       return
     }
 
     if (dp === "error") {
       if (name === "r") {
-        if (loadError) {
-          setLoadError(null)
-          return setPhase("loading")
-        }
-        if (site) clearGrantKey(site.id)
-        if (!(server && isSudoConnected(server.id))) return setPhase("disconnected")
-        return setPhase(keys.length > 0 ? "pick" : "loading")
+        setLoadError(null)
+        return setPhase("loading")
       }
       return
     }
@@ -181,16 +208,7 @@ export function GrantKey() {
       }}
     >
       {/* Title bar */}
-      <box
-        style={{
-          flexDirection: "row",
-          height: 1,
-          backgroundColor: theme.bgAlt,
-          paddingLeft: 1,
-          paddingRight: 1,
-          alignItems: "center",
-        }}
-      >
+      <box style={{ flexDirection: "row", height: 1, backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1, alignItems: "center" }}>
         <text content="🔑 Grant SSH key  " fg={theme.brand} style={{ flexShrink: 0 }} />
         <text content={truncate(site.domain, 40)} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
         <box style={{ flexGrow: 1 }} />
@@ -239,11 +257,6 @@ export function GrantKey() {
       return (
         <Panel title=" Choose keys to grant " active>
           <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
-            <box style={{ flexDirection: "row" }}>
-              <text content="Add to " fg={theme.textDim} wrapMode="none" />
-              <text content={`${siteUser}@${site!.domain}`} fg={theme.accent} wrapMode="none" />
-            </box>
-            <box style={{ height: 1 }} />
             {keys.map((k, i) => {
               const sel = i === index
               const checked = selected.has(k.id)
@@ -265,17 +278,43 @@ export function GrantKey() {
       )
     }
 
+    if (dp === "scope") {
+      const opts = [
+        { label: "Just this site", sub: site!.domain },
+        { label: `All ${serverSites.length} sites on this server`, sub: server?.name ?? "" },
+      ]
+      return (
+        <Panel title=" Grant to " active>
+          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
+            {opts.map((o, i) => {
+              const sel = i === scopeIndex
+              return (
+                <box key={i} style={{ flexDirection: "row", height: 1, backgroundColor: sel ? theme.selectedBg : undefined }}>
+                  <text content={(sel ? "❯ " : "  ") + (sel ? "(•) " : "( ) ")} fg={sel ? theme.good : theme.textDim} style={{ flexShrink: 0 }} />
+                  <text content={o.label} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+                  <text content={truncate(o.sub, 26) + " "} fg={sel ? theme.text : theme.textFaint} style={{ flexShrink: 0 }} wrapMode="none" />
+                </box>
+              )
+            })}
+            <box style={{ height: 1 }} />
+            <text content="All sites: the same idempotent append runs on each — keys" fg={theme.textFaint} wrapMode="none" />
+            <text content="already present are skipped." fg={theme.textFaint} wrapMode="none" />
+          </box>
+        </Panel>
+      )
+    }
+
     if (dp === "confirm") {
-      // Show the exact remote script with abbreviated key reprs (the full base64 is
-      // long); the labels make clear which keys land.
+      const n = targetSites.length
+      const single = n === 1
       const displayLines = selectedKeys.map((k) => `…${k.kind === "machine" ? "spinup-tui" : "ed25519"}… ${k.label}`)
-      const script = buildGrantScript(siteUser, site!.domain, displayLines)
+      const script = single ? buildGrantScript(siteUser, targetSites[0].domain, displayLines) : null
       return (
         <Panel title=" Confirm — privileged write " active>
           <box style={{ flexDirection: "column", width: 72, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
               <text content={`Add ${selectedKeys.length} key${selectedKeys.length === 1 ? "" : "s"} to `} fg={theme.text} wrapMode="none" />
-              <text content={`${siteUser}@${site!.domain}`} fg={theme.accent} wrapMode="none" />
+              <text content={single ? `${siteUser}@${targetSites[0].domain}` : `${n} sites on ${server?.name ?? ""}`} fg={theme.accent} wrapMode="none" />
             </box>
             <box style={{ flexDirection: "row" }}>
               <text content="via sudo as " fg={theme.textDim} wrapMode="none" />
@@ -289,12 +328,18 @@ export function GrantKey() {
               </box>
             ))}
             <box style={{ height: 1 }} />
-            <text content="Runs on the server (idempotent — re-running is a no-op):" fg={theme.textFaint} wrapMode="none" />
-            <box style={{ flexDirection: "column", backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1 }}>
-              {script.split("\n").map((line, i) => (
-                <text key={i} content={line} fg={theme.textDim} wrapMode="none" />
-              ))}
-            </box>
+            {single ? (
+              <>
+                <text content="Runs on the server (idempotent — re-running is a no-op):" fg={theme.textFaint} wrapMode="none" />
+                <box style={{ flexDirection: "column", backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1 }}>
+                  {script!.split("\n").map((line, i) => (
+                    <text key={i} content={line} fg={theme.textDim} wrapMode="none" />
+                  ))}
+                </box>
+              </>
+            ) : (
+              <text content={`The same idempotent append runs on each of the ${n} sites.`} fg={theme.textFaint} wrapMode="none" />
+            )}
             <box style={{ height: 1 }} />
             <text content="This is Spinup's most powerful write. Press y to continue." fg={theme.warn} wrapMode="none" />
             <text content="y confirm · ← back · Esc cancel" fg={theme.textFaint} wrapMode="none" />
@@ -304,39 +349,58 @@ export function GrantKey() {
     }
 
     if (dp === "running") {
+      const n = targetSites.length
       return (
-        <box style={{ flexDirection: "column", alignItems: "center" }}>
-          <box style={{ flexDirection: "row" }}>
-            <Spinner />
-            <text content="  Granting over SSH…" fg={theme.textDim} />
-          </box>
-          <box style={{ height: 1 }} />
-          <text content="You can press Esc — it keeps running in the background." fg={theme.textFaint} wrapMode="none" />
-        </box>
-      )
-    }
-
-    if (dp === "done") {
-      return (
-        <Panel title=" Done " active>
-          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
+        <Panel title=" Granting " active>
+          <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
-              <text content="✓ Granted on " fg={theme.good} wrapMode="none" />
-              <text content={progress?.target ?? `${siteUser}@${site!.domain}`} fg={theme.accent} wrapMode="none" />
+              <Spinner />
+              <text content={`  Granting to ${n} site${n === 1 ? "" : "s"} — ${settledCount}/${n} done`} fg={theme.textDim} wrapMode="none" />
             </box>
+            {failedSites.length > 0 && (
+              <text content={`${doneCount} ok · ${failedSites.length} failed so far`} fg={theme.textFaint} wrapMode="none" />
+            )}
             <box style={{ height: 1 }} />
-            <text content="The selected key(s) are now in the site's authorized_keys." fg={theme.textDim} wrapMode="none" />
-            <text content="Esc to close." fg={theme.textFaint} wrapMode="none" />
+            <text content="You can press Esc — it keeps running in the background." fg={theme.textFaint} wrapMode="none" />
           </box>
         </Panel>
       )
     }
 
-    // error
+    if (dp === "done") {
+      const n = targetSites.length
+      return (
+        <Panel title={failedSites.length > 0 ? " Done — with errors " : " Done "} active>
+          <box style={{ flexDirection: "column", width: 70, paddingTop: 1, paddingBottom: 1 }}>
+            <box style={{ flexDirection: "row" }}>
+              <text content={failedSites.length > 0 ? "⚠ " : "✓ "} fg={failedSites.length > 0 ? theme.warn : theme.good} />
+              <text content={`Granted on ${doneCount} of ${n} site${n === 1 ? "" : "s"}`} fg={theme.text} wrapMode="none" />
+            </box>
+            {failedSites.length > 0 && (
+              <>
+                <box style={{ height: 1 }} />
+                <text content="Failed:" fg={theme.bad} wrapMode="none" />
+                {failedSites.slice(0, 6).map((s) => (
+                  <box key={s.id} style={{ flexDirection: "row" }}>
+                    <text content={`  ✕ ${truncate(s.domain, 30)}  `} fg={theme.bad} wrapMode="none" />
+                    <text content={truncate(keyGrants.get(s.id)?.error ?? "", 30)} fg={theme.textFaint} wrapMode="none" />
+                  </box>
+                ))}
+                {failedSites.length > 6 && <text content={`  …${failedSites.length - 6} more`} fg={theme.textFaint} wrapMode="none" />}
+              </>
+            )}
+            <box style={{ height: 1 }} />
+            <text content={failedSites.length > 0 ? "r retry the failed · Esc close" : "Esc to close"} fg={theme.textFaint} wrapMode="none" />
+          </box>
+        </Panel>
+      )
+    }
+
+    // error (loading keys failed)
     return (
       <Panel title=" Grant failed " active>
         <box style={{ flexDirection: "column", width: 72, paddingTop: 1, paddingBottom: 1 }}>
-          <text content={`✕ ${progress?.error ?? loadError ?? "Something went wrong."}`} fg={theme.bad} wrapMode="none" />
+          <text content={`✕ ${loadError ?? "Something went wrong."}`} fg={theme.bad} wrapMode="none" />
           <box style={{ height: 1 }} />
           <text content="r retry · Esc close" fg={theme.textFaint} wrapMode="none" />
         </box>
@@ -355,7 +419,14 @@ export function GrantKey() {
         return [
           { key: "↑↓", label: "key" },
           { key: "space", label: "toggle" },
+          { key: "⏎", label: canScope ? "scope" : "next" },
+          { key: "esc", label: "cancel" },
+        ]
+      case "scope":
+        return [
+          { key: "↑↓", label: "scope" },
           { key: "⏎", label: "next" },
+          { key: "←", label: "back" },
           { key: "esc", label: "cancel" },
         ]
       case "confirm":
@@ -364,6 +435,13 @@ export function GrantKey() {
           { key: "←", label: "back" },
           { key: "esc", label: "cancel" },
         ]
+      case "done":
+        return failedSites.length > 0
+          ? [
+              { key: "r", label: "retry failed" },
+              { key: "esc", label: "close" },
+            ]
+          : [{ key: "esc", label: "close" }]
       case "error":
         return [
           { key: "r", label: "retry" },
