@@ -4,12 +4,12 @@
 // index.php) via the store's resumable VanityJob; this view is just the window
 // onto it. Confirm gate up front (real production DNS + site writes).
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { theme } from "../../lib/theme.ts"
-import { Panel, Centered, Field, Steps, type StepRow } from "../components.tsx"
+import { Panel, Centered, Field, Spinner, Steps, type StepRow } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
-import { useStore, type VanityStep } from "../store.tsx"
+import { useStore, isKeyGrantInFlight, type VanityStep } from "../store.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { siteSftpUrl } from "../../lib/spinupweb.ts"
 import { deriveSiteUser } from "../../lib/vanitySite.ts"
@@ -26,10 +26,27 @@ const STEP_LABELS: { step: VanityStep; label: string }[] = [
 const STEP_ORDER: VanityStep[] = STEP_LABELS.map((s) => s.step)
 
 export function VanityNewSite() {
-  const { vanityServer: server, setVanityServer, vanityJob: job, startVanity, vanitySshKeyDone, vanitySkipSsl, vanityKeepWaiting, vanityRetry, clearVanity, accountSlug, setInputMode } = useStore()
+  const { vanityServer: server, setVanityServer, vanityJob: job, startVanity, vanitySshKeyDone, vanitySkipSsl, vanityKeepWaiting, vanityRetry, clearVanity, accountSlug, setInputMode, sites, isSudoConnected, keyGrants, startGrantRemembered, preferredGrantKeys, clearGrantKey, sudoConnectServer, setSudoConnectServer } = useStore()
 
   const [siteUser, setSiteUser] = useState(() => (server ? deriveSiteUser(server.name) : ""))
   const [editingUser, setEditingUser] = useState(false)
+
+  // Auto-grant context for the SSH-key step: the just-created site, whether sudo is
+  // connected on the server, and any in-flight/settled grant for that site.
+  const newSite = job?.siteId ? sites.find((s) => s.id === job.siteId) : undefined
+  const sudoOn = server ? isSudoConnected(server.id) : false
+  const grant = newSite ? keyGrants.get(newSite.id) : undefined
+  const granting = !!grant && isKeyGrantInFlight(grant)
+  const canAutoGrant = sudoOn && preferredGrantKeys.length > 0 && !!newSite
+
+  // Once the auto-grant lands the key on the new site, advance to publish — no
+  // SpinupWP round-trip needed (the seed step can now SSH in).
+  useEffect(() => {
+    if (job?.step === "sshkey" && job.siteId && keyGrants.get(job.siteId)?.status === "done") {
+      clearGrantKey(job.siteId)
+      vanitySshKeyDone()
+    }
+  }, [job, keyGrants, vanitySshKeyDone, clearGrantKey])
 
   const close = () => {
     setInputMode(false)
@@ -46,7 +63,12 @@ export function VanityNewSite() {
   }
 
   useKeyboard((key) => {
-    const name = key.name ?? ""
+    // While the connect-sudo overlay is layered on top, let it own the keyboard.
+    if (sudoConnectServer) return
+    // Normalize shift+letter to uppercase so `S` (connect sudo) matches, like the
+    // server browser does.
+    const raw = key.name ?? ""
+    const name = key.shift && raw.length === 1 ? raw.toUpperCase() : raw
     if (editingUser) {
       if (name === "escape" || name === "return") {
         setEditingUser(false)
@@ -57,6 +79,9 @@ export function VanityNewSite() {
 
     // No job yet → the confirm screen.
     if (!job) {
+      // S — connect sudo on this server now (so the key auto-grants later). Opens
+      // the Connect-sudo overlay layered on top; only offered when not connected.
+      if (name === "S" && server && !sudoOn) return setSudoConnectServer(server)
       if (name === "e") {
         setEditingUser(true)
         setInputMode(true)
@@ -76,6 +101,13 @@ export function VanityNewSite() {
       if (name === "w") return vanityKeepWaiting()
     }
     if (job.step === "sshkey") {
+      // S — connect sudo here if it isn't yet (then `g` becomes available).
+      if (name === "S" && server && !sudoOn) return setSudoConnectServer(server)
+      // g — grant the saved keys via the connected sudo session (then auto-publish).
+      // Available once sudo is connected and you have a saved key choice; retries on error.
+      if (name === "g" && canAutoGrant && newSite && (!grant || grant.status === "error")) {
+        return startGrantRemembered([newSite])
+      }
       if (name === "o") {
         if (accountSlug && job.siteId) openUrl(siteSftpUrl(job.siteId, accountSlug))
         return
@@ -126,8 +158,11 @@ export function VanityNewSite() {
       let state: StepRow["state"] = "pending"
       if (failed === step) state = "failed"
       else if (cur === "done") state = "done"
-      else if (cur && step === cur) state = "active"
-      else if (cur && STEP_ORDER.indexOf(step) < STEP_ORDER.indexOf(cur)) state = "done"
+      else if (cur && step === cur) {
+        // The SSH-key step waits on the user (unless a grant is actively running),
+        // so mark it "waiting" rather than spinning like the automated steps.
+        state = step === "sshkey" && !granting ? "waiting" : "active"
+      } else if (cur && STEP_ORDER.indexOf(step) < STEP_ORDER.indexOf(cur)) state = "done"
       return { label, state }
     })
   }
@@ -162,9 +197,16 @@ export function VanityNewSite() {
             </box>
             <box style={{ height: 1 }} />
             <text content="We'll write an A record (Route 53), create the site, enable HTTPS," fg={theme.textFaint} wrapMode="none" />
-            <text content="hand you off to add your SSH key, then publish the page." fg={theme.textFaint} wrapMode="none" />
+            <text content="add your SSH key, then publish the page." fg={theme.textFaint} wrapMode="none" />
+            {!sudoOn && (
+              <>
+                <box style={{ height: 1 }} />
+                <text content="○ Sudo not connected — press S to connect now" fg={theme.warn} wrapMode="none" />
+                <text content="  so Spinup can add your SSH key for you (no SpinupWP step)." fg={theme.textFaint} wrapMode="none" />
+              </>
+            )}
             <box style={{ height: 1 }} />
-            <text content={editingUser ? "⏎ done editing" : "e edit user · y create · q cancel"} fg={theme.textFaint} wrapMode="none" />
+            <text content={editingUser ? "⏎ done editing" : sudoOn ? "e edit user · y create · q cancel" : "S connect sudo · e edit user · y create · q cancel"} fg={theme.textFaint} wrapMode="none" />
           </box>
         </Panel>
       )
@@ -202,18 +244,52 @@ export function VanityNewSite() {
       )
     }
 
-    // SSH-key handoff (manual park).
+    // SSH-key handoff. This step WAITS on you (it won't auto-fire), so the primary
+    // action is a bright ❯ call-to-action; secondary options stay faint below.
     if (job.step === "sshkey") {
+      const grantFailed = grant?.status === "error"
       return (
-        <Panel title=" Add your SSH key " active>
+        <Panel title=" Add your SSH key — your turn " active>
           <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>
             <Steps rows={stepRows()} />
             <box style={{ height: 1 }} />
             <text content="The site exists, but Spinup can't SSH in until your key is on the" fg={theme.textDim} wrapMode="none" />
-            <text content="site user. Add it in SpinupWP (the site's SFTP & SSH → Site User)," fg={theme.textDim} wrapMode="none" />
-            <text content="then come back." fg={theme.textDim} wrapMode="none" />
+            <text content="site user." fg={theme.textDim} wrapMode="none" />
             <box style={{ height: 1 }} />
-            <text content={accountSlug && job.siteId ? "o open SpinupWP · ⏎ I've added it (publish) · Esc later" : "⏎ I've added it (publish) · Esc later"} fg={theme.textFaint} wrapMode="none" />
+            {granting ? (
+              <box style={{ flexDirection: "row" }}>
+                <Spinner />
+                <text content="  Granting your saved key(s) via sudo…" fg={theme.textDim} wrapMode="none" />
+              </box>
+            ) : grantFailed ? (
+              <>
+                <text content={`✕ ${grant?.error ?? "Grant failed."}`} fg={theme.bad} wrapMode="none" />
+                <box style={{ height: 1 }} />
+                <text content="❯ Press g to try the grant again" fg={theme.brand} wrapMode="none" />
+                <box style={{ height: 1 }} />
+                <text content="or  o SpinupWP · ⏎ I added it manually · Esc later" fg={theme.textFaint} wrapMode="none" />
+              </>
+            ) : canAutoGrant ? (
+              <>
+                <box style={{ flexDirection: "row" }}>
+                  <text content="● sudo connected — " fg={theme.good} wrapMode="none" />
+                  <text content="ready to add your saved key(s)." fg={theme.textDim} wrapMode="none" />
+                </box>
+                <box style={{ height: 1 }} />
+                <text content="❯ Press g to grant your key(s) & publish" fg={theme.brand} wrapMode="none" />
+                <box style={{ height: 1 }} />
+                <text content="or  o SpinupWP · ⏎ I added it manually · Esc later" fg={theme.textFaint} wrapMode="none" />
+              </>
+            ) : (
+              <>
+                <text content="Connect sudo and Spinup adds your key for you — or add it in" fg={theme.textDim} wrapMode="none" />
+                <text content="SpinupWP (the site's SFTP & SSH → Site User), then come back." fg={theme.textFaint} wrapMode="none" />
+                <box style={{ height: 1 }} />
+                <text content="❯ Press S to connect sudo" fg={theme.brand} wrapMode="none" />
+                <box style={{ height: 1 }} />
+                <text content={accountSlug && job.siteId ? "or  o SpinupWP · ⏎ I've added it · Esc later" : "or  ⏎ I've added it · Esc later"} fg={theme.textFaint} wrapMode="none" />
+              </>
+            )}
           </box>
         </Panel>
       )
@@ -250,12 +326,17 @@ export function VanityNewSite() {
 
   function hints() {
     if (!job) {
-      return editingUser ? [{ key: "⏎", label: "done" }] : [{ key: "e", label: "edit user" }, { key: "y", label: "create" }, { key: "q", label: "cancel" }]
+      if (editingUser) return [{ key: "⏎", label: "done" }]
+      return [...(sudoOn ? [] : [{ key: "S", label: "connect sudo" }]), { key: "e", label: "edit user" }, { key: "y", label: "create" }, { key: "q", label: "cancel" }]
     }
     if (job.step === "done") return [{ key: "o", label: "open site" }, { key: "esc", label: "close" }]
     if (job.step === "error") return [{ key: "r", label: "retry" }, { key: "x", label: "discard" }, { key: "esc", label: "later" }]
     if (job.step === "sshkey") {
-      return [...(accountSlug && job.siteId ? [{ key: "o", label: "SpinupWP" }] : []), { key: "⏎", label: "added it" }, { key: "esc", label: "later" }]
+      const granting = grant && isKeyGrantInFlight(grant)
+      if (granting) return [{ key: "esc", label: "background" }]
+      const grantHint = canAutoGrant || grant?.status === "error" ? [{ key: "g", label: "grant my key(s)" }] : []
+      const connectHint = !sudoOn ? [{ key: "S", label: "connect sudo" }] : []
+      return [...grantHint, ...connectHint, ...(accountSlug && job.siteId ? [{ key: "o", label: "SpinupWP" }] : []), { key: "⏎", label: "added it" }, { key: "esc", label: "later" }]
     }
     if (job.step === "propagate" && job.propagateTimedOut) {
       return [{ key: "s", label: "skip SSL" }, { key: "w", label: "wait" }, { key: "esc", label: "later" }]

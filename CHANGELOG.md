@@ -32,7 +32,10 @@ versions; such changes are called out here.
   several at once, and your selection is remembered for next time. **Choose the scope**
   too: just this site, or **every site on the server** in one pass (the same idempotent
   append runs on each, with a per-site progress readout and a retry for any that fail).
-  See `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
+  And when you **connect a new server (vanity flow)**, you can connect sudo right from
+  the flow (`S`, same as on a server); with sudo connected, the SSH-key step grants your
+  saved keys there (`g`) and publishes — no more manual "add your key in SpinupWP"
+  round-trip. See `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
 - **Create a new server (`c`).** Press `c` on a server in the Servers tab to
   provision a new one, pre-filled to **match** the selected server's provider,
   region, and size. The form prices the build from the provider's catalog

@@ -115,7 +115,9 @@ export function SudoConnect() {
         height: "100%",
         flexDirection: "column",
         backgroundColor: theme.bg,
-        zIndex: 210,
+        // Above every other overlay (incl. the vanity build at 215) so it can be
+        // layered on top — e.g. "connect sudo" from inside the vanity flow.
+        zIndex: 230,
       }}
     >
       {/* Title bar */}

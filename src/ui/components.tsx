@@ -55,9 +55,10 @@ export function Sparkle({ color = theme.brand, interval = 360 }: { color?: strin
 
 // A vertical checklist of stages that fills in as work progresses: completed
 // rows get a green ✓, the in-flight row spins, not-yet-reached rows are faint
-// ○, and a failed row gets a red ✕. Used by the DB backup/sync overlays so the
-// whole operation reads as one building stack rather than a swapping spinner.
-export type StepState = "done" | "active" | "pending" | "failed"
+// ○, and a failed row gets a red ✕. A `waiting` row (paused for the user to act)
+// gets an amber ❯ — distinct from the spinner so it reads as "your turn", not
+// "system working". Used by the DB backup/sync + vanity overlays.
+export type StepState = "done" | "active" | "pending" | "failed" | "waiting"
 export interface StepRow {
   label: string
   state: StepState
@@ -71,9 +72,16 @@ export function Steps({ rows }: { rows: StepRow[] }) {
           {r.state === "active" ? (
             <Spinner color={theme.brand} />
           ) : (
-            <text content={r.state === "done" ? "✓" : r.state === "failed" ? "✕" : "○"} fg={r.state === "done" ? theme.good : r.state === "failed" ? theme.bad : theme.textFaint} />
+            <text
+              content={r.state === "done" ? "✓" : r.state === "failed" ? "✕" : r.state === "waiting" ? "❯" : "○"}
+              fg={r.state === "done" ? theme.good : r.state === "failed" ? theme.bad : r.state === "waiting" ? theme.warn : theme.textFaint}
+            />
           )}
-          <text content={` ${r.label}`} fg={r.state === "pending" ? theme.textFaint : theme.text} wrapMode="none" />
+          <text
+            content={` ${r.label}`}
+            fg={r.state === "pending" ? theme.textFaint : r.state === "waiting" ? theme.warn : theme.text}
+            wrapMode="none"
+          />
         </box>
       ))}
     </box>

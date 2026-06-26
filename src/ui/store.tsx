@@ -36,7 +36,7 @@ import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
 import { deriveSiteUser, seedVanityIndex, aRecordResolves } from "../lib/vanitySite.ts"
 import type { StoredProviders } from "../config.ts"
-import { fetchRebootInfo, grantSiteSshKey, verifySudo, type RebootInfo } from "../lib/ssh.ts"
+import { fetchRebootInfo, grantSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
@@ -287,6 +287,9 @@ interface StoreValue extends DataState {
   // Reads the sudo user + (in-memory) password from the store; per-site progress
   // lands in keyGrants. The overlay resolves which key lines and which sites.
   startGrantKey: (sites: Site[], pubkeys: string[]) => void
+  // Grant the user's remembered keys to the given sites (resolves saved selection
+  // to key lines). Used by auto-grant flows like the vanity build.
+  startGrantRemembered: (sites: Site[]) => void
   // The key bodies the user last chose to grant (pre-selected next time), persisted.
   preferredGrantKeys: string[]
   setPreferredGrantKeys: (ids: string[]) => void
@@ -1173,6 +1176,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [keyGrants, servers, sudoUsers, disconnectSudo],
   )
 
+  // Grant the user's REMEMBERED keys (preferredGrantKeys) to the given sites,
+  // resolving the saved key bodies to their current key lines. Used by auto-grant
+  // flows (e.g. the vanity build) so a created site gets the key with one keypress.
+  // Sets a clear error on the sites if there's no saved selection to resolve.
+  const startGrantRemembered = useCallback(
+    (sites: Site[]) => {
+      if (sites.length === 0) return
+      void (async () => {
+        let lines: string[] = []
+        try {
+          const [machine, personal] = await Promise.all([ensureSpinupKey(), listPersonalKeys()])
+          const all = [...personal, { id: keyBody(machine.pub), line: machine.pub }]
+          lines = all.filter((k) => preferredGrantKeys.includes(k.id)).map((k) => k.line)
+        } catch {
+          /* fall through to the no-keys error below */
+        }
+        if (lines.length === 0) {
+          for (const s of sites) setGrant(s.id, { status: "error", error: "No saved keys to grant — grant one on a site (K) first." })
+          return
+        }
+        startGrantKey(sites, lines)
+      })()
+    },
+    [preferredGrantKeys, startGrantKey],
+  )
+
   // ---- Production DB backup download ------------------------------------
 
   const setBackup = (siteId: number, progress: DbBackupProgress) =>
@@ -1978,6 +2007,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setGrantKeySite,
     keyGrants,
     startGrantKey,
+    startGrantRemembered,
     clearGrantKey,
     preferredGrantKeys,
     setPreferredGrantKeys,
