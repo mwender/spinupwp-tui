@@ -158,6 +158,14 @@ Plus:
 - A UI action on a site (single key, behind the confirm overlay) that prompts for the
   sudo password (if not already held this session) and calls `grantSiteSshKey`.
 
+## Deferred (documented, may or may not build)
+
+- **macOS Keychain sudo-password persistence (opt-in).** Today the sudo password is
+  in-memory for the session only (re-prompted each launch). A future opt-in could
+  stash it in the macOS Keychain (`security add-generic-password` / `find-generic-password`,
+  keyed per server) so reconnecting sudo across sessions is one keypress. Strictly
+  opt-in (default stays in-memory); deferred 2026-06-26 at the user's call.
+
 ## Open for next session (not yet decided)
 
 - **Key label scope:** `spinup-tui@<hostname>` (per-machine) vs

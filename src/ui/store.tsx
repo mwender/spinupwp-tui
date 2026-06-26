@@ -36,7 +36,7 @@ import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
 import { deriveSiteUser, seedVanityIndex, aRecordResolves } from "../lib/vanitySite.ts"
 import type { StoredProviders } from "../config.ts"
-import { fetchRebootInfo, grantSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
+import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
@@ -287,12 +287,21 @@ interface StoreValue extends DataState {
   // Reads the sudo user + (in-memory) password from the store; per-site progress
   // lands in keyGrants. The overlay resolves which key lines and which sites.
   startGrantKey: (sites: Site[], pubkeys: string[]) => void
+  // Remove the given keys from one or many sites' authorized_keys (reverse of grant).
+  startRevokeKey: (sites: Site[], pubkeys: string[]) => void
   // Grant the user's remembered keys to the given sites (resolves saved selection
   // to key lines). Used by auto-grant flows like the vanity build.
   startGrantRemembered: (sites: Site[]) => void
   // The key bodies the user last chose to grant (pre-selected next time), persisted.
   preferredGrantKeys: string[]
   setPreferredGrantKeys: (ids: string[]) => void
+  // Whether Spinup has granted any key on a site (drives the row badge), and the
+  // recorded key bodies. forgetGrantedKeys is used by revoke.
+  siteHasGrantedKey: (siteId: number) => boolean
+  // Granted keys on a site split into personal (yours) vs machine (spinup-tui).
+  grantedKeyKinds: (siteId: number) => { personal: number; machine: number }
+  grantedKeys: Map<number, Set<string>>
+  forgetGrantedKeys: (siteId: number, bodies: string[]) => void
   clearGrantKey: (siteId: number) => void
   // Per-server sudo user (persisted, username only) for privileged writes.
   sudoUserFor: (serverId: number) => string | undefined
@@ -521,6 +530,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
   const sudoPwRef = useRef<Map<number, string>>(new Map())
   const [preferredGrantKeys, setPreferredGrantKeysState] = useState<string[]>(() => [...cfgRef.current.preferredGrantKeys])
+  // Keys Spinup has granted, by site id → set of key bodies. Drives the row badge.
+  const [grantedKeys, setGrantedKeys] = useState<Map<number, Set<string>>>(
+    () => new Map(Object.entries(cfgRef.current.grantedKeys).map(([id, bodies]) => [Number(id), new Set(bodies)])),
+  )
+  // The spinup-tui machine key's body (base64), resolved once — lets us classify a
+  // granted key as the MACHINE key vs one of the user's PERSONAL keys.
+  const [machineKeyBody, setMachineKeyBody] = useState<string | null>(null)
+  useEffect(() => {
+    void ensureSpinupKey()
+      .then((k) => setMachineKeyBody(keyBody(k.pub)))
+      .catch(() => {})
+  }, [])
   // Servers with sudo "connected" this session (validated user + held password). The
   // password lives in sudoPwRef (in-memory); this set just tracks which servers
   // are connected so the UI can show ● and privileged actions can gate on it.
@@ -1107,6 +1128,60 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void saveConfig({ preferredGrantKeys: ids })
   }, [])
 
+  // Persist the granted-keys map (only non-empty entries) to config, write-through.
+  const persistGrantedKeys = useCallback((next: Map<number, Set<string>>) => {
+    const rec: Record<string, string[]> = {}
+    for (const [id, set] of next) if (set.size) rec[String(id)] = [...set]
+    cfgRef.current.grantedKeys = rec
+    void saveConfig({ grantedKeys: rec })
+  }, [])
+
+  // Record / forget which keys (by body) Spinup has granted on a site.
+  const recordGrantedKeys = useCallback(
+    (siteId: number, bodies: string[]) =>
+      setGrantedKeys((prev) => {
+        const next = new Map(prev)
+        const set = new Set(next.get(siteId) ?? [])
+        for (const b of bodies) if (b) set.add(b)
+        next.set(siteId, set)
+        persistGrantedKeys(next)
+        return next
+      }),
+    [persistGrantedKeys],
+  )
+  const forgetGrantedKeys = useCallback(
+    (siteId: number, bodies: string[]) =>
+      setGrantedKeys((prev) => {
+        if (!prev.has(siteId)) return prev
+        const next = new Map(prev)
+        const set = new Set(next.get(siteId))
+        for (const b of bodies) set.delete(b)
+        if (set.size) next.set(siteId, set)
+        else next.delete(siteId)
+        persistGrantedKeys(next)
+        return next
+      }),
+    [persistGrantedKeys],
+  )
+  const siteHasGrantedKey = useCallback((siteId: number) => (grantedKeys.get(siteId)?.size ?? 0) > 0, [grantedKeys])
+  // Break a site's granted keys into "personal" (yours) vs "machine" (spinup-tui),
+  // so the UI can say which is on the site instead of an ambiguous "Spinup key".
+  // Before the machine-key body resolves, everything counts as personal (brief).
+  const grantedKeyKinds = useCallback(
+    (siteId: number): { personal: number; machine: number } => {
+      const set = grantedKeys.get(siteId)
+      if (!set || set.size === 0) return { personal: 0, machine: 0 }
+      let machine = 0
+      let personal = 0
+      for (const b of set) {
+        if (machineKeyBody && b === machineKeyBody) machine++
+        else personal++
+      }
+      return { personal, machine }
+    },
+    [grantedKeys, machineKeyBody],
+  )
+
   const setGrant = (siteId: number, progress: KeyGrantProgress) =>
     setKeyGrants((prev) => new Map(prev).set(siteId, progress))
 
@@ -1121,15 +1196,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  // Grant the keys to one or many sites (all on the same server). Each site's
-  // progress is tracked independently in keyGrants, so the overlay can show a
-  // per-site readout; a bounded pool keeps the SSH fan-out modest (the persistent
-  // ControlMaster connection makes the per-site probes cheap).
-  const startGrantKey = useCallback(
-    (sites: Site[], pubkeys: string[]) => {
+  // Grant or REVOKE the keys on one or many sites (all on the same server). Each
+  // site's progress is tracked independently in keyGrants, so the overlay can show
+  // a per-site readout; a bounded pool keeps the SSH fan-out modest (the persistent
+  // ControlMaster connection makes the per-site probes cheap). On success, grant
+  // records the keys for the row badge; revoke forgets them.
+  const runKeyOp = useCallback(
+    (sites: Site[], pubkeys: string[], op: "grant" | "revoke") => {
       if (sites.length === 0) return
+      const verb = op === "grant" ? "grant" : "remove"
       if (pubkeys.length === 0) {
-        for (const s of sites) setGrant(s.id, { status: "error", error: "No keys selected to grant." })
+        for (const s of sites) setGrant(s.id, { status: "error", error: `No keys selected to ${verb}.` })
         return
       }
       const server = servers.find((s) => s.id === sites[0].server_id)
@@ -1143,8 +1220,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return
       }
       const sudoPassword = sudoPwRef.current.get(server.id) ?? ""
+      const bodies = pubkeys.map(keyBody)
 
-      // Skip sites already mid-grant; queue the rest (so the overlay sees them
+      // Skip sites already mid-op; queue the rest (so the overlay sees them
       // immediately) and drain with a small worker pool.
       const queue = sites.filter((s) => {
         const ex = keyGrants.get(s.id)
@@ -1157,9 +1235,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const worker = async () => {
         while (cursor < queue.length) {
           const s = queue[cursor++]
-          setGrant(s.id, { status: "granting" })
-          const res = await grantSiteSshKey(server, s, { sudoUser, sudoPassword, pubkeys })
+          setGrant(s.id, { status: op === "grant" ? "granting" : "removing" })
+          const fn = op === "grant" ? grantSiteSshKey : revokeSiteSshKey
+          const res = await fn(server, s, { sudoUser, sudoPassword, pubkeys })
           if (res.ok) {
+            if (op === "grant") recordGrantedKeys(s.id, bodies)
+            else forgetGrantedKeys(s.id, bodies)
             setGrant(s.id, { status: "done", target: res.target })
           } else {
             // A rejected/stale password means the server is no longer truly connected
@@ -1173,8 +1254,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i++) void worker()
     },
-    [keyGrants, servers, sudoUsers, disconnectSudo],
+    [keyGrants, servers, sudoUsers, disconnectSudo, recordGrantedKeys, forgetGrantedKeys],
   )
+
+  const startGrantKey = useCallback((sites: Site[], pubkeys: string[]) => runKeyOp(sites, pubkeys, "grant"), [runKeyOp])
+  const startRevokeKey = useCallback((sites: Site[], pubkeys: string[]) => runKeyOp(sites, pubkeys, "revoke"), [runKeyOp])
 
   // Grant the user's REMEMBERED keys (preferredGrantKeys) to the given sites,
   // resolving the saved key bodies to their current key lines. Used by auto-grant
@@ -2007,10 +2091,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setGrantKeySite,
     keyGrants,
     startGrantKey,
+    startRevokeKey,
     startGrantRemembered,
     clearGrantKey,
     preferredGrantKeys,
     setPreferredGrantKeys,
+    siteHasGrantedKey,
+    grantedKeyKinds,
+    grantedKeys,
+    forgetGrantedKeys,
     sudoUserFor,
     sudoConnectServer,
     setSudoConnectServer,

@@ -15,7 +15,7 @@ import { truncate } from "../../lib/format.ts"
 import { Panel, Centered, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore, isKeyGrantInFlight } from "../store.tsx"
-import { ensureSpinupKey, listPersonalKeys, buildGrantScript, keyBody, type GrantableKey } from "../../lib/ssh.ts"
+import { ensureSpinupKey, listPersonalKeys, buildGrantScript, buildRevokeScript, keyBody, type GrantableKey } from "../../lib/ssh.ts"
 import { moveSelection } from "../List.tsx"
 import type { Site } from "../../api/types.ts"
 
@@ -30,9 +30,11 @@ export function GrantKey() {
     sitesForServer,
     keyGrants,
     startGrantKey,
+    startRevokeKey,
     clearGrantKey,
     preferredGrantKeys,
     setPreferredGrantKeys,
+    grantedKeys,
     isSudoConnected,
     sudoUserFor,
     setSudoConnectServer,
@@ -57,6 +59,8 @@ export function GrantKey() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [scope, setScope] = useState<"site" | "server">("site")
   const [scopeIndex, setScopeIndex] = useState(0)
+  // "grant" adds the selected keys; "revoke" removes them. Toggled on the pick screen.
+  const [mode, setMode] = useState<"grant" | "revoke">("grant")
 
   // Resolve the grantable keys once (machine key + discovered personal keys).
   useEffect(() => {
@@ -86,6 +90,21 @@ export function GrantKey() {
 
   const selectedKeys = keys.filter((k) => selected.has(k.id))
   const targetSites: Site[] = scope === "server" ? serverSites : site ? [site] : []
+  // Keys Spinup has recorded as granted on the anchor site (for revoke defaults +
+  // the "on site" annotation).
+  const grantedForSite = site ? grantedKeys.get(site.id) ?? new Set<string>() : new Set<string>()
+
+  // Switch grant/revoke, re-defaulting the selection: grant → remembered keys;
+  // revoke → the keys recorded as granted on this site.
+  const switchMode = (m: "grant" | "revoke") => {
+    setMode(m)
+    if (m === "revoke") {
+      setSelected(new Set(keys.filter((k) => grantedForSite.has(k.id)).map((k) => k.id)))
+    } else {
+      const remembered = keys.filter((k) => preferredGrantKeys.includes(k.id)).map((k) => k.id)
+      setSelected(new Set(remembered.length ? remembered : keys[0] ? [keys[0].id] : []))
+    }
+  }
 
   // Batch progress over the target sites.
   const targetProgress = targetSites.map((s) => keyGrants.get(s.id))
@@ -104,8 +123,13 @@ export function GrantKey() {
 
   const fire = (sites: Site[]) => {
     if (sites.length > 0 && selectedKeys.length > 0) {
-      startGrantKey(sites, selectedKeys.map((k) => k.line))
-      setPreferredGrantKeys(selectedKeys.map((k) => k.id)) // remember the choice
+      const lines = selectedKeys.map((k) => k.line)
+      if (mode === "grant") {
+        startGrantKey(sites, lines)
+        setPreferredGrantKeys(selectedKeys.map((k) => k.id)) // remember the choice
+      } else {
+        startRevokeKey(sites, lines)
+      }
     }
     setPhase("running")
   }
@@ -140,6 +164,10 @@ export function GrantKey() {
             return next
           })
         }
+        case "a":
+          return switchMode("grant")
+        case "r":
+          return switchMode("revoke")
         case "return":
         case "right":
         case "l":
@@ -209,7 +237,7 @@ export function GrantKey() {
     >
       {/* Title bar */}
       <box style={{ flexDirection: "row", height: 1, backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1, alignItems: "center" }}>
-        <text content="🔑 Grant SSH key  " fg={theme.brand} style={{ flexShrink: 0 }} />
+        <text content={`🔑 ${mode === "revoke" ? "Remove" : "Grant"} SSH key  `} fg={theme.brand} style={{ flexShrink: 0 }} />
         <text content={truncate(site.domain, 40)} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
         <box style={{ flexGrow: 1 }} />
         <text content={connected ? "● " : "○ "} fg={connected ? theme.good : theme.textFaint} style={{ flexShrink: 0 }} />
@@ -254,25 +282,44 @@ export function GrantKey() {
     }
 
     if (dp === "pick") {
+      const revoke = mode === "revoke"
       return (
-        <Panel title=" Choose keys to grant " active>
+        <Panel title={revoke ? " Choose keys to remove " : " Choose keys to grant "} active>
           <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
+            <box style={{ flexDirection: "row" }}>
+              <text content={revoke ? "✕ Remove mode — pick key(s) to remove" : "＋ Grant mode — pick key(s) to grant"} fg={revoke ? theme.bad : theme.good} wrapMode="none" />
+              <box style={{ flexGrow: 1 }} />
+              <text content="a/r switch" fg={theme.textFaint} wrapMode="none" />
+            </box>
+            <box style={{ height: 1 }} />
             {keys.map((k, i) => {
               const sel = i === index
               const checked = selected.has(k.id)
+              const onSite = grantedForSite.has(k.id)
               const tag = k.kind === "machine" ? "machine" : "personal"
               const tagFg = sel ? theme.text : k.kind === "machine" ? theme.brand : theme.accent
+              const boxFg = revoke ? theme.bad : theme.good
               return (
                 <box key={k.id} style={{ flexDirection: "row", height: 1, backgroundColor: sel ? theme.selectedBg : undefined }}>
-                  <text content={(sel ? "❯ " : "  ") + (checked ? "[x] " : "[ ] ")} fg={checked ? theme.good : theme.textDim} style={{ flexShrink: 0 }} />
-                  <text content={truncate(k.label || k.source, 40)} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
-                  <text content={" " + tag} fg={tagFg} style={{ flexShrink: 0 }} />
+                  <text content={(sel ? "❯ " : "  ") + (checked ? "[x] " : "[ ] ")} fg={checked ? boxFg : theme.textDim} style={{ flexShrink: 0 }} />
+                  <text content={truncate(k.label || k.source, 38)} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+                  <text content={onSite ? "✓on site " : "         "} fg={sel ? theme.text : theme.good} style={{ flexShrink: 0 }} wrapMode="none" />
+                  <text content={tag} fg={tagFg} style={{ flexShrink: 0 }} />
                 </box>
               )
             })}
             <box style={{ height: 1 }} />
-            <text content="Personal keys log you in as yourself; the machine key is" fg={theme.textFaint} wrapMode="none" />
-            <text content="Spinup's own identity for unattended automation." fg={theme.textFaint} wrapMode="none" />
+            {revoke ? (
+              <>
+                <text content="Removes the checked key(s) from authorized_keys. Other keys" fg={theme.textFaint} wrapMode="none" />
+                <text content="(incl. SpinupWP-managed ones) are left untouched." fg={theme.textFaint} wrapMode="none" />
+              </>
+            ) : (
+              <>
+                <text content="Personal keys log you in as yourself; the machine key is" fg={theme.textFaint} wrapMode="none" />
+                <text content="Spinup's own identity for unattended automation." fg={theme.textFaint} wrapMode="none" />
+              </>
+            )}
           </box>
         </Panel>
       )
@@ -284,7 +331,7 @@ export function GrantKey() {
         { label: `All ${serverSites.length} sites on this server`, sub: server?.name ?? "" },
       ]
       return (
-        <Panel title=" Grant to " active>
+        <Panel title={mode === "revoke" ? " Remove from " : " Grant to "} active>
           <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
             {opts.map((o, i) => {
               const sel = i === scopeIndex
@@ -305,15 +352,16 @@ export function GrantKey() {
     }
 
     if (dp === "confirm") {
+      const revoke = mode === "revoke"
       const n = targetSites.length
       const single = n === 1
       const displayLines = selectedKeys.map((k) => `…${k.kind === "machine" ? "spinup-tui" : "ed25519"}… ${k.label}`)
-      const script = single ? buildGrantScript(siteUser, targetSites[0].domain, displayLines) : null
+      const script = single ? (revoke ? buildRevokeScript(siteUser, targetSites[0].domain, displayLines) : buildGrantScript(siteUser, targetSites[0].domain, displayLines)) : null
       return (
-        <Panel title=" Confirm — privileged write " active>
+        <Panel title={revoke ? " Confirm — remove keys " : " Confirm — privileged write "} active>
           <box style={{ flexDirection: "column", width: 72, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
-              <text content={`Add ${selectedKeys.length} key${selectedKeys.length === 1 ? "" : "s"} to `} fg={theme.text} wrapMode="none" />
+              <text content={`${revoke ? "Remove" : "Add"} ${selectedKeys.length} key${selectedKeys.length === 1 ? "" : "s"} ${revoke ? "from" : "to"} `} fg={theme.text} wrapMode="none" />
               <text content={single ? `${siteUser}@${targetSites[0].domain}` : `${n} sites on ${server?.name ?? ""}`} fg={theme.accent} wrapMode="none" />
             </box>
             <box style={{ flexDirection: "row" }}>
@@ -330,7 +378,7 @@ export function GrantKey() {
             <box style={{ height: 1 }} />
             {single ? (
               <>
-                <text content="Runs on the server (idempotent — re-running is a no-op):" fg={theme.textFaint} wrapMode="none" />
+                <text content={`Runs on the server (idempotent — re-running is a no-op):`} fg={theme.textFaint} wrapMode="none" />
                 <box style={{ flexDirection: "column", backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1 }}>
                   {script!.split("\n").map((line, i) => (
                     <text key={i} content={line} fg={theme.textDim} wrapMode="none" />
@@ -338,10 +386,10 @@ export function GrantKey() {
                 </box>
               </>
             ) : (
-              <text content={`The same idempotent append runs on each of the ${n} sites.`} fg={theme.textFaint} wrapMode="none" />
+              <text content={`The same idempotent ${revoke ? "removal" : "append"} runs on each of the ${n} sites.`} fg={theme.textFaint} wrapMode="none" />
             )}
             <box style={{ height: 1 }} />
-            <text content="This is Spinup's most powerful write. Press y to continue." fg={theme.warn} wrapMode="none" />
+            <text content={revoke ? "This removes SSH access for those keys. Press y to continue." : "This is Spinup's most powerful write. Press y to continue."} fg={theme.warn} wrapMode="none" />
             <text content="y confirm · ← back · Esc cancel" fg={theme.textFaint} wrapMode="none" />
           </box>
         </Panel>
@@ -349,13 +397,14 @@ export function GrantKey() {
     }
 
     if (dp === "running") {
+      const revoke = mode === "revoke"
       const n = targetSites.length
       return (
-        <Panel title=" Granting " active>
+        <Panel title={revoke ? " Removing " : " Granting "} active>
           <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
               <Spinner />
-              <text content={`  Granting to ${n} site${n === 1 ? "" : "s"} — ${settledCount}/${n} done`} fg={theme.textDim} wrapMode="none" />
+              <text content={`  ${revoke ? "Removing from" : "Granting to"} ${n} site${n === 1 ? "" : "s"} — ${settledCount}/${n} done`} fg={theme.textDim} wrapMode="none" />
             </box>
             {failedSites.length > 0 && (
               <text content={`${doneCount} ok · ${failedSites.length} failed so far`} fg={theme.textFaint} wrapMode="none" />
@@ -374,7 +423,7 @@ export function GrantKey() {
           <box style={{ flexDirection: "column", width: 70, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
               <text content={failedSites.length > 0 ? "⚠ " : "✓ "} fg={failedSites.length > 0 ? theme.warn : theme.good} />
-              <text content={`Granted on ${doneCount} of ${n} site${n === 1 ? "" : "s"}`} fg={theme.text} wrapMode="none" />
+              <text content={`${mode === "revoke" ? "Removed from" : "Granted on"} ${doneCount} of ${n} site${n === 1 ? "" : "s"}`} fg={theme.text} wrapMode="none" />
             </box>
             {failedSites.length > 0 && (
               <>
@@ -419,6 +468,7 @@ export function GrantKey() {
         return [
           { key: "↑↓", label: "key" },
           { key: "space", label: "toggle" },
+          { key: "a/r", label: mode === "revoke" ? "remove mode" : "grant mode" },
           { key: "⏎", label: canScope ? "scope" : "next" },
           { key: "esc", label: "cancel" },
         ]

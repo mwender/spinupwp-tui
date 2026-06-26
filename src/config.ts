@@ -62,6 +62,10 @@ export interface AppConfig {
   // The public keys (by key body, the base64 second field) the user last chose to
   // grant. Pre-selected in the grant-key picker so they don't re-pick every time.
   preferredGrantKeys: string[]
+  // Keys Spinup has granted, keyed by site id (string) → key bodies. Drives the
+  // "has Spinup's key" row badge and informs revoke. Optimistic (a record of what
+  // Spinup wrote, not a live probe); revoke removes entries.
+  grantedKeys: Record<string, string[]>
 }
 
 export interface ServerProviderRef {
@@ -126,6 +130,7 @@ export interface StoredConfig {
   jobs?: Record<string, StoredJob>
   sudoUsers?: Record<string, { user: string }>
   preferredGrantKeys?: string[]
+  grantedKeys?: Record<string, string[]>
 }
 
 export function configDir(): string {
@@ -213,6 +218,7 @@ export function loadConfig(): AppConfig {
     jobs: stored.jobs ?? {},
     sudoUsers: stored.sudoUsers ?? {},
     preferredGrantKeys: stored.preferredGrantKeys ?? [],
+    grantedKeys: stored.grantedKeys ?? {},
   }
 }
 

@@ -316,6 +316,35 @@ export function buildGrantScript(siteUser: string, domain: string, pubkeys: stri
   return lines.join("\n")
 }
 
+// The reverse of buildGrantScript: remove EACH given key line from the site user's
+// authorized_keys (exact-line match via `grep -vxF`), leaving every other key. Safe
+// to re-run; verifies none remain before echoing ===REVOKED.
+export function buildRevokeScript(siteUser: string, domain: string, pubkeys: string[]): string {
+  const U = shQuote(siteUser)
+  const H = shQuote(siteHome(domain))
+  const patternArgs = pubkeys.map((k) => shQuote(k)).join(" ")
+  const lines = [
+    `set -e`,
+    `U=${U}; H=${H}`,
+    `F="$H/.ssh/authorized_keys"`,
+    `if [ -f "$F" ]; then`,
+    `  P="$(mktemp)"`,
+    `  printf '%s\\n' ${patternArgs} > "$P"`,
+    `  grep -vxF -f "$P" "$F" > "$F.tmp" || true`,
+    `  mv "$F.tmp" "$F"`,
+    `  rm -f "$P"`,
+    `  chown "$U:$U" "$F"`,
+    `  chmod 600 "$F"`,
+    `fi`,
+  ]
+  // Verify each removed key is really gone; bail (no ===REVOKED) if any remains.
+  for (const k of pubkeys) {
+    lines.push(`[ -f "$F" ] && grep -qxF ${shQuote(k)} "$F" 2>/dev/null && exit 8 || true`)
+  }
+  lines.push(`echo ===REVOKED`)
+  return lines.join("\n")
+}
+
 // A non-interactive ssh command, optionally feeding a sudo password (then a
 // script body) on stdin. We do NOT drive an interactive `sudo -i` shell: we run
 // one shot `sudo -S -p '' bash -s`, so the password is read from stdin (-S) and
@@ -368,49 +397,44 @@ export type GrantKeyResult =
   | { ok: true; target: string }
   | { ok: false; target: string; error: string }
 
-// Append the given public keys to a site user's authorized_keys, via the server's
-// sudo user. Probes `sudo -n true` first to fail cleanly (can't-sudo / can't-connect)
-// BEFORE sending the secret; if a password is required it's fed on stdin to `sudo -S`.
-// Idempotent (re-running never duplicates a line). The caller resolves which keys to
-// deploy (machine key via ensureSpinupKey, personal keys via listPersonalKeys).
-export async function grantSiteSshKey(
+// Shared runner for a privileged per-site authorized_keys op (grant or revoke).
+// Probes `sudo -n true` first to fail cleanly (can't-sudo / can't-connect) BEFORE
+// sending the secret; if a password is required it's fed on stdin to `sudo -S`.
+// `build(siteUser)` produces the remote script (so the script is only built once
+// site_user is validated); `marker` is the success token the script echoes.
+async function runSudoSiteOp(
   server: Server,
   site: Site,
-  opts: { sudoUser: string; sudoPassword: string; pubkeys: string[] },
+  opts: { sudoUser: string; sudoPassword: string },
+  build: (siteUser: string) => string,
+  marker: string,
 ): Promise<GrantKeyResult> {
   const ip = server.ip_address
   if (!ip) return { ok: false, target: "(no IP)", error: "Server has no IP address." }
   const siteUser = site.site_user
   if (!siteUser) return { ok: false, target: ip, error: "Site has no site_user — can't locate its authorized_keys." }
-  const keys = opts.pubkeys.map((k) => k.trim()).filter(Boolean)
-  if (keys.length === 0) return { ok: false, target: `${siteUser}@${ip}`, error: "No keys selected to grant." }
   const target = `${opts.sudoUser}@${ip}`
   const port = server.ssh_port ?? null
 
-  // 1) Probe: confirms we can log in AND can sudo, without sending the password.
-  //    `sudo -n true` exits 0 for passwordless sudo, non-zero otherwise.
   const probe = await runSshStdin(target, port, "sudo -n true 2>&1", null, 15000)
   let needPassword = false
   if (probe.code === 0) {
-    needPassword = false // passwordless sudo — don't prepend a password line
+    needPassword = false
   } else if (probe.code === 255 || probe.code === -1) {
-    // ssh-level failure (connection refused / Permission denied (publickey) / …).
     return { ok: false, target, error: lastErrorLine(probe.stdout + "\n" + probe.stderr, "Couldn't connect over SSH — is your key on the server for this user?") }
   } else {
     const out = (probe.stdout + " " + probe.stderr).toLowerCase()
     if (/not in the sudoers|not allowed to run|may not run|unknown user|is not allowed/.test(out)) {
       return { ok: false, target, error: `${opts.sudoUser} can't run sudo on this server.` }
     }
-    // Otherwise sudo wants a password (the expected path).
     needPassword = true
     if (!opts.sudoPassword) return { ok: false, target, error: "A sudo password is required for this server." }
   }
 
-  // 2) Act: one idempotent script under sudo, password (if needed) fed on stdin.
-  const script = buildGrantScript(siteUser, site.domain, keys)
+  const script = build(siteUser)
   const payload = needPassword ? `${opts.sudoPassword}\n${script}\n` : `${script}\n`
   const res = await runSshStdin(target, port, "sudo -S -p '' bash -s", payload, 30000)
-  if (res.code !== 0 || !res.stdout.includes("===GRANTED")) {
+  if (res.code !== 0 || !res.stdout.includes(marker)) {
     const out = (res.stderr + " " + res.stdout).toLowerCase()
     if (/incorrect password|sorry, try again|authentication failure/.test(out)) {
       return { ok: false, target, error: "Sudo password was rejected." }
@@ -418,6 +442,32 @@ export async function grantSiteSshKey(
     return { ok: false, target, error: lastErrorLine(res.stderr || res.stdout, `The remote command failed (ssh exit ${res.code}).`) }
   }
   return { ok: true, target: `${siteUser}@${ip}` }
+}
+
+// Append the given public keys to a site user's authorized_keys, via the server's
+// sudo user. Idempotent (re-running never duplicates a line). The caller resolves
+// which keys to deploy (machine key via ensureSpinupKey, personal via listPersonalKeys).
+export async function grantSiteSshKey(
+  server: Server,
+  site: Site,
+  opts: { sudoUser: string; sudoPassword: string; pubkeys: string[] },
+): Promise<GrantKeyResult> {
+  const keys = opts.pubkeys.map((k) => k.trim()).filter(Boolean)
+  if (keys.length === 0) return { ok: false, target: `${opts.sudoUser}@${server.ip_address ?? "?"}`, error: "No keys selected to grant." }
+  return runSudoSiteOp(server, site, opts, (siteUser) => buildGrantScript(siteUser, site.domain, keys), "===GRANTED")
+}
+
+// Remove the given public keys from a site user's authorized_keys, via sudo. The
+// reverse of grant; safe to re-run (removing an absent key is a no-op). Only the
+// exact lines given are removed — other keys (incl. SpinupWP-managed ones) are left.
+export async function revokeSiteSshKey(
+  server: Server,
+  site: Site,
+  opts: { sudoUser: string; sudoPassword: string; pubkeys: string[] },
+): Promise<GrantKeyResult> {
+  const keys = opts.pubkeys.map((k) => k.trim()).filter(Boolean)
+  if (keys.length === 0) return { ok: false, target: `${opts.sudoUser}@${server.ip_address ?? "?"}`, error: "No keys selected to remove." }
+  return runSudoSiteOp(server, site, opts, (siteUser) => buildRevokeScript(siteUser, site.domain, keys), "===REVOKED")
 }
 
 // A public key the user can choose to grant. The machine key (`spinup-tui`) plus any

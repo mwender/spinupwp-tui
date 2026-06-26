@@ -203,10 +203,24 @@ export function PhpVersionCell({
 //   ↑N = N pending WordPress updates
 // Presence-only by design — the inspector strip shows the full detail (path /
 // URL / on-disk validity) for the focused row.
-export function SiteMetaCell({ linked, updates, selected = false }: { linked: boolean; updates: number; selected?: boolean }) {
+export function SiteMetaCell({
+  linked,
+  updates,
+  personalKey = false,
+  machineKey = false,
+  selected = false,
+}: {
+  linked: boolean
+  updates: number
+  personalKey?: boolean // 👤 your key is on the site
+  machineKey?: boolean // 🔑 the spinup-tui machine key is on the site
+  selected?: boolean
+}) {
+  const keyMark = (personalKey ? "👤" : "") + (machineKey ? "🔑" : "")
   return (
     <box style={{ flexDirection: "row", flexShrink: 0 }}>
       <text content={linked ? "◆ " : "  "} fg={selected ? theme.text : theme.good} wrapMode="none" />
+      {keyMark ? <text content={keyMark + " "} wrapMode="none" /> : null}
       {updates > 0 ? <text content={`↑${updates} `} fg={selected ? theme.text : theme.warn} wrapMode="none" /> : null}
     </box>
   )

@@ -35,7 +35,11 @@ versions; such changes are called out here.
   And when you **connect a new server (vanity flow)**, you can connect sudo right from
   the flow (`S`, same as on a server); with sudo connected, the SSH-key step grants your
   saved keys there (`g`) and publishes — no more manual "add your key in SpinupWP"
-  round-trip. See `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
+  round-trip. The site list shows which keys are on a site at a glance — **👤 your key**
+  and/or **🔑 the spinup-tui machine key** — and the Details panel spells it out
+  (`Granted   your key + spinup-tui`). The same `K` overlay can **remove** keys too
+  (`a`/`r` to toggle grant/remove) — the reverse of grant, leaving every other key (incl.
+  SpinupWP-managed ones) untouched. See `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
 - **Create a new server (`c`).** Press `c` on a server in the Servers tab to
   provision a new one, pre-filled to **match** the selected server's provider,
   region, and size. The form prices the build from the provider's catalog
