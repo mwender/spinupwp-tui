@@ -26,10 +26,11 @@ versions; such changes are called out here.
   and deliberately **never added to your SpinupWP account** so SpinupWP's
   `authorized_keys` reconciliation leaves it untouched. The remote script is
   **idempotent** (`grep -qxF` — re-running never duplicates the line), and a confirm
-  overlay shows the exact remote command before anything fires. v1 is single-site,
-  single-key; a per-run key picker (your personal key / the machine key) and a bulk
-  "every site on the server" pass are next. See
-  `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
+  overlay shows the exact remote command before anything fires. **`K` shows a key
+  picker:** choose any of **your personal keys** (discovered from `~/.ssh/*.pub` and
+  the ssh-agent — so you can SSH/SFTP as yourself) and/or the **machine key**, deploy
+  several at once, and your selection is remembered for next time. A bulk "every site
+  on the server" pass is next. See `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
 - **Create a new server (`c`).** Press `c` on a server in the Servers tab to
   provision a new one, pre-filled to **match** the selected server's provider,
   region, and size. The form prices the build from the provider's catalog

@@ -1,10 +1,10 @@
 // Grant SSH key overlay — a privileged write-over-SSH on a sudo-connected server.
 //
-// Opened with `K` on a selected site (Browser). Deploys Spinup's dedicated machine
-// key into the site user's authorized_keys, via the server's SUDO session — the one
-// thing the SpinupWP API can't do. Requires sudo to be connected on the server first
-// (press `S` on the server to connect sudo for the session); this overlay then just
-// shows the exact remote command, confirms, and fires. The grant runs in the store
+// Opened with `K` on a selected site (Browser). Pick which key(s) to deploy into
+// the site user's authorized_keys — your PERSONAL key(s) (so you can SSH/SFTP as
+// yourself) and/or Spinup's dedicated `spinup-tui` MACHINE key (for unattended
+// automation) — then confirm and grant via the server's SUDO session. Requires sudo
+// to be connected first (press `S` on the server). The grant runs in the store
 // (`startGrantKey`), so closing the modal doesn't abandon it.
 // See docs/2026-06-26_sudo-ssh-key-provisioning-spec.md.
 
@@ -15,9 +15,10 @@ import { truncate } from "../../lib/format.ts"
 import { Panel, Centered, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore, isKeyGrantInFlight } from "../store.tsx"
-import { ensureSpinupKey, buildGrantScript } from "../../lib/ssh.ts"
+import { ensureSpinupKey, listPersonalKeys, buildGrantScript, keyBody, type GrantableKey } from "../../lib/ssh.ts"
+import { moveSelection } from "../List.tsx"
 
-type Phase = "disconnected" | "confirm" | "running" | "done" | "error"
+type Phase = "disconnected" | "loading" | "pick" | "confirm" | "running" | "done" | "error"
 
 export function GrantKey() {
   const store = useStore()
@@ -28,6 +29,8 @@ export function GrantKey() {
     keyGrants,
     startGrantKey,
     clearGrantKey,
+    preferredGrantKeys,
+    setPreferredGrantKeys,
     isSudoConnected,
     sudoUserFor,
     setSudoConnectServer,
@@ -39,11 +42,42 @@ export function GrantKey() {
 
   const [phase, setPhase] = useState<Phase>(() => {
     if (site && keyGrants.has(site.id)) return "running"
-    return connected ? "confirm" : "disconnected"
+    return connected ? "loading" : "disconnected"
   })
+  const [keys, setKeys] = useState<GrantableKey[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [index, setIndex] = useState(0)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
-  // The dedicated machine key's public-key comment, for display (lazy-resolved).
-  const [keyComment, setKeyComment] = useState<string>("")
+  // Resolve the grantable keys once (machine key + discovered personal keys).
+  // Personal keys first (the daily-driver default for single-site), machine last.
+  useEffect(() => {
+    if (phase !== "loading") return
+    let cancelled = false
+    void Promise.all([ensureSpinupKey(), listPersonalKeys()])
+      .then(([machine, personal]) => {
+        if (cancelled) return
+        const machineKey: GrantableKey = { id: keyBody(machine.pub), kind: "machine", label: machine.comment, line: machine.pub, source: "spinup" }
+        const list = [...personal.filter((p) => p.id !== machineKey.id), machineKey]
+        setKeys(list)
+        // Pre-select the keys remembered from last time (∩ what's available now);
+        // first run defaults to the top personal key (ed25519-first), or the machine
+        // key if no personal keys were found on this machine.
+        const remembered = list.filter((k) => preferredGrantKeys.includes(k.id)).map((k) => k.id)
+        setSelected(new Set(remembered.length > 0 ? remembered : [personal[0]?.id ?? machineKey.id]))
+        setPhase("pick")
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setKeys([])
+          setLoadError((err as Error).message)
+          setPhase("error")
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [phase])
 
   const progress = site ? keyGrants.get(site.id) : undefined
   const dp: Phase =
@@ -55,11 +89,7 @@ export function GrantKey() {
           ? "done"
           : "error"
 
-  useEffect(() => {
-    void ensureSpinupKey()
-      .then((k) => setKeyComment(k.comment))
-      .catch(() => setKeyComment("spinup-tui"))
-  }, [])
+  const selectedKeys = keys.filter((k) => selected.has(k.id))
 
   const close = () => {
     if (site && progress && !isKeyGrantInFlight(progress)) clearGrantKey(site.id)
@@ -67,7 +97,10 @@ export function GrantKey() {
   }
 
   const fire = () => {
-    if (site) startGrantKey(site)
+    if (site && selectedKeys.length > 0) {
+      startGrantKey(site, selectedKeys.map((k) => k.line))
+      setPreferredGrantKeys(selectedKeys.map((k) => k.id)) // remember the choice
+    }
     setPhase("running")
   }
 
@@ -77,24 +110,54 @@ export function GrantKey() {
 
     if (dp === "disconnected") {
       if (name === "s" && server) {
-        // Jump to the connect-sudo overlay for this server; reopening the grant
-        // afterwards is on the user (the normal flow is connect-then-grant).
         setGrantKeySite(null)
         setSudoConnectServer(server)
       }
       return
     }
 
+    if (dp === "pick") {
+      switch (name) {
+        case "up":
+        case "k":
+          return setIndex((i) => moveSelection(i, -1, keys.length))
+        case "down":
+        case "j":
+          return setIndex((i) => moveSelection(i, 1, keys.length))
+        case "space": {
+          const k = keys[index]
+          if (!k) return
+          return setSelected((prev) => {
+            const next = new Set(prev)
+            if (next.has(k.id)) next.delete(k.id)
+            else next.add(k.id)
+            return next
+          })
+        }
+        case "return":
+        case "right":
+        case "l":
+          if (selectedKeys.length > 0) setPhase("confirm")
+          return
+      }
+      return
+    }
+
     if (dp === "confirm") {
       if (name === "y") return fire()
+      if (name === "left" || name === "h") return setPhase("pick")
       return
     }
 
     if (dp === "error") {
       if (name === "r") {
+        if (loadError) {
+          setLoadError(null)
+          return setPhase("loading")
+        }
         if (site) clearGrantKey(site.id)
-        // The server may have been disconnected if the failure was an auth error.
-        return setPhase(server && isSudoConnected(server.id) ? "confirm" : "disconnected")
+        if (!(server && isSudoConnected(server.id))) return setPhase("disconnected")
+        return setPhase(keys.length > 0 ? "pick" : "loading")
       }
       return
     }
@@ -145,14 +208,16 @@ export function GrantKey() {
     if (dp === "disconnected") {
       return (
         <Panel title=" Sudo not connected " active>
-          <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
+          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
               <text content="○ Sudo isn't connected on " fg={theme.warn} wrapMode="none" />
               <text content={server?.name ?? "this server"} fg={theme.accent} wrapMode="none" />
             </box>
             <box style={{ height: 1 }} />
-            <text content="Granting an SSH key is a privileged write, so it needs a" fg={theme.textDim} wrapMode="none" />
-            <text content="sudo connection to the server first." fg={theme.textDim} wrapMode="none" />
+            <text content="Why: each site runs as its own Linux user, and its SSH" fg={theme.textDim} wrapMode="none" />
+            <text content="keys live in that user's authorized_keys. Writing another" fg={theme.textDim} wrapMode="none" />
+            <text content="user's file needs root — so Spinup logs in as the server's" fg={theme.textDim} wrapMode="none" />
+            <text content="sudo user. (The SpinupWP API can't manage SSH keys.)" fg={theme.textDim} wrapMode="none" />
             <box style={{ height: 1 }} />
             <text content="Press s to connect sudo now (or S on the server), then" fg={theme.textFaint} wrapMode="none" />
             <text content="press K on the site again." fg={theme.textFaint} wrapMode="none" />
@@ -161,21 +226,68 @@ export function GrantKey() {
       )
     }
 
+    if (dp === "loading") {
+      return (
+        <box style={{ flexDirection: "row" }}>
+          <Spinner />
+          <text content="  Finding your SSH keys…" fg={theme.textDim} />
+        </box>
+      )
+    }
+
+    if (dp === "pick") {
+      return (
+        <Panel title=" Choose keys to grant " active>
+          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
+            <box style={{ flexDirection: "row" }}>
+              <text content="Add to " fg={theme.textDim} wrapMode="none" />
+              <text content={`${siteUser}@${site!.domain}`} fg={theme.accent} wrapMode="none" />
+            </box>
+            <box style={{ height: 1 }} />
+            {keys.map((k, i) => {
+              const sel = i === index
+              const checked = selected.has(k.id)
+              const tag = k.kind === "machine" ? "machine" : "personal"
+              const tagFg = sel ? theme.text : k.kind === "machine" ? theme.brand : theme.accent
+              return (
+                <box key={k.id} style={{ flexDirection: "row", height: 1, backgroundColor: sel ? theme.selectedBg : undefined }}>
+                  <text content={(sel ? "❯ " : "  ") + (checked ? "[x] " : "[ ] ")} fg={checked ? theme.good : theme.textDim} style={{ flexShrink: 0 }} />
+                  <text content={truncate(k.label || k.source, 40)} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+                  <text content={" " + tag} fg={tagFg} style={{ flexShrink: 0 }} />
+                </box>
+              )
+            })}
+            <box style={{ height: 1 }} />
+            <text content="Personal keys log you in as yourself; the machine key is" fg={theme.textFaint} wrapMode="none" />
+            <text content="Spinup's own identity for unattended automation." fg={theme.textFaint} wrapMode="none" />
+          </box>
+        </Panel>
+      )
+    }
+
     if (dp === "confirm") {
-      const script = buildGrantScript(siteUser, site!.domain, keyComment ? `…ed25519… ${keyComment}` : "…")
+      // Show the exact remote script with abbreviated key reprs (the full base64 is
+      // long); the labels make clear which keys land.
+      const displayLines = selectedKeys.map((k) => `…${k.kind === "machine" ? "spinup-tui" : "ed25519"}… ${k.label}`)
+      const script = buildGrantScript(siteUser, site!.domain, displayLines)
       return (
         <Panel title=" Confirm — privileged write " active>
           <box style={{ flexDirection: "column", width: 72, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
-              <text content="Add Spinup's machine key to " fg={theme.text} wrapMode="none" />
+              <text content={`Add ${selectedKeys.length} key${selectedKeys.length === 1 ? "" : "s"} to `} fg={theme.text} wrapMode="none" />
               <text content={`${siteUser}@${site!.domain}`} fg={theme.accent} wrapMode="none" />
             </box>
             <box style={{ flexDirection: "row" }}>
               <text content="via sudo as " fg={theme.textDim} wrapMode="none" />
               <text content={sudoUser ?? "—"} fg={theme.good} wrapMode="none" />
-              <text content="  ·  key: " fg={theme.textDim} wrapMode="none" />
-              <text content={keyComment || "spinup-tui"} fg={theme.textDim} wrapMode="none" />
             </box>
+            {selectedKeys.map((k) => (
+              <box key={k.id} style={{ flexDirection: "row" }}>
+                <text content="  • " fg={theme.textFaint} wrapMode="none" />
+                <text content={truncate(k.label || k.source, 44)} fg={theme.textDim} wrapMode="none" />
+                <text content={`  (${k.kind})`} fg={k.kind === "machine" ? theme.brand : theme.accent} wrapMode="none" />
+              </box>
+            ))}
             <box style={{ height: 1 }} />
             <text content="Runs on the server (idempotent — re-running is a no-op):" fg={theme.textFaint} wrapMode="none" />
             <box style={{ flexDirection: "column", backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1 }}>
@@ -185,7 +297,7 @@ export function GrantKey() {
             </box>
             <box style={{ height: 1 }} />
             <text content="This is Spinup's most powerful write. Press y to continue." fg={theme.warn} wrapMode="none" />
-            <text content="y confirm · Esc cancel" fg={theme.textFaint} wrapMode="none" />
+            <text content="y confirm · ← back · Esc cancel" fg={theme.textFaint} wrapMode="none" />
           </box>
         </Panel>
       )
@@ -196,7 +308,7 @@ export function GrantKey() {
         <box style={{ flexDirection: "column", alignItems: "center" }}>
           <box style={{ flexDirection: "row" }}>
             <Spinner />
-            <text content="  Granting the key over SSH…" fg={theme.textDim} />
+            <text content="  Granting over SSH…" fg={theme.textDim} />
           </box>
           <box style={{ height: 1 }} />
           <text content="You can press Esc — it keeps running in the background." fg={theme.textFaint} wrapMode="none" />
@@ -207,14 +319,14 @@ export function GrantKey() {
     if (dp === "done") {
       return (
         <Panel title=" Done " active>
-          <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
+          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
-              <text content="✓ Spinup's key is on " fg={theme.good} wrapMode="none" />
+              <text content="✓ Granted on " fg={theme.good} wrapMode="none" />
               <text content={progress?.target ?? `${siteUser}@${site!.domain}`} fg={theme.accent} wrapMode="none" />
             </box>
             <box style={{ height: 1 }} />
-            <text content="Spinup can now reach this site over SSH without a checkbox" fg={theme.textDim} wrapMode="none" />
-            <text content="in the SpinupWP UI. Esc to close." fg={theme.textFaint} wrapMode="none" />
+            <text content="The selected key(s) are now in the site's authorized_keys." fg={theme.textDim} wrapMode="none" />
+            <text content="Esc to close." fg={theme.textFaint} wrapMode="none" />
           </box>
         </Panel>
       )
@@ -224,7 +336,7 @@ export function GrantKey() {
     return (
       <Panel title=" Grant failed " active>
         <box style={{ flexDirection: "column", width: 72, paddingTop: 1, paddingBottom: 1 }}>
-          <text content={`✕ ${progress?.error ?? "Something went wrong."}`} fg={theme.bad} wrapMode="none" />
+          <text content={`✕ ${progress?.error ?? loadError ?? "Something went wrong."}`} fg={theme.bad} wrapMode="none" />
           <box style={{ height: 1 }} />
           <text content="r retry · Esc close" fg={theme.textFaint} wrapMode="none" />
         </box>
@@ -239,9 +351,17 @@ export function GrantKey() {
           { key: "s", label: "connect sudo" },
           { key: "esc", label: "close" },
         ]
+      case "pick":
+        return [
+          { key: "↑↓", label: "key" },
+          { key: "space", label: "toggle" },
+          { key: "⏎", label: "next" },
+          { key: "esc", label: "cancel" },
+        ]
       case "confirm":
         return [
           { key: "y", label: "confirm" },
+          { key: "←", label: "back" },
           { key: "esc", label: "cancel" },
         ]
       case "error":

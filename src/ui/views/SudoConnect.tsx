@@ -194,6 +194,15 @@ export function SudoConnect() {
     return (
       <Panel title=" Connect sudo " active>
         <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>
+          <box style={{ flexDirection: "row" }}>
+            <text content="Server  " fg={theme.textDim} wrapMode="none" />
+            <text content={server!.name} fg={theme.accent} wrapMode="none" />
+          </box>
+          <box style={{ height: 1 }} />
+          <text content="Why: writing an SSH key into a site user's authorized_keys" fg={theme.textDim} wrapMode="none" />
+          <text content="needs root, so Spinup logs in as your sudo user and" fg={theme.textDim} wrapMode="none" />
+          <text content="escalates. (The SpinupWP API can't manage SSH keys.)" fg={theme.textDim} wrapMode="none" />
+          <box style={{ height: 1 }} />
           <text content="Enter this server's SpinupWP sudo user and its sudo" fg={theme.textDim} wrapMode="none" />
           <text content="password. Held in memory for the session only." fg={theme.textDim} wrapMode="none" />
           <box style={{ height: 1 }} />

@@ -59,6 +59,9 @@ export interface AppConfig {
   // since JSON object keys are strings). Only the username is stored — the sudo
   // PASSWORD is held in-memory for the session and never written to disk.
   sudoUsers: Record<string, { user: string }>
+  // The public keys (by key body, the base64 second field) the user last chose to
+  // grant. Pre-selected in the grant-key picker so they don't re-pick every time.
+  preferredGrantKeys: string[]
 }
 
 export interface ServerProviderRef {
@@ -122,6 +125,7 @@ export interface StoredConfig {
   serverProviders?: Record<string, ServerProviderRef>
   jobs?: Record<string, StoredJob>
   sudoUsers?: Record<string, { user: string }>
+  preferredGrantKeys?: string[]
 }
 
 export function configDir(): string {
@@ -208,6 +212,7 @@ export function loadConfig(): AppConfig {
     serverProviders: stored.serverProviders ?? {},
     jobs: stored.jobs ?? {},
     sudoUsers: stored.sudoUsers ?? {},
+    preferredGrantKeys: stored.preferredGrantKeys ?? [],
   }
 }
 

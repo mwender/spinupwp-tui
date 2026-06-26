@@ -282,9 +282,13 @@ interface StoreValue extends DataState {
   // In-flight (and just-settled) key grants, keyed by site id. Tracked in the
   // store so the grant survives closing the modal (mirrors the other writes).
   keyGrants: Map<number, KeyGrantProgress>
-  // Drop Spinup's dedicated machine key into the site user's authorized_keys via
-  // the server's sudo user. Reads the sudo user + (in-memory) password from the store.
-  startGrantKey: (site: Site) => void
+  // Grant the given public keys (machine and/or personal) to the site user's
+  // authorized_keys via the server's sudo user. Reads the sudo user + (in-memory)
+  // password from the store; the overlay resolves which key lines to pass.
+  startGrantKey: (site: Site, pubkeys: string[]) => void
+  // The key bodies the user last chose to grant (pre-selected next time), persisted.
+  preferredGrantKeys: string[]
+  setPreferredGrantKeys: (ids: string[]) => void
   clearGrantKey: (siteId: number) => void
   // Per-server sudo user (persisted, username only) for privileged writes.
   sudoUserFor: (serverId: number) => string | undefined
@@ -512,6 +516,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     () => new Map(Object.entries(cfgRef.current.sudoUsers).map(([id, v]) => [Number(id), v.user])),
   )
   const sudoPwRef = useRef<Map<number, string>>(new Map())
+  const [preferredGrantKeys, setPreferredGrantKeysState] = useState<string[]>(() => [...cfgRef.current.preferredGrantKeys])
   // Servers with sudo "connected" this session (validated user + held password). The
   // password lives in sudoPwRef (in-memory); this set just tracks which servers
   // are connected so the UI can show ● and privileged actions can gate on it.
@@ -1092,6 +1097,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const setPreferredGrantKeys = useCallback((ids: string[]) => {
+    cfgRef.current.preferredGrantKeys = ids
+    setPreferredGrantKeysState(ids)
+    void saveConfig({ preferredGrantKeys: ids })
+  }, [])
+
   const setGrant = (siteId: number, progress: KeyGrantProgress) =>
     setKeyGrants((prev) => new Map(prev).set(siteId, progress))
 
@@ -1107,18 +1118,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   const startGrantKey = useCallback(
-    (site: Site) => {
+    (site: Site, pubkeys: string[]) => {
       const existing = keyGrants.get(site.id)
       if (existing && existing.status !== "done" && existing.status !== "error") return // already running
       const server = servers.find((s) => s.id === site.server_id)
       if (!server) return setGrant(site.id, { status: "error", error: "Couldn't find the site's server." })
       const sudoUser = sudoUsers.get(server.id)
       if (!sudoUser) return setGrant(site.id, { status: "error", error: "No sudo user set for this server." })
+      if (pubkeys.length === 0) return setGrant(site.id, { status: "error", error: "No keys selected to grant." })
       const sudoPassword = sudoPwRef.current.get(server.id) ?? ""
 
       const run = async () => {
         setGrant(site.id, { status: "granting" })
-        const res = await grantSiteSshKey(server, site, { sudoUser, sudoPassword })
+        const res = await grantSiteSshKey(server, site, { sudoUser, sudoPassword, pubkeys })
         if (res.ok) {
           setGrant(site.id, { status: "done", target: res.target })
         } else {
@@ -1941,6 +1953,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     keyGrants,
     startGrantKey,
     clearGrantKey,
+    preferredGrantKeys,
+    setPreferredGrantKeys,
     sudoUserFor,
     sudoConnectServer,
     setSudoConnectServer,

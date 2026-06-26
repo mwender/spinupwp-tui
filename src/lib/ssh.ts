@@ -9,9 +9,9 @@
 // from the user's terminal, we fail fast with a clear hint instead of hanging.
 // A persistent ControlMaster connection makes repeated polls fast.
 
-import { hostname } from "node:os"
+import { hostname, homedir } from "node:os"
 import { join } from "node:path"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { mkdir, chmod } from "node:fs/promises"
 import { keysDir } from "../config.ts"
 import type { Server, Site } from "../api/types.ts"
@@ -287,24 +287,33 @@ function shQuote(v: string): string {
   return `'${v.replace(/'/g, `'\\''`)}'`
 }
 
-// The idempotent remote script that ensures the key line is present in the site
-// user's authorized_keys (mode 600, owned siteuser:siteuser). `grep -qxF` makes
-// re-running a no-op; it echoes ===GRANTED only after verifying the line landed.
-// Exported so the confirm overlay can show the exact remote command before firing.
-export function buildGrantScript(siteUser: string, domain: string, pubkey: string): string {
+// The idempotent remote script that ensures EACH given key line is present in the
+// site user's authorized_keys (mode 600, owned siteuser:siteuser). `grep -qxF` makes
+// re-running a no-op; it verifies every key landed before echoing ===GRANTED, so a
+// partial write reports failure. Exported so the confirm overlay can show the exact
+// remote command before firing.
+export function buildGrantScript(siteUser: string, domain: string, pubkeys: string[]): string {
   const U = shQuote(siteUser)
   const H = shQuote(siteHome(domain))
-  const K = shQuote(pubkey)
-  return [
+  const lines = [
     `set -e`,
-    `U=${U}; H=${H}; K=${K}`,
+    `U=${U}; H=${H}`,
     `install -d -m 700 -o "$U" -g "$U" "$H/.ssh"`,
     `touch "$H/.ssh/authorized_keys"`,
-    `grep -qxF "$K" "$H/.ssh/authorized_keys" || printf '%s\\n' "$K" >> "$H/.ssh/authorized_keys"`,
-    `chown "$U:$U" "$H/.ssh/authorized_keys"`,
-    `chmod 600 "$H/.ssh/authorized_keys"`,
-    `grep -qxF "$K" "$H/.ssh/authorized_keys" && echo ===GRANTED`,
-  ].join("\n")
+  ]
+  // Append each key only if absent (idempotent), keyed off the exact line.
+  for (const k of pubkeys) {
+    const K = shQuote(k)
+    lines.push(`grep -qxF ${K} "$H/.ssh/authorized_keys" || printf '%s\\n' ${K} >> "$H/.ssh/authorized_keys"`)
+  }
+  lines.push(`chown "$U:$U" "$H/.ssh/authorized_keys"`)
+  lines.push(`chmod 600 "$H/.ssh/authorized_keys"`)
+  // Verify every key is present; bail (no ===GRANTED) if any is missing.
+  for (const k of pubkeys) {
+    lines.push(`grep -qxF ${shQuote(k)} "$H/.ssh/authorized_keys" || exit 7`)
+  }
+  lines.push(`echo ===GRANTED`)
+  return lines.join("\n")
 }
 
 // A non-interactive ssh command, optionally feeding a sudo password (then a
@@ -359,28 +368,24 @@ export type GrantKeyResult =
   | { ok: true; target: string }
   | { ok: false; target: string; error: string }
 
-// Append Spinup's dedicated machine key to a site user's authorized_keys, via the
-// server's sudo user. Probes `sudo -n true` first to fail cleanly (can't-sudo /
-// can't-connect) BEFORE sending the secret; if a password is required it's fed on
-// stdin to `sudo -S`. Idempotent (re-running never duplicates the line).
+// Append the given public keys to a site user's authorized_keys, via the server's
+// sudo user. Probes `sudo -n true` first to fail cleanly (can't-sudo / can't-connect)
+// BEFORE sending the secret; if a password is required it's fed on stdin to `sudo -S`.
+// Idempotent (re-running never duplicates a line). The caller resolves which keys to
+// deploy (machine key via ensureSpinupKey, personal keys via listPersonalKeys).
 export async function grantSiteSshKey(
   server: Server,
   site: Site,
-  opts: { sudoUser: string; sudoPassword: string },
+  opts: { sudoUser: string; sudoPassword: string; pubkeys: string[] },
 ): Promise<GrantKeyResult> {
   const ip = server.ip_address
   if (!ip) return { ok: false, target: "(no IP)", error: "Server has no IP address." }
   const siteUser = site.site_user
   if (!siteUser) return { ok: false, target: ip, error: "Site has no site_user — can't locate its authorized_keys." }
+  const keys = opts.pubkeys.map((k) => k.trim()).filter(Boolean)
+  if (keys.length === 0) return { ok: false, target: `${siteUser}@${ip}`, error: "No keys selected to grant." }
   const target = `${opts.sudoUser}@${ip}`
   const port = server.ssh_port ?? null
-
-  let pubkey: string
-  try {
-    pubkey = (await ensureSpinupKey()).pub
-  } catch (err) {
-    return { ok: false, target, error: (err as Error).message }
-  }
 
   // 1) Probe: confirms we can log in AND can sudo, without sending the password.
   //    `sudo -n true` exits 0 for passwordless sudo, non-zero otherwise.
@@ -402,7 +407,7 @@ export async function grantSiteSshKey(
   }
 
   // 2) Act: one idempotent script under sudo, password (if needed) fed on stdin.
-  const script = buildGrantScript(siteUser, site.domain, pubkey)
+  const script = buildGrantScript(siteUser, site.domain, keys)
   const payload = needPassword ? `${opts.sudoPassword}\n${script}\n` : `${script}\n`
   const res = await runSshStdin(target, port, "sudo -S -p '' bash -s", payload, 30000)
   if (res.code !== 0 || !res.stdout.includes("===GRANTED")) {
@@ -414,6 +419,86 @@ export async function grantSiteSshKey(
   }
   return { ok: true, target: `${siteUser}@${ip}` }
 }
+
+// A public key the user can choose to grant. The machine key (`spinup-tui`) plus any
+// personal keys discovered on this machine. `line` is the full authorized_keys line.
+export interface GrantableKey {
+  id: string // stable id for selection (the key body, base64)
+  kind: "machine" | "personal"
+  label: string // human label (comment or filename)
+  line: string // the full "ssh-… AAAA… comment" line
+  source: string // "spinup" | "~/.ssh/id_ed25519.pub" | "ssh-agent"
+}
+
+// The base64 body of a public-key line — the stable identity used to dedupe keys
+// across the agent and ~/.ssh, and to match what SpinupWP keys off.
+function keyBody(line: string): string {
+  const parts = line.trim().split(/\s+/)
+  return parts[1] ?? ""
+}
+
+function parsePubLine(line: string): { type: string; body: string; comment: string } | null {
+  const t = line.trim()
+  if (!t || !/^(ssh|ecdsa|sk-)/.test(t)) return null
+  const parts = t.split(/\s+/)
+  if (parts.length < 2) return null
+  return { type: parts[0], body: parts[1], comment: parts.slice(2).join(" ") }
+}
+
+// Discover the user's PERSONAL public keys to offer alongside the machine key:
+// every ~/.ssh/*.pub plus whatever the ssh-agent currently holds (`ssh-add -L`),
+// deduped by key body. These are the keys a human uses to log in as themselves.
+export async function listPersonalKeys(): Promise<GrantableKey[]> {
+  const byBody = new Map<string, GrantableKey>()
+  const add = (line: string, label: string, source: string) => {
+    const parsed = parsePubLine(line)
+    if (!parsed) return
+    if (byBody.has(parsed.body)) return // first source wins (files are listed first)
+    byBody.set(parsed.body, {
+      id: parsed.body,
+      kind: "personal",
+      label: parsed.comment || label,
+      line: line.trim(),
+      source,
+    })
+  }
+
+  // ~/.ssh/*.pub
+  try {
+    const dir = join(homedir(), ".ssh")
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".pub")) continue
+      try {
+        add(readFileSync(join(dir, name), "utf8"), name, `~/.ssh/${name}`)
+      } catch {
+        /* unreadable — skip */
+      }
+    }
+  } catch {
+    /* no ~/.ssh — fine */
+  }
+
+  // ssh-agent (keys the user has loaded). Best-effort; ignore if no agent.
+  try {
+    const proc = Bun.spawn(["ssh-add", "-L"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+    const code = await proc.exited
+    if (code === 0) {
+      const out = await new Response(proc.stdout as ReadableStream<Uint8Array>).text()
+      for (const line of out.split("\n")) add(line, "ssh-agent key", "ssh-agent")
+    }
+  } catch {
+    /* no ssh-add / no agent — fine */
+  }
+
+  // ed25519 first (the modern default people actually use), then the rest in
+  // discovery order — so the first entry is the most likely "my key".
+  return [...byBody.values()].sort((a, b) => {
+    const rank = (k: GrantableKey) => (k.line.startsWith("ssh-ed25519") ? 0 : 1)
+    return rank(a) - rank(b)
+  })
+}
+
+export { keyBody }
 
 export type SudoVerifyResult = { ok: true } | { ok: false; error: string }
 
