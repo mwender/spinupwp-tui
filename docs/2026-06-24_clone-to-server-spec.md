@@ -567,10 +567,32 @@ recoverable from the header badge / its server until dismissed.
    **expected to fail** (no `auth.json` yet), so after seeding we re-deploy via
    `POST /sites/{id}/git/deploy` and that's the build that must go green.
 
-## Open questions (verify on first real run)
+## Open questions — ANSWERED 2026-06-27 (see `docs/2026-06-27_site-creation-api-findings.md`)
 
-1. **`blank` + database** — does `blank` auto-create a DB, or must we pass
-   `database[...]`? (We pass it regardless with matched `table_prefix`.)
-2. **`git` create payload** — confirm the API accepts `git[repo|branch|deploy_script|
-   push_enabled]` + our `database[...]` on a `git`-method create. (Deploys don't touch
-   `.env` — gitignored — so the `.env` re-stamp needs no special sequencing.)
+Resolved by building the real test source (`wp.spinuptui.com` + `bedrock.spinuptui.com`
+on web1). **Several assumptions here were wrong — corrections, in order of impact:**
+
+1. **`deploy_script` is TOP-LEVEL on `POST /sites`, NOT inside `git`.** The git block
+   uses `push_to_deploy` (not `push_enabled`) + `always_run_deploy_script` +
+   `deploy_key_enabled`/`deploy_key{}`. Response normalizes to
+   `git.{deploy_script,push_enabled,deployment_url}`. So `CreateSitePayload` needs a
+   top-level `deploy_script` + a `git` block with `push_to_deploy`/`always_run_deploy_script`
+   — NOT the `git[deploy_script|push_enabled]` shape assumed above.
+2. **`POST /sites/{id}/git/deploy` does NOT run the deploy script** — only `git pull` +
+   checkout (verified even with `vendor/` deleted and `always_run_deploy_script:true`).
+   So **a fresh Bedrock dest is never built by the API deploy** → the wizard must run
+   **`composer install -o --no-dev` over its sudo SSH connection** (NOT rely on the
+   `git/deploy` re-trigger described in "Bedrock deploy ordering" above). The create
+   step also only *clones* — it does not install WP or run the script.
+3. **`git` create accepts `database{}`** — yes; it provisions a DB. `table_prefix`
+   echoes `null` but applies; the DB password is never returned, so always *send* it.
+   (`blank`/Standard-WP `database{}` likewise accepted.)
+4. **No site/git update endpoint** (only `PUT /sites/{id}/php`) → get the create payload
+   right or delete + recreate. **Deleting a site leaves its DB orphaned** → a retried
+   dest create can collide on `database.name`; clean or uniquify.
+5. **`site_user` must be ≥3 chars** (affects "reuse source site_user verbatim").
+6. **A git/Bedrock site is `is_wordpress:false`** even once WP is installed → branch on
+   `git.repo`, not `is_wordpress` (as already planned). The deploy key to add to the repo
+   is the **server's `git_publickey`** (`GET /servers/{id}`).
+7. Deploy-script flag: the canonical `--optimize-autoload` is invalid for `composer
+   install` (use `-o` / `--optimize-autoloader`).
