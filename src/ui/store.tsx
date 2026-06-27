@@ -120,6 +120,49 @@ export function isVanityInFlight(j: VanityJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
 }
 
+// Clone a server to a new server (backlog item 5). Five server-level steps wrapping
+// an N-wide per-site fan-out. The two heavy steps (clone, cutover) expand into a
+// per-site roster. See docs/2026-06-24_clone-to-server-spec.md. (Slice 2 = shell +
+// Plan; server/trust/clone/cutover orchestration land in later slices.)
+export type CloneStep = "plan" | "server" | "trust" | "clone" | "cutover" | "done" | "error"
+export type CloneSiteStep = "create" | "pull" | "config" | "deploy" | "verify" | "done" | "error"
+export interface CloneSiteState {
+  sourceSiteId: number
+  domain: string
+  selected: boolean // unchecked in Plan → skipped entirely
+  sizeBytes?: number // webroot + DB estimate (sizing + progress); undefined until sized
+  stack: "wp" | "bedrock" // from source git.repo → drives blank-vs-git create
+  excludeUploads: boolean // per-site opt-out (default false = sync uploads/)
+  destSiteId?: number
+  step: CloneSiteStep
+  failedStep?: CloneSiteStep
+  error?: string
+}
+export interface CloneJob {
+  sourceServerId: number
+  sourceServerName: string
+  step: CloneStep
+  failedStep?: CloneStep
+  error?: string
+  // captured inputs (server step fills/edits these; Plan seeds from the source)
+  specs: { providerName: string; region: string; size: string; cost?: number; enableBackups?: boolean }
+  destServerName: string
+  concurrency: number // default 3 (protects the live source's I/O)
+  lowerTtlEarly: boolean
+  destServerId?: number
+  destServerIp?: string
+  sites: CloneSiteState[] // the fan-out
+  startedAt: number
+}
+export function isCloneInFlight(j: CloneJob | null | undefined): boolean {
+  return j != null && j.step !== "done" && j.step !== "error"
+}
+// Detect a site's stack the way the clone branches: a git repo → Bedrock, else
+// Standard WP (is_wordpress is unreliable for git sites — see the API findings doc).
+export function cloneStackFor(site: Site): "wp" | "bedrock" {
+  return site.git?.repo ? "bedrock" : "wp"
+}
+
 // Resumable-job ids. The server create is a singleton; the per-site jobs are
 // keyed by site id so several can be in flight (and resume) at once.
 const NEW_SERVER_JOB_ID = "newServer"
@@ -265,6 +308,18 @@ interface StoreValue extends DataState {
   vanityStopWaiting: () => void // from keep-waiting: stop waiting, continue the normal flow
   vanityRetry: () => void // re-enter the failed step
   clearVanity: () => void
+  // Clone a server to a new server (item 5). `cloneServer` opens the wizard; `cloneJob`
+  // is the (Plan-draft then running) job whose heavy work lives in its `sites[]` vector.
+  cloneServer: Server | null
+  setCloneServer: (s: Server | null) => void
+  cloneJob: CloneJob | null
+  beginClone: (server: Server) => void // build the Plan draft (sites[] from the source)
+  toggleCloneSite: (sourceSiteId: number) => void // include/exclude a site in Plan
+  toggleCloneSiteUploads: (sourceSiteId: number) => void // per-site uploads opt-out
+  setCloneConcurrency: (n: number) => void // throttle (1..N, protects the source)
+  toggleCloneLowerTtl: () => void // drop apex/www TTLs at the start so cutover is fast
+  cloneAdvanceFromPlan: () => void // Plan → New server step
+  clearClone: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
   // session. loadProviderMetadata fetches lazily on demand.
   providerMetadata: Map<string, ProviderMetadata>
@@ -557,6 +612,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // `vanityJob` is the resumable progress that outlives the overlay.
   const [vanityServer, setVanityServer] = useState<Server | null>(null)
   const [vanityJob, setVanityJob] = useState<VanityJob | null>(null)
+  // Clone-to-new-server: `cloneServer` drives the wizard overlay; `cloneJob` is the
+  // Plan draft (and, in later slices, the running fan-out).
+  const [cloneServer, setCloneServer] = useState<Server | null>(null)
+  const [cloneJob, setCloneJob] = useState<CloneJob | null>(null)
   const [providerMetadata, setProviderMetadata] = useState<Map<string, ProviderMetadata>>(new Map())
   const [providerMetadataLoading, setProviderMetadataLoading] = useState<Set<string>>(new Set())
   const [providerMetadataError, setProviderMetadataError] = useState<Map<string, string>>(new Map())
@@ -2063,6 +2122,67 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void removeJob(VANITY_JOB_ID)
   }, [])
 
+  // ---- Clone a server to a new server (item 5) -----------------------------
+
+  // Build the Plan draft from the source server: every site becomes a row, all
+  // selected by default, stack detected from git.repo. The draft lives in memory
+  // (step "plan") — nothing is created or persisted until the user commits at the
+  // New-server step (the first prod write, hard-gated).
+  const beginClone = useCallback(
+    (server: Server) => {
+      if (cloneJob && isCloneInFlight(cloneJob) && cloneJob.sourceServerId === server.id) return // reopen in progress
+      const srcSites = sitesForServer(server.id)
+      const sites: CloneSiteState[] = srcSites.map((s) => ({
+        sourceSiteId: s.id,
+        domain: s.domain,
+        selected: true,
+        stack: cloneStackFor(s),
+        excludeUploads: false,
+        step: "create",
+      }))
+      const draft: CloneJob = {
+        sourceServerId: server.id,
+        sourceServerName: server.name,
+        step: "plan",
+        specs: { providerName: server.provider_name ?? "", region: server.region ?? "", size: server.size ?? "" },
+        destServerName: "",
+        concurrency: 3,
+        lowerTtlEarly: false,
+        sites,
+        startedAt: Date.now(),
+      }
+      setCloneServer(server)
+      setCloneJob(draft)
+    },
+    [cloneJob, sitesForServer],
+  )
+
+  const mutateCloneSite = useCallback((sourceSiteId: number, fn: (s: CloneSiteState) => CloneSiteState) => {
+    setCloneJob((j) => (j ? { ...j, sites: j.sites.map((s) => (s.sourceSiteId === sourceSiteId ? fn(s) : s)) } : j))
+  }, [])
+
+  const toggleCloneSite = useCallback(
+    (id: number) => mutateCloneSite(id, (s) => ({ ...s, selected: !s.selected })),
+    [mutateCloneSite],
+  )
+  const toggleCloneSiteUploads = useCallback(
+    (id: number) => mutateCloneSite(id, (s) => ({ ...s, excludeUploads: !s.excludeUploads })),
+    [mutateCloneSite],
+  )
+  const setCloneConcurrency = useCallback((n: number) => {
+    setCloneJob((j) => (j ? { ...j, concurrency: Math.max(1, Math.min(8, n)) } : j))
+  }, [])
+  const toggleCloneLowerTtl = useCallback(() => {
+    setCloneJob((j) => (j ? { ...j, lowerTtlEarly: !j.lowerTtlEarly } : j))
+  }, [])
+  const cloneAdvanceFromPlan = useCallback(() => {
+    setCloneJob((j) => (j && j.step === "plan" && j.sites.some((s) => s.selected) ? { ...j, step: "server" } : j))
+  }, [])
+  const clearClone = useCallback(() => {
+    setCloneServer(null)
+    setCloneJob(null)
+  }, [])
+
   // Resume persisted jobs after a restart. Runs exactly once (the ref guards
   // against dep churn re-firing it). Iterates every in-flight job and dispatches by
   // kind: event-backed jobs (newServer, phpUpgrade) reconnect their poller via the
@@ -2168,6 +2288,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     vanityStopWaiting,
     vanityRetry,
     clearVanity,
+    cloneServer,
+    setCloneServer,
+    cloneJob,
+    beginClone,
+    toggleCloneSite,
+    toggleCloneSiteUploads,
+    setCloneConcurrency,
+    toggleCloneLowerTtl,
+    cloneAdvanceFromPlan,
+    clearClone,
     providerMetadata,
     providerMetadataLoading,
     providerMetadataError,

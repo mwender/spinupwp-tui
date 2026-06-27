@@ -38,6 +38,7 @@ const NAV: Section = {
     ["w", "Open in SpinupWP web app"],
     ["a", "Server actions (reboot/restart)"],
     ["c", "Create a new server"],
+    ["C", "Clone this server to a new one"],
     ["S", "Connect sudo on the server"],
     ["u", "Change PHP version"],
     ["K", "Grant Spinup's SSH key (sudo)"],

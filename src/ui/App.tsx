@@ -23,6 +23,7 @@ import { MediaFallback } from "./views/MediaFallback.tsx"
 import { ServerActions } from "./views/ServerActions.tsx"
 import { NewServer } from "./views/NewServer.tsx"
 import { VanityNewSite } from "./views/VanityNewSite.tsx"
+import { CloneWizard } from "./views/CloneWizard.tsx"
 import { LocalLinkOverlay } from "./views/LocalLink.tsx"
 import { Discover } from "./views/Discover.tsx"
 import { Forgotten } from "./views/Forgotten.tsx"
@@ -60,6 +61,7 @@ export function App() {
     store.serverActionsServer !== null ||
     store.newServerOpen ||
     store.vanityServer !== null ||
+    store.cloneServer !== null ||
     store.localLinkSite !== null ||
     store.discoverOpen ||
     store.forgottenOpen ||
@@ -115,6 +117,9 @@ export function App() {
 
     // The vanity-site overlay owns the keyboard while open.
     if (store.vanityServer) return
+
+    // The clone wizard owns the keyboard while open.
+    if (store.cloneServer) return
 
     // The local-link overlay owns the keyboard while open.
     if (store.localLinkSite) return
@@ -209,6 +214,7 @@ export function App() {
       {store.serverActionsServer && <ServerActions />}
       {store.newServerOpen && <NewServer />}
       {store.vanityServer && <VanityNewSite />}
+      {store.cloneServer && <CloneWizard />}
       {store.localLinkSite && <LocalLinkOverlay />}
       {store.discoverOpen && <Discover />}
       {store.forgottenOpen && <Forgotten />}
