@@ -62,6 +62,7 @@ export type StepState = "done" | "active" | "pending" | "failed" | "waiting"
 export interface StepRow {
   label: string
   state: StepState
+  detail?: string // optional trailing text (e.g. a timer), shown dim after the label
 }
 
 export function Steps({ rows }: { rows: StepRow[] }) {
@@ -82,6 +83,7 @@ export function Steps({ rows }: { rows: StepRow[] }) {
             fg={r.state === "pending" ? theme.textFaint : r.state === "waiting" ? theme.warn : theme.text}
             wrapMode="none"
           />
+          {r.detail ? <text content={`  ${r.detail}`} fg={theme.textDim} wrapMode="none" /> : null}
         </box>
       ))}
     </box>

@@ -74,6 +74,21 @@ versions; such changes are called out here.
   an in-flight provision (or vanity-site build) from any tab.
 - **Servers with no sites are flagged in amber** in the Servers list — an empty
   server is a dead end until it has a site (press `V` to create one).
+- **The vanity build's "Wait for DNS to propagate" step now shows a timer.** A
+  live count-down (`m:ss left`) ticks through the ~2-minute window; if it lapses you
+  can **keep waiting** (`w`) and the timer flips to a count-up (`m:ss elapsed`) from
+  that same point so you can see exactly how long it's been — without being prompted
+  again. From there, **`c` continues now** (create the site and move on) or **`s`
+  skips SSL** (publish over HTTP and add the certificate later).
+- **DNS connection resolution re-checks itself instead of trusting a stale cache.**
+  Writing the vanity A record (and, later, the clone DNS cutover) used a cached list
+  of which zones each connected account serves; a zone you registered *today* wasn't
+  in it, so the build failed with a misleading "no editable DNS connection serves
+  this zone." Now, when no account matches but one *is* connected for that provider,
+  Spinup re-verifies that provider's accounts and retries before giving up — so a
+  freshly-registered zone just works, no manual refresh. The cache also expires
+  entries after 24h so they refresh on their own. The error messages now distinguish
+  "no account connected" from "connected but it doesn't serve this zone."
 
 ## [0.8.0] - 2026-06-23
 

@@ -17,7 +17,7 @@ import type { Stack } from "../lib/stack.ts"
 import { openTerminalAt, openUrl, openSshSession } from "../lib/open.ts"
 import { gitDrift, type Drift } from "../lib/gitStatus.ts"
 import { probeSite } from "../lib/probe.ts"
-import { resolveZone, normalizeDomain, candidateHostnames } from "../lib/dns.ts"
+import { resolveZone, normalizeDomain, candidateHostnames, type ZoneHost } from "../lib/dns.ts"
 import { queryAuthoritative } from "../lib/dnsQuery.ts"
 import { DnsCache, type CachedDns } from "../lib/dnsCache.ts"
 import {
@@ -113,6 +113,8 @@ export interface VanityJob {
   sslSkipped?: boolean
   propagateTimedOut?: boolean // DNS hasn't resolved within the window → offer skip/wait
   propagateStartedAt?: number
+  keepWaiting?: boolean // user chose "keep waiting" after the first timeout → poll
+                        // indefinitely (count-up in the UI), no more timeout prompts
 }
 export function isVanityInFlight(j: VanityJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
@@ -123,7 +125,9 @@ export function isVanityInFlight(j: VanityJob | null | undefined): boolean {
 const NEW_SERVER_JOB_ID = "newServer"
 const VANITY_JOB_ID = "vanity"
 const VANITY_POLL_MS = 2500
-const VANITY_PROPAGATE_TIMEOUT_MS = 120_000 // ~2 min, then offer skip/keep-waiting
+// ~2 min, then offer skip/keep-waiting. Exported so the overlay can render the
+// matching count-down (and, after keep-waiting, the count-up from this baseline).
+export const VANITY_PROPAGATE_TIMEOUT_MS = 120_000
 const phpJobId = (siteId: number) => `phpUpgrade:${siteId}`
 const dbSyncJobId = (siteId: number) => `dbSync:${siteId}`
 const dbBackupJobId = (siteId: number) => `dbBackup:${siteId}`
@@ -257,7 +261,8 @@ interface StoreValue extends DataState {
   startVanity: (server: Server, opts: { siteUser: string; skipSsl?: boolean }) => void
   vanitySshKeyDone: () => void // user confirms the SSH key is on the server → seed
   vanitySkipSsl: () => void // from the propagation-timeout prompt: create site, skip HTTPS
-  vanityKeepWaiting: () => void // from the prompt: reset the propagation window
+  vanityKeepWaiting: () => void // from the prompt: poll indefinitely (count-up), no re-prompt
+  vanityStopWaiting: () => void // from keep-waiting: stop waiting, continue the normal flow
   vanityRetry: () => void // re-enter the failed step
   clearVanity: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
@@ -467,6 +472,43 @@ interface StoreValue extends DataState {
   isPhpEol: (version: string | null | undefined) => boolean
   // PHP versions to offer in the upgrade picker (dynamic; current always included).
   offeredPhpVersions: (current?: string | null) => string[]
+}
+
+// Pure: from a connId→verified-zones map, find the editable account that SERVES a
+// zone. Mirrors the cached `matchedAccount` below, but takes the zone map explicitly
+// so a just-re-verified snapshot (read straight off the cache ref) can be matched
+// without waiting for the `providerZones` React state to settle. Provider-scoped:
+// a Route 53 zone is only reachable via a connected AWS account, etc.
+function matchAccountFrom(
+  zonesByConn: Map<string, VerifiedConn>,
+  allConnections: Connection[],
+  apex: string,
+  hostKey: string,
+  liveNs: string[],
+): { editable: boolean; label: string; id: string } {
+  const prov = apiProviderFor(hostKey)
+  if (!prov) return { editable: false, label: "", id: "" }
+  const candidates: { id: string; label: string; ns: string[] }[] = []
+  for (const conn of allConnections) {
+    if (conn.provider !== prov) continue
+    const v = zonesByConn.get(conn.id)
+    if (!v?.ok) continue
+    for (const z of v.zones) if (z.apex === apex) candidates.push({ id: conn.id, label: conn.label || conn.id, ns: z.nameservers ?? [] })
+  }
+  if (candidates.length === 0) return { editable: false, label: "", id: "" }
+  const withNs = candidates.filter((c) => c.ns.length > 0)
+  // If we know any candidate's NS, require a live match to count as editable
+  // (catches stale / duplicate zones across accounts).
+  if (withNs.length > 0 && liveNs.length > 0) {
+    const live = withNs.find((c) => nameserversMatch(c.ns, liveNs))
+    if (live) return { editable: true, label: live.label, id: live.id }
+    // Some candidates have NS but none serve the live zone → only editable if
+    // another candidate's NS are unknown (can't disprove it).
+    const unknown = candidates.find((c) => c.ns.length === 0)
+    return unknown ? { editable: true, label: unknown.label, id: unknown.id } : { editable: false, label: "", id: "" }
+  }
+  // No NS info to match on → membership (provider-scoped) is the best we have.
+  return { editable: true, label: candidates[0]!.label, id: candidates[0]!.id }
 }
 
 const StoreContext = createContext<StoreValue | null>(null)
@@ -1516,49 +1558,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const allConnections = useMemo(() => ALL_PROVIDERS.flatMap((p) => connections[p]), [connections])
   const connectionsFor = useCallback((provider: ConnProvider) => connections[provider], [connections])
 
-  // Zones we can reach, keyed by `${provider}:${apex}` → list of candidate
-  // accounts (connection id + label + the account-zone's assigned nameservers).
-  // Provider-scoped: a Cloudflare-hosted zone is only reachable via a connected
-  // CLOUDFLARE account.
-  const reachable = useMemo(() => {
-    const m = new Map<string, { id: string; label: string; ns: string[] }[]>()
-    for (const conn of allConnections) {
-      const v = providerZones.get(conn.id)
-      if (v?.ok)
-        for (const z of v.zones) {
-          const key = `${conn.provider}:${z.apex}`
-          const list = m.get(key) ?? []
-          list.push({ id: conn.id, label: conn.label || conn.id, ns: z.nameservers ?? [] })
-          m.set(key, list)
-        }
-    }
-    return m
-  }, [allConnections, providerZones])
-
   // Pick the candidate account that actually SERVES a zone, using the live
   // authoritative nameservers when the account's NS are known (catches stale /
   // duplicate zones across accounts). When no NS are known (e.g. AWS), fall back
   // to membership — provider-scoping already guarantees the right provider.
   const matchedAccount = useCallback(
-    (apex: string, hostKey: string, liveNs: string[]): { editable: boolean; label: string; id: string } => {
-      const prov = apiProviderFor(hostKey)
-      if (!prov) return { editable: false, label: "", id: "" }
-      const candidates = reachable.get(`${prov}:${apex}`) ?? []
-      if (candidates.length === 0) return { editable: false, label: "", id: "" }
-      const withNs = candidates.filter((c) => c.ns.length > 0)
-      // If we know any candidate's NS, require a live match to count as editable.
-      if (withNs.length > 0 && liveNs.length > 0) {
-        const live = withNs.find((c) => nameserversMatch(c.ns, liveNs))
-        if (live) return { editable: true, label: live.label, id: live.id }
-        // Some candidates have NS but none serve the live zone → only editable if
-        // another candidate's NS are unknown (can't disprove it).
-        const unknown = candidates.find((c) => c.ns.length === 0)
-        return unknown ? { editable: true, label: unknown.label, id: unknown.id } : { editable: false, label: "", id: "" }
-      }
-      // No NS info to match on → membership (provider-scoped) is the best we have.
-      return { editable: true, label: candidates[0].label, id: candidates[0].id }
-    },
-    [reachable],
+    (apex: string, hostKey: string, liveNs: string[]): { editable: boolean; label: string; id: string } =>
+      matchAccountFrom(providerZones, allConnections, apex, hostKey, liveNs),
+    [providerZones, allConnections],
   )
 
   const accessForZone = useCallback(
@@ -1660,6 +1667,54 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       const conn = allConnections.find((c) => c.id === id)
       if (conn) void verifyAndCache(conn)
+    },
+    [allConnections, verifyAndCache],
+  )
+
+  // Resolve a hostname to its apex zone + the editable connection that serves it.
+  // The load-bearing bit for freshly-registered zones: when the cached zone list
+  // has no match but an account for that provider IS connected, the cache is most
+  // likely just stale (a zone added since the last verify) — so we re-verify that
+  // provider's accounts and retry against the fresh result before giving up. This
+  // is what lets a vanity build for a zone you registered today succeed without a
+  // manual cache bust. The two failure messages distinguish "no account connected"
+  // from "account connected but it doesn't serve this zone" so the remedy is right.
+  //
+  // PROVIDER-AGNOSTIC by construction (dispatches via apiProviderFor + the per-
+  // provider verifyProviderConnection), so Cloudflare/GoDaddy/etc. get the self-heal
+  // for free — no per-provider code. But the MATCH inside matchAccountFrom differs by
+  // provider and that matters here: AWS verify returns NO nameservers (rate-limit
+  // cost) → membership match, so a re-verified R53 zone matches immediately. Cloudflare
+  // verify DOES return nameservers → live-NS-must-match, so a freshly-ADDED but NOT-YET-
+  // DELEGATED CF zone (registrar NS not switched) correctly stays "doesn't serve (re-
+  // checked just now)" — re-verify can't cure a zone that genuinely isn't live yet; the
+  // user must finish NS delegation. See memory dns-zone-resolution-staleness.
+  const resolveZoneConn = useCallback(
+    async (hostname: string): Promise<{ zone: ZoneHost; conn: Connection } | { error: string }> => {
+      const zone = await resolveZone(hostname)
+      if (!zone) return { error: `Couldn't find the DNS zone for ${hostname}.` }
+      // Match against the cache ref (not the providerZones state) so a re-verify
+      // below is visible immediately within this same async flow.
+      const find = (): Connection | null => {
+        const m = matchAccountFrom(providersCacheRef.current!.snapshot(), allConnections, zone.apex, zone.providerKey, zone.nameservers)
+        return m.editable && m.id ? allConnections.find((c) => c.id === m.id) ?? null : null
+      }
+      let conn = find()
+      if (!conn) {
+        const prov = apiProviderFor(zone.providerKey)
+        const accounts = prov ? allConnections.filter((c) => c.provider === prov) : []
+        if (accounts.length === 0) {
+          return { error: `No ${zone.providerLabel} account is connected for ${zone.apex} — add one in the DNS view (N) first.` }
+        }
+        // An account is connected but its cached zones don't list this zone — most
+        // likely a stale cache (zone added since the last verify). Re-verify + retry.
+        await Promise.all(accounts.map((c) => verifyAndCache(c)))
+        conn = find()
+        if (!conn) {
+          return { error: `Your ${zone.providerLabel} account doesn't serve ${zone.apex} (re-checked just now) — confirm the zone exists in that account.` }
+        }
+      }
+      return { zone, conn }
     },
     [allConnections, verifyAndCache],
   )
@@ -1790,24 +1845,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       async function doDns(j: VanityJob) {
         persist({ ...j, step: "dns" })
-        const conn = j.connId ? allConnections.find((c) => c.id === j.connId) : null
-        const provider = conn ? recordProviderFor(conn.provider) : null
+        let conn = j.connId ? allConnections.find((c) => c.id === j.connId) ?? null : null
+        let provider = conn ? recordProviderFor(conn.provider) : null
+        // No usable connection on the job yet (first run, or a retry after the start
+        // path couldn't match a stale cache) → resolve the zone and re-verify the
+        // provider's accounts, so a zone registered today is picked up. This makes
+        // `r retry` actually recover instead of re-failing against the same cache.
         if (!conn || !provider?.createRecord) {
-          return fail(j, "dns", "No DNS provider connection serves this zone — connect one in the DNS view first.")
+          const r = await resolveZoneConn(j.hostname)
+          if ("error" in r) return fail(j, "dns", r.error)
+          conn = r.conn
+          provider = recordProviderFor(conn.provider)
+          j = { ...j, apex: r.zone.apex, connId: conn.id }
+          persist({ ...j, step: "dns" })
+          if (!provider?.createRecord) return fail(j, "dns", `The ${conn.provider} connection can't write DNS records.`)
         }
+        // Past the guard both are non-null; bind consts so the poll closure narrows.
+        const dnsConn = conn!
+        const dnsProvider = provider!
         let res
         try {
-          res = await provider.createRecord(conn.creds, j.apex, j.hostname, "A", j.serverIp, 300)
+          res = await dnsProvider.createRecord!(dnsConn.creds, j.apex, j.hostname, "A", j.serverIp, 300)
         } catch (err) {
           return fail(j, "dns", (err as Error).message)
         }
         if (!res.ok) return fail(j, "dns", res.error || "The DNS provider rejected the A record.")
         const next: VanityJob = { ...j, step: "propagate", propagateStartedAt: Date.now(), propagateTimedOut: false }
-        if (res.pollId && provider.pollChange) {
+        if (res.pollId && dnsProvider.pollChange) {
           const pollId = res.pollId
           const poll = async () => {
             try {
-              const st = await provider.pollChange!(conn.creds, pollId)
+              const st = await dnsProvider.pollChange!(dnsConn.creds, pollId)
               if (st === "failed") return fail(j, "dns", "The DNS change failed to apply at the provider.")
               if (st === "done") return void doPropagate(next)
               setTimeout(() => void poll(), VANITY_POLL_MS)
@@ -1826,7 +1894,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         persist({ ...j, step: "propagate", propagateStartedAt: startedAt, propagateTimedOut: false })
         const check = async () => {
           if (await aRecordResolves(j.hostname, j.serverIp)) return void doSite({ ...j, step: "site" })
-          if (Date.now() - startedAt > VANITY_PROPAGATE_TIMEOUT_MS) {
+          // Time out into the skip/keep-waiting prompt ONCE. After the user chooses
+          // to keep waiting (keepWaiting), poll indefinitely — the overlay shows a
+          // count-up from the original start and a key to quit waiting — so we never
+          // re-prompt. startedAt is preserved across keep-waiting (count-up baseline).
+          if (!j.keepWaiting && Date.now() - startedAt > VANITY_PROPAGATE_TIMEOUT_MS) {
             return persist({ ...j, step: "propagate", propagateStartedAt: startedAt, propagateTimedOut: true })
           }
           setTimeout(() => void check(), VANITY_POLL_MS)
@@ -1910,7 +1982,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return
       }
     },
-    [client, allConnections, refresh],
+    [client, allConnections, refresh, resolveZoneConn],
   )
 
   const startVanity = useCallback(
@@ -1930,16 +2002,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         sslSkipped: opts.skipSsl ?? false,
       }
       const run = async () => {
-        const zone = await resolveZone(server.name)
-        if (!zone) return setVanityJob({ ...base, step: "error", failedStep: "dns", error: `Couldn't find the DNS zone for ${server.name}.` })
-        const conn = connForZone(zone.apex, zone.providerKey, zone.nameservers)
-        const job: VanityJob = { ...base, apex: zone.apex, connId: conn?.id }
-        if (!conn) return setVanityJob({ ...job, step: "error", failedStep: "dns", error: `No editable DNS connection serves ${zone.apex} — connect one in the DNS view first.` })
-        driveVanity(job)
+        // Resolve the zone + its editable account, re-verifying a stale cache if
+        // needed (e.g. a zone registered today). On success we capture the apex +
+        // connId and let driveVanity write the A record; on failure the message
+        // already says whether to connect an account or fix the zone.
+        const r = await resolveZoneConn(server.name)
+        if ("error" in r) return setVanityJob({ ...base, step: "error", failedStep: "dns", error: r.error })
+        driveVanity({ ...base, apex: r.zone.apex, connId: r.conn.id })
       }
       void run()
     },
-    [vanityJob, connForZone, driveVanity],
+    [vanityJob, resolveZoneConn, driveVanity],
   )
 
   const vanitySshKeyDone = useCallback(() => {
@@ -1958,9 +2031,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     driveVanity(next)
   }, [vanityJob, driveVanity])
 
+  // From the timeout prompt: keep waiting. Preserve the ORIGINAL propagateStartedAt
+  // so the overlay's timer becomes a count-up from the 2-min baseline, and set
+  // keepWaiting so doPropagate polls indefinitely without re-prompting.
   const vanityKeepWaiting = useCallback(() => {
     if (!vanityJob || vanityJob.step !== "propagate") return
-    const next: VanityJob = { ...vanityJob, propagateTimedOut: false, propagateStartedAt: Date.now() }
+    const next: VanityJob = { ...vanityJob, propagateTimedOut: false, keepWaiting: true }
+    setVanityJob(next)
+    driveVanity(next)
+  }, [vanityJob, driveVanity])
+
+  // From keep-waiting mode: stop waiting and continue the normal flow (create the
+  // site → attempt HTTPS). If DNS truly isn't resolved yet HTTPS may fail — the
+  // deliberate HTTP-only path is the separate "skip SSL" choice.
+  const vanityStopWaiting = useCallback(() => {
+    if (!vanityJob || vanityJob.step !== "propagate") return
+    const next: VanityJob = { ...vanityJob, propagateTimedOut: false, keepWaiting: false, step: "site" }
     setVanityJob(next)
     driveVanity(next)
   }, [vanityJob, driveVanity])
@@ -2079,6 +2165,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     vanitySshKeyDone,
     vanitySkipSsl,
     vanityKeepWaiting,
+    vanityStopWaiting,
     vanityRetry,
     clearVanity,
     providerMetadata,

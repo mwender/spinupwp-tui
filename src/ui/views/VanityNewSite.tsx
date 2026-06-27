@@ -9,7 +9,7 @@ import { useKeyboard } from "@opentui/react"
 import { theme } from "../../lib/theme.ts"
 import { Panel, Centered, Field, Spinner, Steps, type StepRow } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
-import { useStore, isKeyGrantInFlight, type VanityStep } from "../store.tsx"
+import { useStore, isKeyGrantInFlight, VANITY_PROPAGATE_TIMEOUT_MS, type VanityStep } from "../store.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { siteSftpUrl } from "../../lib/spinupweb.ts"
 import { deriveSiteUser } from "../../lib/vanitySite.ts"
@@ -25,11 +25,28 @@ const STEP_LABELS: { step: VanityStep; label: string }[] = [
 ]
 const STEP_ORDER: VanityStep[] = STEP_LABELS.map((s) => s.step)
 
+// ms → "m:ss" for the propagation timer.
+function fmtClock(ms: number): string {
+  const total = Math.round(ms / 1000)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`
+}
+
 export function VanityNewSite() {
-  const { vanityServer: server, setVanityServer, vanityJob: job, startVanity, vanitySshKeyDone, vanitySkipSsl, vanityKeepWaiting, vanityRetry, clearVanity, accountSlug, setInputMode, sites, isSudoConnected, keyGrants, startGrantRemembered, preferredGrantKeys, clearGrantKey, sudoConnectServer, setSudoConnectServer } = useStore()
+  const { vanityServer: server, setVanityServer, vanityJob: job, startVanity, vanitySshKeyDone, vanitySkipSsl, vanityKeepWaiting, vanityStopWaiting, vanityRetry, clearVanity, accountSlug, setInputMode, sites, isSudoConnected, keyGrants, startGrantRemembered, preferredGrantKeys, clearGrantKey, sudoConnectServer, setSudoConnectServer } = useStore()
 
   const [siteUser, setSiteUser] = useState(() => (server ? deriveSiteUser(server.name) : ""))
   const [editingUser, setEditingUser] = useState(false)
+
+  // Tick once a second while we're waiting on DNS, so the propagate row's timer
+  // (count-down before timeout, count-up once "keep waiting") stays live.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (job?.step !== "propagate") return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [job?.step])
+  const propElapsed = job?.propagateStartedAt ? Math.max(0, now - job.propagateStartedAt) : 0
+  const propRemaining = Math.max(0, VANITY_PROPAGATE_TIMEOUT_MS - propElapsed)
 
   // Auto-grant context for the SSH-key step: the just-created site, whether sudo is
   // connected on the server, and any in-flight/settled grant for that site.
@@ -100,6 +117,11 @@ export function VanityNewSite() {
       if (name === "s") return vanitySkipSsl()
       if (name === "w") return vanityKeepWaiting()
     }
+    // Keep-waiting (count-up) mode: continue the normal flow now, or skip SSL.
+    if (job.step === "propagate" && job.keepWaiting && !job.propagateTimedOut) {
+      if (name === "c") return vanityStopWaiting()
+      if (name === "s") return vanitySkipSsl()
+    }
     if (job.step === "sshkey") {
       // S — connect sudo here if it isn't yet (then `g` becomes available).
       if (name === "S" && server && !sudoOn) return setSudoConnectServer(server)
@@ -163,7 +185,13 @@ export function VanityNewSite() {
         // so mark it "waiting" rather than spinning like the automated steps.
         state = step === "sshkey" && !granting ? "waiting" : "active"
       } else if (cur && STEP_ORDER.indexOf(step) < STEP_ORDER.indexOf(cur)) state = "done"
-      return { label, state }
+      // Live timer on the propagate row: count-down to the timeout, then (once the
+      // user keeps waiting) count up from that same baseline.
+      let detail: string | undefined
+      if (step === "propagate" && cur === "propagate" && !job?.propagateTimedOut) {
+        detail = job?.keepWaiting ? `${fmtClock(propElapsed)} elapsed` : `${fmtClock(propRemaining)} left`
+      }
+      return { label, state, detail }
     })
   }
 
@@ -313,12 +341,20 @@ export function VanityNewSite() {
     }
 
     // In-flight checklist (dns / propagate / site / https / seed).
+    const keepWaiting = job.step === "propagate" && job.keepWaiting
     return (
       <Panel title=" Connecting the server " active>
         <box style={{ flexDirection: "column", width: 60, paddingTop: 1, paddingBottom: 1 }}>
           <Steps rows={stepRows()} />
           <box style={{ height: 1 }} />
-          <text content="Esc — this keeps running in the background." fg={theme.textFaint} wrapMode="none" />
+          {keepWaiting ? (
+            <>
+              <text content={`Still waiting for ${job.hostname} to resolve (${fmtClock(propElapsed)}).`} fg={theme.textDim} wrapMode="none" />
+              <text content="c continue now · s skip SSL · Esc background" fg={theme.textFaint} wrapMode="none" />
+            </>
+          ) : (
+            <text content="Esc — this keeps running in the background." fg={theme.textFaint} wrapMode="none" />
+          )}
         </box>
       </Panel>
     )
@@ -340,6 +376,9 @@ export function VanityNewSite() {
     }
     if (job.step === "propagate" && job.propagateTimedOut) {
       return [{ key: "s", label: "skip SSL" }, { key: "w", label: "wait" }, { key: "esc", label: "later" }]
+    }
+    if (job.step === "propagate" && job.keepWaiting) {
+      return [{ key: "c", label: "continue now" }, { key: "s", label: "skip SSL" }, { key: "esc", label: "background" }]
     }
     return [{ key: "esc", label: "background" }]
   }
