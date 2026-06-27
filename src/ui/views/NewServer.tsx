@@ -408,7 +408,9 @@ export function NewServer() {
         height: "100%",
         flexDirection: "column",
         backgroundColor: theme.bg,
-        zIndex: 210,
+        // 240 so it layers ABOVE the clone wizard (218) when reused as that flow's
+        // "New server" step; standalone use is unaffected.
+        zIndex: 240,
       }}
     >
       {/* Title bar */}

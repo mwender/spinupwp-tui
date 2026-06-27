@@ -319,6 +319,8 @@ interface StoreValue extends DataState {
   setCloneConcurrency: (n: number) => void // throttle (1..N, protects the source)
   toggleCloneLowerTtl: () => void // drop apex/www TTLs at the start so cutover is fast
   cloneAdvanceFromPlan: () => void // Plan → New server step
+  cloneSetDest: (server: Server) => void // capture the dest (provisioned or existing) → Connect dest
+  cloneTrustContinue: () => void // Connect dest → Clone sites (gated on sudo both ends)
   clearClone: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
   // session. loadProviderMetadata fetches lazily on demand.
@@ -2178,6 +2180,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const cloneAdvanceFromPlan = useCallback(() => {
     setCloneJob((j) => (j && j.step === "plan" && j.sites.some((s) => s.selected) ? { ...j, step: "server" } : j))
   }, [])
+  // Capture the destination server (either freshly provisioned via the reused
+  // NewServer flow, or an existing box in the dev-override path) and move to the
+  // Connect-dest step. Idempotent — re-setting the same dest is a no-op advance.
+  const cloneSetDest = useCallback((server: Server) => {
+    setCloneJob((j) =>
+      j && (j.step === "server" || j.step === "trust")
+        ? { ...j, destServerId: server.id, destServerName: server.name, destServerIp: server.ip_address ?? "", step: j.step === "server" ? "trust" : j.step }
+        : j,
+    )
+  }, [])
+  // Advance to the fan-out. The caller (wizard) gates this on sudo being connected
+  // on BOTH ends (it has live isSudoConnected); we just move the step.
+  const cloneTrustContinue = useCallback(() => {
+    setCloneJob((j) => (j && j.step === "trust" && j.destServerId != null ? { ...j, step: "clone" } : j))
+  }, [])
   const clearClone = useCallback(() => {
     setCloneServer(null)
     setCloneJob(null)
@@ -2297,6 +2314,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setCloneConcurrency,
     toggleCloneLowerTtl,
     cloneAdvanceFromPlan,
+    cloneSetDest,
+    cloneTrustContinue,
     clearClone,
     providerMetadata,
     providerMetadataLoading,

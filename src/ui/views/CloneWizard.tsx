@@ -9,12 +9,20 @@
 // as scaffolding (rail advances, rosters preview) — their orchestration lands in
 // later slices.
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { theme } from "../../lib/theme.ts"
 import { Panel } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
+import { openUrl } from "../../lib/open.ts"
+import { serverWebUrl } from "../../lib/spinupweb.ts"
 import { useStore, type CloneStep, type CloneSiteStep } from "../store.tsx"
+
+// Dev-only: skip provisioning and use an existing server as the clone dest (e.g. a
+// pre-made web2). Set SPINUP_DEV_CLONE_DEST=<serverId> in .env. The real flow never
+// depends on this — it's purely a dev shortcut so the downstream slices are testable
+// without a ~10-min provision each run.
+const DEV_CLONE_DEST = Number(process.env.SPINUP_DEV_CLONE_DEST) || null
 
 const STEPS: { step: CloneStep; label: string }[] = [
   { step: "plan", label: "Plan" },
@@ -29,29 +37,58 @@ export function CloneWizard() {
   const {
     cloneServer: server,
     cloneJob: job,
+    servers,
+    accountSlug,
     toggleCloneSite,
     toggleCloneSiteUploads,
     cloneAdvanceFromPlan,
+    cloneSetDest,
+    cloneTrustContinue,
     toggleCloneLowerTtl,
     clearClone,
     isSudoConnected,
     setSudoConnectServer,
+    newServerOpen,
+    newServerJob,
+    setNewServerOpen,
+    setNewServerSource,
+    clearNewServer,
+    sudoConnectServer,
   } = useStore()
 
   const [idx, setIdx] = useState(0)
+
+  const devDest = DEV_CLONE_DEST != null ? servers.find((s) => s.id === DEV_CLONE_DEST) ?? null : null
+
+  // Bridge: when the reused NewServer flow finishes provisioning, capture the new
+  // box as the clone dest and close it. (Standalone NewServer use sets no cloneJob,
+  // so this only fires inside the wizard's "server" step.)
+  useEffect(() => {
+    if (job?.step !== "server" || job.destServerId != null) return
+    if (newServerJob?.status === "done" && newServerJob.serverId != null) {
+      const created = servers.find((s) => s.id === newServerJob.serverId)
+      if (created) {
+        cloneSetDest(created)
+        clearNewServer()
+        setNewServerOpen(false)
+      }
+    }
+  }, [job, newServerJob, servers, cloneSetDest, clearNewServer, setNewServerOpen])
 
   const close = () => clearClone()
 
   useKeyboard((key) => {
     if (!job || !server) return
+    // A layered overlay (NewServer / SudoConnect) owns the keyboard while open.
+    if (newServerOpen || sudoConnectServer) return
     const raw = key.name ?? ""
     const name = key.shift && raw.length === 1 ? raw.toUpperCase() : raw
 
-    // Connect sudo on the source from any step (pre-flight + later the pull need it).
-    if (name === "S" && !isSudoConnected(server.id)) return setSudoConnectServer(server)
     if (name === "escape" || name === "q") return close()
 
     if (job.step === "plan") {
+      // S — connect sudo on the SOURCE (pre-flight; the pull needs it later).
+      if (name === "S" && !isSudoConnected(server.id)) return setSudoConnectServer(server)
       const n = job.sites.length
       if (name === "up" || name === "k") return setIdx((i) => (i - 1 + n) % n)
       if (name === "down" || name === "j") return setIdx((i) => (i + 1) % n)
@@ -60,6 +97,27 @@ export function CloneWizard() {
       if (name === "u" && cur) return toggleCloneSiteUploads(cur.sourceSiteId)
       if (name === "t") return toggleCloneLowerTtl()
       if (name === "return") return cloneAdvanceFromPlan()
+    }
+
+    if (job.step === "server") {
+      if (devDest && name === "d") return cloneSetDest(devDest)
+      if (name === "return") {
+        // Reuse the standalone New-server flow, seeded from the source.
+        setNewServerSource(server)
+        setNewServerOpen(true)
+      }
+    }
+
+    if (job.step === "trust") {
+      const destServer = job.destServerId != null ? servers.find((s) => s.id === job.destServerId) ?? null : null
+      // S — connect sudo on the DEST; G — re-check/connect sudo on the SOURCE.
+      if (name === "S" && destServer && !isSudoConnected(destServer.id)) return setSudoConnectServer(destServer)
+      if (name === "G" && !isSudoConnected(server.id)) return setSudoConnectServer(server)
+      if (name === "w" && destServer && accountSlug) return openUrl(serverWebUrl(destServer.id, accountSlug))
+      if (name === "return") {
+        const bothConnected = isSudoConnected(server.id) && destServer != null && isSudoConnected(destServer.id)
+        if (bothConnected) return cloneTrustContinue()
+      }
     }
   })
 
@@ -122,13 +180,71 @@ export function CloneWizard() {
 
   function rightPane() {
     if (job!.step === "plan") return planPane()
+    if (job!.step === "server") return serverPane()
+    if (job!.step === "trust") return trustPane()
     if (job!.step === "clone" || job!.step === "cutover") return rosterPane(job!.step)
-    // server / trust / done / error — scaffolding for now.
+    // done / error — scaffolding for now.
     return (
       <Panel title={` ${STEPS[curStepIdx]?.label ?? job!.step} `} active>
         <box style={{ flexDirection: "column", paddingTop: 1, paddingBottom: 1 }}>
           <text content="This step is built in a later slice of the wizard." fg={theme.textDim} wrapMode="none" />
           <text content="The Plan is captured; the rail shows where we are." fg={theme.textFaint} wrapMode="none" />
+        </box>
+      </Panel>
+    )
+  }
+
+  function serverPane() {
+    const sp = job!.specs
+    return (
+      <Panel title=" New server — provision the destination " active>
+        <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
+          <text content="Stand up a fresh server to receive the cloned sites." fg={theme.textDim} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          <text content="Match source:" fg={theme.textFaint} wrapMode="none" />
+          <text content={`  ${sp.providerName || "—"} · ${sp.region || "—"} · ${sp.size || "—"}`} fg={theme.text} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          <text content="❯ Enter — open the new-server form (provider/region/size/cost)" fg={theme.brand} wrapMode="none" />
+          {devDest ? (
+            <>
+              <box style={{ height: 1 }} />
+              <text content={`d — DEV: use existing dest ${devDest.name} (skip provisioning)`} fg={theme.warn} wrapMode="none" />
+            </>
+          ) : null}
+          <box style={{ flexGrow: 1 }} />
+          <text content="Provisioning runs in the background and the wizard waits for it." fg={theme.textFaint} wrapMode="none" />
+        </box>
+      </Panel>
+    )
+  }
+
+  function trustPane() {
+    const destServer = job!.destServerId != null ? servers.find((s) => s.id === job!.destServerId) ?? null : null
+    const srcOn = isSudoConnected(server!.id)
+    const destOn = destServer != null && isSudoConnected(destServer.id)
+    const both = srcOn && destOn
+    const row = (ok: boolean, label: string) => (
+      <box style={{ flexDirection: "row", height: 1 }}>
+        <text content={ok ? "✓ " : "○ "} fg={ok ? theme.good : theme.warn} style={{ flexShrink: 0 }} />
+        <text content={label} fg={ok ? theme.textDim : theme.warn} wrapMode="none" style={{ flexShrink: 1 }} />
+      </box>
+    )
+    return (
+      <Panel title=" Connect dest — the privileged foothold " active>
+        <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
+          <text content={`Dest: ${job!.destServerName || "—"}  ${job!.destServerIp || ""}`} fg={theme.text} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          <text content="Spinup needs a sudo connection on BOTH ends: root on the source" fg={theme.textFaint} wrapMode="none" />
+          <text content="to read each site, root on the dest to write + import." fg={theme.textFaint} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          {row(srcOn, srcOn ? "Source sudo connected" : "Source sudo not connected — press G")}
+          {row(destOn, destOn ? "Dest sudo connected" : "Dest sudo not connected — create a sudo user (w), then press S")}
+          <box style={{ flexGrow: 1 }} />
+          {both ? (
+            <text content="❯ Enter — both ends connected, continue to clone" fg={theme.brand} wrapMode="none" />
+          ) : (
+            <text content="Connect sudo on both ends to continue." fg={theme.textFaint} wrapMode="none" />
+          )}
         </box>
       </Panel>
     )
@@ -212,6 +328,20 @@ export function CloneWizard() {
         { key: "t", label: "lower TTL" },
         ...(sudoOn ? [] : [{ key: "S", label: "connect sudo" }]),
         ...(selected.length > 0 ? [{ key: "⏎", label: "continue" }] : []),
+        { key: "esc", label: "close" },
+      ]
+    }
+    if (job!.step === "server") {
+      return [{ key: "⏎", label: "provision" }, ...(devDest ? [{ key: "d", label: "dev: use existing" }] : []), { key: "esc", label: "close" }]
+    }
+    if (job!.step === "trust") {
+      const destServer = job!.destServerId != null ? servers.find((s) => s.id === job!.destServerId) ?? null : null
+      const both = isSudoConnected(server!.id) && destServer != null && isSudoConnected(destServer.id)
+      return [
+        { key: "S", label: "sudo dest" },
+        { key: "G", label: "sudo source" },
+        { key: "w", label: "SpinupWP" },
+        ...(both ? [{ key: "⏎", label: "continue" }] : []),
         { key: "esc", label: "close" },
       ]
     }
