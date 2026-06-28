@@ -37,6 +37,7 @@ import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dns
 import { deriveSiteUser, seedVanityIndex, aRecordResolves } from "../lib/vanitySite.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
+import { estimateSourceSiteSizes } from "../lib/serverClone.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
@@ -129,6 +130,7 @@ export type CloneSiteStep = "create" | "pull" | "config" | "deploy" | "verify" |
 export interface CloneSiteState {
   sourceSiteId: number
   domain: string
+  siteUser: string // source site_user — reused on the dest + for the source-side pull
   selected: boolean // unchecked in Plan → skipped entirely
   sizeBytes?: number // webroot + DB estimate (sizing + progress); undefined until sized
   stack: "wp" | "bedrock" // from source git.repo → drives blank-vs-git create
@@ -321,6 +323,7 @@ interface StoreValue extends DataState {
   cloneAdvanceFromPlan: () => void // Plan → New server step
   cloneSetDest: (server: Server) => void // capture the dest (provisioned or existing) → Connect dest
   cloneTrustContinue: () => void // Connect dest → Clone sites (gated on sudo both ends)
+  cloneSizeSites: () => Promise<void> // measure source sites' webroot+DB over source sudo → sizeBytes
   clearClone: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
   // session. loadProviderMetadata fetches lazily on demand.
@@ -2137,6 +2140,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const sites: CloneSiteState[] = srcSites.map((s) => ({
         sourceSiteId: s.id,
         domain: s.domain,
+        siteUser: s.site_user ?? "",
         selected: true,
         stack: cloneStackFor(s),
         excludeUploads: false,
@@ -2199,6 +2203,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setCloneServer(null)
     setCloneJob(null)
   }, [])
+
+  // Measure each selected source site's payload (webroot + DB) over the source sudo
+  // connection and write the results into sites[].sizeBytes (drives the Plan total +
+  // disk-fit). Needs source sudo connected (Plan pre-flight); a no-op otherwise.
+  const cloneSizeSites = useCallback(async () => {
+    const j = cloneJob
+    if (!j) return
+    const srv = servers.find((s) => s.id === j.sourceServerId)
+    const sudoUser = srv ? sudoUsers.get(srv.id) : undefined
+    const pw = srv ? sudoPwRef.current.get(srv.id) : undefined
+    if (!srv || !sudoUser || pw == null) return
+    const inputs = j.sites.map((s) => ({ siteId: s.sourceSiteId, domain: s.domain, siteUser: s.siteUser }))
+    const sizes = await estimateSourceSiteSizes(srv, sudoUser, pw, inputs)
+    if (sizes.size === 0) return
+    setCloneJob((cur) =>
+      cur ? { ...cur, sites: cur.sites.map((s) => (sizes.has(s.sourceSiteId) ? { ...s, sizeBytes: sizes.get(s.sourceSiteId) } : s)) } : cur,
+    )
+  }, [cloneJob, servers, sudoUsers])
 
   // Resume persisted jobs after a restart. Runs exactly once (the ref guards
   // against dep churn re-firing it). Iterates every in-flight job and dispatches by
@@ -2316,6 +2338,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneAdvanceFromPlan,
     cloneSetDest,
     cloneTrustContinue,
+    cloneSizeSites,
     clearClone,
     providerMetadata,
     providerMetadataLoading,

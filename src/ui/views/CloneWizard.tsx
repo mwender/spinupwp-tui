@@ -44,6 +44,7 @@ export function CloneWizard() {
     cloneAdvanceFromPlan,
     cloneSetDest,
     cloneTrustContinue,
+    cloneSizeSites,
     toggleCloneLowerTtl,
     clearClone,
     isSudoConnected,
@@ -57,8 +58,19 @@ export function CloneWizard() {
   } = useStore()
 
   const [idx, setIdx] = useState(0)
+  const [sizeTried, setSizeTried] = useState(false)
 
   const devDest = DEV_CLONE_DEST != null ? servers.find((s) => s.id === DEV_CLONE_DEST) ?? null : null
+
+  // Measure source site sizes once, the moment source sudo is connected (Plan total
+  // + per-site GB). Runs a single du+wp-db-size pass over the sudo connection.
+  useEffect(() => {
+    if (!server || sizeTried) return
+    if (job?.step === "plan" && isSudoConnected(server.id) && job.sites.length > 0) {
+      setSizeTried(true)
+      void cloneSizeSites()
+    }
+  }, [server, job, sizeTried, isSudoConnected, cloneSizeSites])
 
   // Bridge: when the reused NewServer flow finishes provisioning, capture the new
   // box as the clone dest and close it. (Standalone NewServer use sets no cloneJob,
@@ -279,7 +291,7 @@ export function CloneWizard() {
             )
           })}
           <box style={{ flexGrow: 1 }} />
-          <text content={`Payload ~${totalSize()} · sizing runs during the clone (slice 4)`} fg={theme.textFaint} wrapMode="none" />
+          <text content={payloadLine()} fg={theme.textFaint} wrapMode="none" />
           <box style={{ height: 1 }} />
           {/* pre-flight */}
           <box style={{ flexDirection: "row", height: 1 }}>
@@ -355,6 +367,12 @@ export function CloneWizard() {
   function totalSize() {
     const known = job!.sites.filter((s) => s.selected && s.sizeBytes != null).reduce((a, s) => a + (s.sizeBytes ?? 0), 0)
     return known > 0 ? formatBytes(known) : "—"
+  }
+  function payloadLine() {
+    const anySized = job!.sites.some((s) => s.sizeBytes != null)
+    if (!sudoOn) return "Payload size — connect sudo (S) to measure webroot + DB"
+    if (!anySized) return "Measuring webroot + DB sizes over sudo…"
+    return `Payload ~${totalSize()} (selected sites' webroot + DB)`
   }
 }
 
