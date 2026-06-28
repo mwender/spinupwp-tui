@@ -37,7 +37,7 @@ import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dns
 import { deriveSiteUser, seedVanityIndex, aRecordResolves } from "../lib/vanitySite.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
-import { estimateSourceSiteSizes } from "../lib/serverClone.ts"
+import { estimateSourceSiteSizes, runStandardWpPull, type SudoCtx } from "../lib/serverClone.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
@@ -126,7 +126,7 @@ export function isVanityInFlight(j: VanityJob | null | undefined): boolean {
 // per-site roster. See docs/2026-06-24_clone-to-server-spec.md. (Slice 2 = shell +
 // Plan; server/trust/clone/cutover orchestration land in later slices.)
 export type CloneStep = "plan" | "server" | "trust" | "clone" | "cutover" | "done" | "error"
-export type CloneSiteStep = "create" | "pull" | "config" | "deploy" | "verify" | "done" | "error"
+export type CloneSiteStep = "queued" | "create" | "pull" | "config" | "deploy" | "verify" | "done" | "error"
 export interface CloneSiteState {
   sourceSiteId: number
   domain: string
@@ -135,8 +135,13 @@ export interface CloneSiteState {
   sizeBytes?: number // webroot + DB estimate (sizing + progress); undefined until sized
   stack: "wp" | "bedrock" // from source git.repo → drives blank-vs-git create
   excludeUploads: boolean // per-site opt-out (default false = sync uploads/)
+  phpVersion?: string // matched from source for the dest create
+  publicFolder?: string // matched from source for the dest create
   destSiteId?: number
+  destDbName?: string // dest DB creds (generated at create; reused on retry)
+  destDbPassword?: string
   step: CloneSiteStep
+  detail?: string // current sub-activity (the pull stage), for the roster
   failedStep?: CloneSiteStep
   error?: string
 }
@@ -163,6 +168,13 @@ export function isCloneInFlight(j: CloneJob | null | undefined): boolean {
 // Standard WP (is_wordpress is unreliable for git sites — see the API findings doc).
 export function cloneStackFor(site: Site): "wp" | "bedrock" {
   return site.git?.repo ? "bedrock" : "wp"
+}
+// Alphanumeric token for generated dest DB passwords (never printed/persisted).
+function randomToken(n: number): string {
+  const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+  const buf = new Uint8Array(n)
+  crypto.getRandomValues(buf)
+  return Array.from(buf, (b) => a[b % a.length]).join("")
 }
 
 // Resumable-job ids. The server create is a singleton; the per-site jobs are
@@ -324,6 +336,8 @@ interface StoreValue extends DataState {
   cloneSetDest: (server: Server) => void // capture the dest (provisioned or existing) → Connect dest
   cloneTrustContinue: () => void // Connect dest → Clone sites (gated on sudo both ends)
   cloneSizeSites: () => Promise<void> // measure source sites' webroot+DB over source sudo → sizeBytes
+  startClone: () => void // run the fan-out (worker pool, cap = concurrency) over selected sites
+  cloneRetrySite: (siteId: number) => void // re-run one failed site
   clearClone: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
   // session. loadProviderMetadata fetches lazily on demand.
@@ -2144,7 +2158,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         selected: true,
         stack: cloneStackFor(s),
         excludeUploads: false,
-        step: "create",
+        phpVersion: s.php_version ?? undefined,
+        publicFolder: s.public_folder ?? undefined,
+        step: "queued",
       }))
       const draft: CloneJob = {
         sourceServerId: server.id,
@@ -2221,6 +2237,139 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       cur ? { ...cur, sites: cur.sites.map((s) => (sizes.has(s.sourceSiteId) ? { ...s, sizeBytes: sizes.get(s.sourceSiteId) } : s)) } : cur,
     )
   }, [cloneJob, servers, sudoUsers])
+
+  // ---- Clone fan-out (slice 4c): concurrent per-site pull chain -----------
+  // Per-site state updates compose via functional setState (each worker owns one
+  // site, so no two workers touch the same entry). Scheduling is a worker pool over
+  // the selected sites (cap = job.concurrency) — no self-scheduling via setState.
+  const setCloneSite = useCallback((siteId: number, fn: (s: CloneSiteState) => CloneSiteState) => {
+    setCloneJob((j) => (j ? { ...j, sites: j.sites.map((s) => (s.sourceSiteId === siteId ? fn(s) : s)) } : j))
+  }, [])
+
+  // Build the SudoCtx for a server from the connected (in-memory) sudo creds.
+  const sudoCtxFor = useCallback(
+    (serverId: number): SudoCtx | null => {
+      const srv = servers.find((s) => s.id === serverId)
+      const u = sudoUsers.get(serverId)
+      const pw = sudoPwRef.current.get(serverId)
+      return srv && u && pw != null ? { server: srv, sudoUser: u, sudoPassword: pw } : null
+    },
+    [servers, sudoUsers],
+  )
+
+  // Drive ONE site: create the dest site (event-polled), then the stack-appropriate
+  // pull chain. Standard WP is wired; Bedrock is slice 4d.
+  const driveCloneSite = useCallback(
+    async (site: CloneSiteState, source: SudoCtx, dest: SudoCtx, destServerId: number) => {
+      const set = (fn: (s: CloneSiteState) => CloneSiteState) => setCloneSite(site.sourceSiteId, fn)
+      const fail = (failedStep: CloneSiteStep, error: string) => set((s) => ({ ...s, step: "error", failedStep, error, detail: undefined }))
+      try {
+        if (site.stack === "bedrock") return fail("create", "Bedrock clone lands in the next slice (4d).")
+        // create — blank dest site with matched specs + generated DB creds.
+        set((s) => ({ ...s, step: "create", error: undefined, failedStep: undefined, detail: undefined }))
+        const dbName = site.destDbName ?? site.siteUser
+        const dbPw = site.destDbPassword ?? randomToken(28)
+        set((s) => ({ ...s, destDbName: dbName, destDbPassword: dbPw }))
+        // Reuse only within THIS job (destSiteId already captured = retry/resume).
+        // We deliberately do NOT adopt a pre-existing dest site found by domain: its
+        // DB password can't be recovered to re-stamp wp-config, so a leftover from a
+        // prior run must be removed first (create will surface a clear conflict).
+        let destSiteId = site.destSiteId
+        if (destSiteId == null) {
+          let ev
+          try {
+            ev = await client.createSite({
+              server_id: destServerId,
+              domain: site.domain,
+              site_user: site.siteUser,
+              installation_method: "blank",
+              php_version: site.phpVersion,
+              public_folder: site.publicFolder,
+              database: { name: dbName, username: dbName, password: dbPw, table_prefix: "wp_" },
+            })
+          } catch (err) {
+            return fail("create", err instanceof ApiError ? err.message : (err as Error).message)
+          }
+          // poll the create event
+          const ok = await new Promise<boolean>((resolve) => {
+            const poll = async () => {
+              try {
+                const e = await client.getEvent(ev!.event_id)
+                if (SERVER_FAIL.has(e.status)) return resolve(false)
+                if (SERVER_DONE.has(e.status) || e.finished_at) return resolve(true)
+                setTimeout(() => void poll(), 3000)
+              } catch {
+                resolve(false)
+              }
+            }
+            setTimeout(() => void poll(), 3000)
+          })
+          if (!ok) return fail("create", "The dest site create failed on SpinupWP.")
+          try {
+            destSiteId = (await client.listSites(destServerId)).find((s) => s.domain === site.domain)?.id
+          } catch {
+            /* destSiteId stays undefined */
+          }
+        }
+        set((s) => ({ ...s, destSiteId }))
+        // pull chain (the proven Standard WP runner)
+        set((s) => ({ ...s, step: "pull", detail: "starting" }))
+        const res = await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw }, (stage, status) => {
+          if (status !== "start") return
+          const step: CloneSiteStep = stage === "config" ? "config" : stage === "verify" ? "verify" : "pull"
+          set((s) => ({ ...s, step, detail: stage }))
+        })
+        if (!res.ok) return fail(site.step === "config" ? "config" : site.step === "verify" ? "verify" : "pull", res.error ?? "pull failed")
+        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined }))
+      } catch (err) {
+        fail(site.step, (err as Error).message)
+      }
+    },
+    [client, setCloneSite],
+  )
+
+  // Run the fan-out: a worker pool (cap = concurrency) over the selected sites.
+  const startClone = useCallback(() => {
+    const j = cloneJob
+    if (!j || j.destServerId == null) return
+    const source = sudoCtxFor(j.sourceServerId)
+    const dest = sudoCtxFor(j.destServerId)
+    if (!source || !dest) return // both ends must be sudo-connected (trust step ensured)
+    const destServerId = j.destServerId
+    setCloneJob((cur) => (cur ? { ...cur, step: "clone", sites: cur.sites.map((s) => (s.selected ? { ...s, step: "queued" as CloneSiteStep, error: undefined, failedStep: undefined } : s)) } : cur))
+    const queue = j.sites.filter((s) => s.selected)
+    let cursor = 0
+    const worker = async () => {
+      while (cursor < queue.length) {
+        const site = queue[cursor++]
+        if (site) await driveCloneSite(site, source, dest, destServerId)
+      }
+    }
+    for (let i = 0; i < Math.min(j.concurrency, queue.length); i++) void worker()
+  }, [cloneJob, sudoCtxFor, driveCloneSite])
+
+  // Retry one failed site (recompute contexts; reuse any captured destSiteId/DB).
+  const cloneRetrySite = useCallback(
+    (siteId: number) => {
+      const j = cloneJob
+      if (!j || j.destServerId == null) return
+      const site = j.sites.find((s) => s.sourceSiteId === siteId)
+      const source = sudoCtxFor(j.sourceServerId)
+      const dest = sudoCtxFor(j.destServerId)
+      if (!site || !source || !dest) return
+      void driveCloneSite(site, source, dest, j.destServerId)
+    },
+    [cloneJob, sudoCtxFor, driveCloneSite],
+  )
+
+  // When every selected site has settled, mark the job done (a summary terminal).
+  useEffect(() => {
+    if (!cloneJob || cloneJob.step !== "clone") return
+    const sel = cloneJob.sites.filter((s) => s.selected)
+    if (sel.length > 0 && sel.every((s) => s.step === "done" || s.step === "error")) {
+      setCloneJob((j) => (j && j.step === "clone" ? { ...j, step: "done" } : j))
+    }
+  }, [cloneJob])
 
   // Resume persisted jobs after a restart. Runs exactly once (the ref guards
   // against dep churn re-firing it). Iterates every in-flight job and dispatches by
@@ -2339,6 +2488,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneSetDest,
     cloneTrustContinue,
     cloneSizeSites,
+    startClone,
+    cloneRetrySite,
     clearClone,
     providerMetadata,
     providerMetadataLoading,

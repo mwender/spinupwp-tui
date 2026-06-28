@@ -9,10 +9,10 @@
 // as scaffolding (rail advances, rosters preview) — their orchestration lands in
 // later slices.
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { theme } from "../../lib/theme.ts"
-import { Panel } from "../components.tsx"
+import { Panel, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl } from "../../lib/spinupweb.ts"
@@ -23,6 +23,10 @@ import { useStore, type CloneStep, type CloneSiteStep } from "../store.tsx"
 // depends on this — it's purely a dev shortcut so the downstream slices are testable
 // without a ~10-min provision each run.
 const DEV_CLONE_DEST = Number(process.env.SPINUP_DEV_CLONE_DEST) || null
+// Dev-only: auto-connect sudo on both ends from .env (SPINUP_DEV_SUDO_SOURCE/DEST,
+// each "user:password"), so the full clone is testable headlessly without typing
+// passwords into SudoConnect. The real flow never reads these.
+const DEV_SUDO = { source: process.env.SPINUP_DEV_SUDO_SOURCE || "", dest: process.env.SPINUP_DEV_SUDO_DEST || "" }
 
 const STEPS: { step: CloneStep; label: string }[] = [
   { step: "plan", label: "Plan" },
@@ -45,10 +49,13 @@ export function CloneWizard() {
     cloneSetDest,
     cloneTrustContinue,
     cloneSizeSites,
+    startClone,
+    cloneRetrySite,
     toggleCloneLowerTtl,
     clearClone,
     isSudoConnected,
     setSudoConnectServer,
+    connectSudo,
     newServerOpen,
     newServerJob,
     setNewServerOpen,
@@ -59,6 +66,31 @@ export function CloneWizard() {
 
   const [idx, setIdx] = useState(0)
   const [sizeTried, setSizeTried] = useState(false)
+  const [cloneStarted, setCloneStarted] = useState(false)
+
+  // Kick the fan-out once, when we land on the Clone step.
+  useEffect(() => {
+    if (job?.step === "clone" && !cloneStarted) {
+      setCloneStarted(true)
+      startClone()
+    }
+  }, [job?.step, cloneStarted, startClone])
+
+  // Dev-only auto-sudo (both ends) from .env so the flow is testable headlessly.
+  const devSudoTried = useRef(new Set<number>())
+  useEffect(() => {
+    if (!server || !job) return
+    const tryConn = (srv: typeof server | undefined, cred: string) => {
+      if (!srv || !cred || isSudoConnected(srv.id) || devSudoTried.current.has(srv.id)) return
+      const [u, ...r] = cred.split(":")
+      if (!u) return
+      devSudoTried.current.add(srv.id)
+      void connectSudo(srv, u, r.join(":"))
+    }
+    tryConn(servers.find((s) => s.id === job.sourceServerId), DEV_SUDO.source)
+    const destId = job.destServerId ?? DEV_CLONE_DEST
+    tryConn(destId != null ? servers.find((s) => s.id === destId) : undefined, DEV_SUDO.dest)
+  }, [server, job, servers, isSudoConnected, connectSudo])
 
   const devDest = DEV_CLONE_DEST != null ? servers.find((s) => s.id === DEV_CLONE_DEST) ?? null : null
 
@@ -131,13 +163,21 @@ export function CloneWizard() {
         if (bothConnected) return cloneTrustContinue()
       }
     }
+
+    if (job.step === "clone" || job.step === "done") {
+      // r — retry every failed site.
+      if (name === "r") {
+        for (const s of job.sites) if (s.selected && s.step === "error") cloneRetrySite(s.sourceSiteId)
+        return
+      }
+    }
   })
 
   if (!server || !job) return null
 
   const selected = job.sites.filter((s) => s.selected)
   const sudoOn = isSudoConnected(server.id)
-  const curStepIdx = STEPS.findIndex((s) => s.step === job.step)
+  const curStepIdx = job.step === "done" ? STEPS.length : STEPS.findIndex((s) => s.step === job.step)
 
   return (
     <box style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.bg, zIndex: 218 }}>
@@ -194,8 +234,9 @@ export function CloneWizard() {
     if (job!.step === "plan") return planPane()
     if (job!.step === "server") return serverPane()
     if (job!.step === "trust") return trustPane()
-    if (job!.step === "clone" || job!.step === "cutover") return rosterPane(job!.step)
-    // done / error — scaffolding for now.
+    if (job!.step === "clone" || job!.step === "done") return clonePane()
+    if (job!.step === "cutover") return cutoverPane()
+    // error — scaffolding for now.
     return (
       <Panel title={` ${STEPS[curStepIdx]?.label ?? job!.step} `} active>
         <box style={{ flexDirection: "column", paddingTop: 1, paddingBottom: 1 }}>
@@ -307,26 +348,53 @@ export function CloneWizard() {
     )
   }
 
-  // Read-only roster preview (the fan-out the later slices animate).
-  function rosterPane(step: "clone" | "cutover") {
-    const cols: CloneSiteStep[] = ["create", "pull", "config", "verify"]
+  // DNS cutover roster — still scaffolding (slice 6).
+  function cutoverPane() {
     return (
-      <Panel title={step === "clone" ? " Clone sites " : " DNS cutover "} active>
+      <Panel title=" DNS cutover " active>
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-          <box style={{ flexDirection: "row", height: 1 }}>
-            <text content="SITE" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
-            <box style={{ flexGrow: 1 }} />
-            <text content={step === "clone" ? "db  files  cfg  ✓" : "zone        cutover"} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-          </box>
           {selected.map((s) => (
             <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1 }}>
               <text content={s.domain} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
               <box style={{ flexGrow: 1 }} />
-              <text content={step === "clone" ? "○   ○     ○    ○" : "—           ○ pending"} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+              <text content="○ pending" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
             </box>
           ))}
           <box style={{ flexGrow: 1 }} />
-          <text content="Roster fills in once the clone orchestration ships (slices 4–6)." fg={theme.textFaint} wrapMode="none" />
+          <text content="Batched, partial-aware DNS cutover ships in slice 6 (setRecordValue)." fg={theme.textFaint} wrapMode="none" />
+        </box>
+      </Panel>
+    )
+  }
+
+  // Live clone roster — one row per selected site, sub-step + spinner/✓/✕.
+  function clonePane() {
+    const done = selected.filter((s) => s.step === "done").length
+    const running = selected.filter((s) => !["queued", "done", "error"].includes(s.step)).length
+    const errored = selected.filter((s) => s.step === "error").length
+    const queued = selected.filter((s) => s.step === "queued").length
+    return (
+      <Panel title={` Clone sites · ${job!.concurrency} at a time `} active>
+        <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
+          {selected.map((s) => {
+            const active = !["queued", "done", "error"].includes(s.step)
+            return (
+              <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1 }}>
+                {active ? <Spinner color={theme.brand} /> : <text content={s.step === "done" ? "✓" : s.step === "error" ? "✕" : "○"} fg={s.step === "done" ? theme.good : s.step === "error" ? theme.bad : theme.textFaint} style={{ flexShrink: 0 }} />}
+                <text content={` ${s.domain}`} fg={s.step === "error" ? theme.text : s.step === "done" ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+                <box style={{ flexGrow: 1 }} />
+                <text
+                  content={s.step === "error" ? truncate(s.error ?? "failed", 30) : s.step === "done" ? "done" : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}`}
+                  fg={s.step === "error" ? theme.bad : s.step === "done" ? theme.good : theme.textFaint}
+                  wrapMode="none"
+                  style={{ flexShrink: 0 }}
+                />
+              </box>
+            )
+          })}
+          <box style={{ flexGrow: 1 }} />
+          <text content={`✓ ${done} done · ⠹ ${running} running · ${queued} queued${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
+          {errored > 0 ? <text content="r retry failed · esc background" fg={theme.textFaint} wrapMode="none" /> : <text content="esc — keeps running in the background" fg={theme.textFaint} wrapMode="none" />}
         </box>
       </Panel>
     )
