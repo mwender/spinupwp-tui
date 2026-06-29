@@ -165,6 +165,18 @@ export interface CreateSitePayload {
   public_folder?: string // defaults to "/"
   database?: { name?: string; username?: string; password?: string; table_prefix?: string }
   page_cache?: { enabled?: boolean }
+  // installation_method "git" (Bedrock): SpinupWP clones `git.repo` at create time
+  // using the SERVER's deploy key (git_publickey) — it must already be a read-only
+  // deploy key on the repo or the clone fails. `deploy_script` is TOP-LEVEL (a nested
+  // git.deploy_script is silently ignored); the write key is `push_to_deploy` (the
+  // read shape echoes it back as git.push_enabled). See the site-creation findings doc.
+  deploy_script?: string
+  git?: {
+    repo: string
+    branch?: string
+    push_to_deploy?: boolean
+    always_run_deploy_script?: boolean
+  }
 }
 
 export interface Event {

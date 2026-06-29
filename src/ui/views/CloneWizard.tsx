@@ -16,7 +16,7 @@ import { Panel, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl } from "../../lib/spinupweb.ts"
-import { useStore, type CloneStep, type CloneSiteStep } from "../store.tsx"
+import { useStore, cloneNeedsGitAccess, type CloneStep, type CloneSiteStep, type RepoKeyState } from "../store.tsx"
 
 // Dev-only: skip provisioning and use an existing server as the clone dest (e.g. a
 // pre-made web2). Set SPINUP_DEV_CLONE_DEST=<serverId> in .env. The real flow never
@@ -28,13 +28,18 @@ const DEV_CLONE_DEST = Number(process.env.SPINUP_DEV_CLONE_DEST) || null
 // passwords into SudoConnect. The real flow never reads these.
 const DEV_SUDO = { source: process.env.SPINUP_DEV_SUDO_SOURCE || "", dest: process.env.SPINUP_DEV_SUDO_DEST || "" }
 
-const STEPS: { step: CloneStep; label: string }[] = [
-  { step: "plan", label: "Plan" },
-  { step: "server", label: "New server" },
-  { step: "trust", label: "Connect dest" },
-  { step: "clone", label: "Clone sites" },
-  { step: "cutover", label: "DNS cutover" },
-]
+const STEP_PLAN = { step: "plan" as CloneStep, label: "Plan" }
+const STEP_SERVER = { step: "server" as CloneStep, label: "New server" }
+const STEP_TRUST = { step: "trust" as CloneStep, label: "Connect dest" }
+const STEP_GITACCESS = { step: "gitaccess" as CloneStep, label: "Git access" }
+const STEP_CLONE = { step: "clone" as CloneStep, label: "Clone sites" }
+const STEP_CUTOVER = { step: "cutover" as CloneStep, label: "DNS cutover" }
+// The Git-access step only appears when a Bedrock site is selected (deploy-key onboarding).
+function stepsFor(needsGit: boolean): { step: CloneStep; label: string }[] {
+  return needsGit
+    ? [STEP_PLAN, STEP_SERVER, STEP_TRUST, STEP_GITACCESS, STEP_CLONE, STEP_CUTOVER]
+    : [STEP_PLAN, STEP_SERVER, STEP_TRUST, STEP_CLONE, STEP_CUTOVER]
+}
 const RAIL_W = 24
 
 export function CloneWizard() {
@@ -48,6 +53,9 @@ export function CloneWizard() {
     cloneAdvanceFromPlan,
     cloneSetDest,
     cloneTrustContinue,
+    cloneDetectRepoKeys,
+    cloneAddRepoKey,
+    cloneGitAccessContinue,
     cloneSizeSites,
     startClone,
     cloneRetrySite,
@@ -75,6 +83,15 @@ export function CloneWizard() {
       startClone()
     }
   }, [job?.step, cloneStarted, startClone])
+
+  // Detect deploy keys once, when we land on the Git-access step.
+  const detectTried = useRef(false)
+  useEffect(() => {
+    if (job?.step === "gitaccess" && !detectTried.current) {
+      detectTried.current = true
+      void cloneDetectRepoKeys()
+    }
+  }, [job?.step, cloneDetectRepoKeys])
 
   // Dev-only auto-sudo (both ends) from .env so the flow is testable headlessly.
   const devSudoTried = useRef(new Set<number>())
@@ -164,6 +181,33 @@ export function CloneWizard() {
       }
     }
 
+    if (job.step === "gitaccess") {
+      const keys = job.repoKeys ?? []
+      // a — add the dest key to every repo we can auto-add (gh + GitHub) that's missing.
+      if (name === "a") {
+        for (const k of keys) if (k.auto && (k.status === "missing" || k.status === "error")) void cloneAddRepoKey(k.repo)
+        return
+      }
+      // r — re-detect (after a manual add, or to retry a check).
+      if (name === "r") {
+        detectTried.current = false
+        void cloneDetectRepoKeys()
+        return
+      }
+      // o — open the first repo's deploy-keys settings page (manual path).
+      if (name === "o") {
+        const url = keys.find((k) => k.settingsUrl)?.settingsUrl
+        if (url) return openUrl(url)
+        return
+      }
+      // ⏎ — continue once no auto repo is still missing/in-flight (create verifies the rest).
+      if (name === "return") {
+        const blocked = keys.some((k) => k.status === "checking" || k.status === "adding" || (k.auto && k.status === "missing"))
+        if (!blocked) return cloneGitAccessContinue()
+      }
+      return
+    }
+
     if (job.step === "clone" || job.step === "done") {
       // r — retry every failed site.
       if (name === "r") {
@@ -177,7 +221,8 @@ export function CloneWizard() {
 
   const selected = job.sites.filter((s) => s.selected)
   const sudoOn = isSudoConnected(server.id)
-  const curStepIdx = job.step === "done" ? STEPS.length : STEPS.findIndex((s) => s.step === job.step)
+  const steps = stepsFor(cloneNeedsGitAccess(job))
+  const curStepIdx = job.step === "done" ? steps.length : steps.findIndex((s) => s.step === job.step)
 
   return (
     <box style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.bg, zIndex: 218 }}>
@@ -202,7 +247,7 @@ export function CloneWizard() {
       <box style={{ width: RAIL_W, flexShrink: 0, flexDirection: "column", borderStyle: "single", borderColor: theme.border, paddingLeft: 1, paddingRight: 1 }}>
         <text content="JOURNEY" fg={theme.textFaint} wrapMode="none" />
         <box style={{ height: 1 }} />
-        {STEPS.map((s, i) => {
+        {steps.map((s, i) => {
           const state = i < curStepIdx ? "done" : i === curStepIdx ? "active" : "pending"
           const glyph = state === "done" ? "✓" : state === "active" ? "❯" : "○"
           const color = state === "done" ? theme.good : state === "active" ? theme.brand : theme.textFaint
@@ -234,11 +279,12 @@ export function CloneWizard() {
     if (job!.step === "plan") return planPane()
     if (job!.step === "server") return serverPane()
     if (job!.step === "trust") return trustPane()
+    if (job!.step === "gitaccess") return gitAccessPane()
     if (job!.step === "clone" || job!.step === "done") return clonePane()
     if (job!.step === "cutover") return cutoverPane()
     // error — scaffolding for now.
     return (
-      <Panel title={` ${STEPS[curStepIdx]?.label ?? job!.step} `} active>
+      <Panel title={` ${steps[curStepIdx]?.label ?? job!.step} `} active>
         <box style={{ flexDirection: "column", paddingTop: 1, paddingBottom: 1 }}>
           <text content="This step is built in a later slice of the wizard." fg={theme.textDim} wrapMode="none" />
           <text content="The Plan is captured; the rail shows where we are." fg={theme.textFaint} wrapMode="none" />
@@ -297,6 +343,84 @@ export function CloneWizard() {
             <text content="❯ Enter — both ends connected, continue to clone" fg={theme.brand} wrapMode="none" />
           ) : (
             <text content="Connect sudo on both ends to continue." fg={theme.textFaint} wrapMode="none" />
+          )}
+        </box>
+      </Panel>
+    )
+  }
+
+  // Git-access step — deploy-key onboarding for Bedrock dests (hybrid: gh auto-add
+  // when possible, manual key + settings link otherwise).
+  function gitAccessPane() {
+    const destServer = job!.destServerId != null ? servers.find((s) => s.id === job!.destServerId) ?? null : null
+    const pub = destServer?.git_publickey ?? ""
+    const keys = job!.repoKeys ?? []
+    const anyManual = keys.some((k) => !k.auto)
+    const blocked = keys.some((k) => k.status === "checking" || k.status === "adding" || (k.auto && k.status === "missing"))
+    const glyph = (k: RepoKeyState): { g: string; c: string } => {
+      switch (k.status) {
+        case "present":
+        case "added":
+          return { g: "✓", c: theme.good }
+        case "missing":
+          return { g: "○", c: theme.warn }
+        case "checking":
+        case "adding":
+          return { g: "⠹", c: theme.brand }
+        case "error":
+          return { g: "✕", c: theme.bad }
+        default:
+          return { g: "•", c: theme.textFaint }
+      }
+    }
+    const label = (k: RepoKeyState): string => {
+      switch (k.status) {
+        case "present":
+          return "deploy key present"
+        case "added":
+          return "deploy key added"
+        case "missing":
+          return "deploy key missing — press a to add"
+        case "checking":
+          return "checking…"
+        case "adding":
+          return "adding…"
+        case "error":
+          return truncate(k.error ?? "failed", 36)
+        default:
+          return "add the key by hand, then r to re-check"
+      }
+    }
+    return (
+      <Panel title=" Git access — authorize the new server to pull your repos " active>
+        <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
+          <text content="A Bedrock dest is cloned from git at create time using the new" fg={theme.textFaint} wrapMode="none" />
+          <text content="server's deploy key — it must be a read-only key on each repo." fg={theme.textFaint} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          {keys.length === 0 ? <text content="Checking repositories…" fg={theme.textDim} wrapMode="none" /> : null}
+          {keys.map((k) => {
+            const { g, c } = glyph(k)
+            return (
+              <box key={k.repo} style={{ flexDirection: "row", height: 1 }}>
+                <text content={`${g} `} fg={c} style={{ flexShrink: 0 }} />
+                <text content={`${k.owner}/${k.name}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+                <box style={{ flexGrow: 1 }} />
+                <text content={label(k)} fg={k.status === "error" ? theme.bad : k.status === "present" || k.status === "added" ? theme.good : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+              </box>
+            )
+          })}
+          {anyManual && pub ? (
+            <>
+              <box style={{ height: 1 }} />
+              <text content="Add this read-only deploy key in each repo's settings (o opens it):" fg={theme.textFaint} wrapMode="none" />
+              <text content={pub} fg={theme.textDim} wrapMode="none" />
+            </>
+          ) : null}
+          <box style={{ flexGrow: 1 }} />
+          {blocked ? (
+            <text content="Add the missing deploy keys (a), then continue." fg={theme.textFaint} wrapMode="none" />
+          ) : (
+            <text content="❯ Enter — repos authorized, continue to clone" fg={theme.brand} wrapMode="none" />
           )}
         </box>
       </Panel>
@@ -422,6 +546,19 @@ export function CloneWizard() {
         { key: "G", label: "sudo source" },
         { key: "w", label: "SpinupWP" },
         ...(both ? [{ key: "⏎", label: "continue" }] : []),
+        { key: "esc", label: "close" },
+      ]
+    }
+    if (job!.step === "gitaccess") {
+      const keys = job!.repoKeys ?? []
+      const canAdd = keys.some((k) => k.auto && (k.status === "missing" || k.status === "error"))
+      const hasManual = keys.some((k) => k.settingsUrl)
+      const blocked = keys.some((k) => k.status === "checking" || k.status === "adding" || (k.auto && k.status === "missing"))
+      return [
+        ...(canAdd ? [{ key: "a", label: "add key" }] : []),
+        ...(hasManual ? [{ key: "o", label: "open settings" }] : []),
+        { key: "r", label: "re-check" },
+        ...(!blocked ? [{ key: "⏎", label: "continue" }] : []),
         { key: "esc", label: "close" },
       ]
     }

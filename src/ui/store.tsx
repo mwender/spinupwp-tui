@@ -7,7 +7,7 @@
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { SpinupWPClient, ApiError, type ServerService } from "../api/client.ts"
-import type { Server, Site, Event, ProviderMetadata, CreateServerPayload } from "../api/types.ts"
+import type { Server, Site, Event, ProviderMetadata, CreateServerPayload, CreateSitePayload } from "../api/types.ts"
 import { loadConfig, saveConfig, type ServerProviderRef } from "../config.ts"
 import { saveJob, removeJob } from "../lib/jobs.ts"
 import { APP_VERSION } from "../version.ts"
@@ -37,7 +37,8 @@ import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dns
 import { deriveSiteUser, seedVanityIndex, aRecordResolves } from "../lib/vanitySite.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
-import { estimateSourceSiteSizes, runStandardWpPull, type SudoCtx } from "../lib/serverClone.ts"
+import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, type SudoCtx, type CloneStage } from "../lib/serverClone.ts"
+import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, type RepoHost } from "../lib/gitDeployKey.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
@@ -125,7 +126,21 @@ export function isVanityInFlight(j: VanityJob | null | undefined): boolean {
 // an N-wide per-site fan-out. The two heavy steps (clone, cutover) expand into a
 // per-site roster. See docs/2026-06-24_clone-to-server-spec.md. (Slice 2 = shell +
 // Plan; server/trust/clone/cutover orchestration land in later slices.)
-export type CloneStep = "plan" | "server" | "trust" | "clone" | "cutover" | "done" | "error"
+export type CloneStep = "plan" | "server" | "trust" | "gitaccess" | "clone" | "cutover" | "done" | "error"
+// Deploy-key onboarding state for one repo (git-native Bedrock dest). The dest server's
+// key must be a read-only deploy key on the repo before the `git` create can clone it.
+export type RepoKeyStatus = "checking" | "present" | "missing" | "adding" | "added" | "manual" | "error"
+export interface RepoKeyState {
+  repo: string // raw source git.repo (the map key)
+  owner: string
+  name: string
+  host: string
+  kind: RepoHost
+  settingsUrl: string | null // where to add a deploy key by hand (manual fallback)
+  status: RepoKeyStatus
+  auto: boolean // gh+GitHub available → we can detect/add automatically
+  error?: string
+}
 export type CloneSiteStep = "queued" | "create" | "pull" | "config" | "deploy" | "verify" | "done" | "error"
 export interface CloneSiteState {
   sourceSiteId: number
@@ -134,6 +149,8 @@ export interface CloneSiteState {
   selected: boolean // unchecked in Plan → skipped entirely
   sizeBytes?: number // webroot + DB estimate (sizing + progress); undefined until sized
   stack: "wp" | "bedrock" // from source git.repo → drives blank-vs-git create
+  gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
+  gitBranch?: string // source git.branch
   excludeUploads: boolean // per-site opt-out (default false = sync uploads/)
   phpVersion?: string // matched from source for the dest create
   publicFolder?: string // matched from source for the dest create
@@ -159,7 +176,13 @@ export interface CloneJob {
   destServerId?: number
   destServerIp?: string
   sites: CloneSiteState[] // the fan-out
+  repoKeys?: RepoKeyState[] // deploy-key onboarding (Bedrock dests; gitaccess step)
   startedAt: number
+}
+// The gitaccess step is only needed when a selected site is Bedrock (a git repo whose
+// dest the new server must be authorized to clone).
+export function cloneNeedsGitAccess(j: CloneJob): boolean {
+  return j.sites.some((s) => s.selected && s.stack === "bedrock" && !!s.gitRepo)
 }
 export function isCloneInFlight(j: CloneJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
@@ -334,7 +357,10 @@ interface StoreValue extends DataState {
   toggleCloneLowerTtl: () => void // drop apex/www TTLs at the start so cutover is fast
   cloneAdvanceFromPlan: () => void // Plan → New server step
   cloneSetDest: (server: Server) => void // capture the dest (provisioned or existing) → Connect dest
-  cloneTrustContinue: () => void // Connect dest → Clone sites (gated on sudo both ends)
+  cloneTrustContinue: () => void // Connect dest → (gitaccess if Bedrock | clone)
+  cloneDetectRepoKeys: () => Promise<void> // detect dest deploy key on each Bedrock repo
+  cloneAddRepoKey: (repo: string) => Promise<void> // gh: add dest key as read-only deploy key
+  cloneGitAccessContinue: () => void // gitaccess → Clone sites
   cloneSizeSites: () => Promise<void> // measure source sites' webroot+DB over source sudo → sizeBytes
   startClone: () => void // run the fan-out (worker pool, cap = concurrency) over selected sites
   cloneRetrySite: (siteId: number) => void // re-run one failed site
@@ -2157,6 +2183,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         siteUser: s.site_user ?? "",
         selected: true,
         stack: cloneStackFor(s),
+        gitRepo: s.git?.repo ?? undefined,
+        gitBranch: s.git?.branch ?? undefined,
         excludeUploads: false,
         phpVersion: s.php_version ?? undefined,
         publicFolder: s.public_folder ?? undefined,
@@ -2213,7 +2241,77 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Advance to the fan-out. The caller (wizard) gates this on sudo being connected
   // on BOTH ends (it has live isSudoConnected); we just move the step.
   const cloneTrustContinue = useCallback(() => {
-    setCloneJob((j) => (j && j.step === "trust" && j.destServerId != null ? { ...j, step: "clone" } : j))
+    setCloneJob((j) => (j && j.step === "trust" && j.destServerId != null ? { ...j, step: cloneNeedsGitAccess(j) ? "gitaccess" : "clone" } : j))
+  }, [])
+
+  // Mutate one repo's key-onboarding state by repo string.
+  const setRepoKey = useCallback((repo: string, fn: (k: RepoKeyState) => RepoKeyState) => {
+    setCloneJob((j) => (j ? { ...j, repoKeys: j.repoKeys?.map((k) => (k.repo === repo ? fn(k) : k)) } : j))
+  }, [])
+
+  // Detect, for each distinct Bedrock repo, whether the dest server's deploy key is on
+  // it. GitHub + `gh` authed → auto-check (present/missing); anything else → manual.
+  const cloneDetectRepoKeys = useCallback(async () => {
+    const j = cloneJob
+    if (!j || j.destServerId == null) return
+    const destSrv = servers.find((s) => s.id === j.destServerId)
+    const pub = destSrv?.git_publickey ?? ""
+    const repos = Array.from(new Set(j.sites.filter((s) => s.selected && s.stack === "bedrock" && s.gitRepo).map((s) => s.gitRepo as string)))
+    if (repos.length === 0) return
+    const gh = await ghAvailable()
+    setCloneJob((cur) =>
+      cur
+        ? {
+            ...cur,
+            repoKeys: repos.map((repo) => {
+              const p = parseRepo(repo)
+              const auto = gh && p?.kind === "github"
+              return {
+                repo,
+                owner: p?.owner ?? "",
+                name: p?.name ?? "",
+                host: p?.host ?? "",
+                kind: p?.kind ?? ("other" as RepoHost),
+                settingsUrl: p ? deployKeysSettingsUrl(p) : null,
+                auto,
+                status: auto ? ("checking" as RepoKeyStatus) : ("manual" as RepoKeyStatus),
+              }
+            }),
+          }
+        : cur,
+    )
+    for (const repo of repos) {
+      const p = parseRepo(repo)
+      if (!(gh && p?.kind === "github")) continue
+      try {
+        const present = await ghDeployKeyPresent(p, pub)
+        setRepoKey(repo, (k) => ({ ...k, status: present ? "present" : "missing" }))
+      } catch (err) {
+        setRepoKey(repo, (k) => ({ ...k, status: "error", error: (err as Error).message }))
+      }
+    }
+  }, [cloneJob, servers, setRepoKey])
+
+  // Add the dest server's key as a read-only deploy key on one repo (gh path).
+  const cloneAddRepoKey = useCallback(
+    async (repo: string) => {
+      const j = cloneJob
+      if (!j || j.destServerId == null) return
+      const destSrv = servers.find((s) => s.id === j.destServerId)
+      const pub = destSrv?.git_publickey ?? ""
+      const p = parseRepo(repo)
+      if (!p || !pub) return
+      setRepoKey(repo, (k) => ({ ...k, status: "adding", error: undefined }))
+      const title = `spinup-${destSrv?.name ?? "dest"}`
+      const res = await ghAddDeployKey(p, pub, title)
+      setRepoKey(repo, (k) => ({ ...k, status: res.ok ? "added" : "error", error: res.ok ? undefined : res.error }))
+    },
+    [cloneJob, servers, setRepoKey],
+  )
+
+  // Advance gitaccess → clone (the wizard gates on no auto repo still "missing").
+  const cloneGitAccessContinue = useCallback(() => {
+    setCloneJob((j) => (j && j.step === "gitaccess" ? { ...j, step: "clone" } : j))
   }, [])
   const clearClone = useCallback(() => {
     setCloneServer(null)
@@ -2264,8 +2362,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const set = (fn: (s: CloneSiteState) => CloneSiteState) => setCloneSite(site.sourceSiteId, fn)
       const fail = (failedStep: CloneSiteStep, error: string) => set((s) => ({ ...s, step: "error", failedStep, error, detail: undefined }))
       try {
-        if (site.stack === "bedrock") return fail("create", "Bedrock clone lands in the next slice (4d).")
-        // create — blank dest site with matched specs + generated DB creds.
+        if (site.stack === "bedrock" && !site.gitRepo) return fail("create", "the source Bedrock site has no git repo to clone from.")
+        // create — Bedrock → `git` site (SpinupWP clones the repo); Standard WP → blank.
         set((s) => ({ ...s, step: "create", error: undefined, failedStep: undefined, detail: undefined }))
         const dbName = site.destDbName ?? site.siteUser
         const dbPw = site.destDbPassword ?? randomToken(28)
@@ -2278,15 +2376,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (destSiteId == null) {
           let ev
           try {
-            ev = await client.createSite({
-              server_id: destServerId,
-              domain: site.domain,
-              site_user: site.siteUser,
-              installation_method: "blank",
-              php_version: site.phpVersion,
-              public_folder: site.publicFolder,
-              database: { name: dbName, username: dbName, password: dbPw, table_prefix: "wp_" },
-            })
+            const payload: CreateSitePayload =
+              site.stack === "bedrock"
+                ? {
+                    server_id: destServerId,
+                    domain: site.domain,
+                    site_user: site.siteUser,
+                    installation_method: "git",
+                    php_version: site.phpVersion,
+                    public_folder: site.publicFolder ?? "/web/",
+                    database: { name: dbName, username: dbName, password: dbPw, table_prefix: "wp_" },
+                    // deploy_script is TOP-LEVEL; we send the corrected canonical (the
+                    // source's stored value has a known typo) for future push-to-deploy —
+                    // we composer install over SSH regardless (git/deploy won't run it).
+                    deploy_script: "composer install -o --no-dev",
+                    git: { repo: site.gitRepo!, branch: site.gitBranch ?? "main", push_to_deploy: true },
+                  }
+                : {
+                    server_id: destServerId,
+                    domain: site.domain,
+                    site_user: site.siteUser,
+                    installation_method: "blank",
+                    php_version: site.phpVersion,
+                    public_folder: site.publicFolder,
+                    database: { name: dbName, username: dbName, password: dbPw, table_prefix: "wp_" },
+                  }
+            ev = await client.createSite(payload)
           } catch (err) {
             return fail("create", err instanceof ApiError ? err.message : (err as Error).message)
           }
@@ -2312,14 +2427,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         }
         set((s) => ({ ...s, destSiteId }))
-        // pull chain (the proven Standard WP runner)
+        // pull chain — stack-appropriate runner. Map its stage → roster step.
         set((s) => ({ ...s, step: "pull", detail: "starting" }))
-        const res = await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw }, (stage, status) => {
+        const stageToStep = (stage: CloneStage): CloneSiteStep =>
+          stage === "build" ? "deploy" : stage === "config" ? "config" : stage === "verify" ? "verify" : "pull"
+        const onProgress = (stage: CloneStage, status: "start" | "ok" | "fail") => {
           if (status !== "start") return
-          const step: CloneSiteStep = stage === "config" ? "config" : stage === "verify" ? "verify" : "pull"
-          set((s) => ({ ...s, step, detail: stage }))
-        })
-        if (!res.ok) return fail(site.step === "config" ? "config" : site.step === "verify" ? "verify" : "pull", res.error ?? "pull failed")
+          set((s) => ({ ...s, step: stageToStep(stage), detail: stage }))
+        }
+        const res =
+          site.stack === "bedrock"
+            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads }, onProgress)
+            : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw }, onProgress)
+        if (!res.ok) {
+          const stage = (res.error?.split(":")[0] ?? "pull") as CloneStage
+          return fail(stageToStep(stage), res.error ?? "pull failed")
+        }
         set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined }))
       } catch (err) {
         fail(site.step, (err as Error).message)
@@ -2487,6 +2610,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneAdvanceFromPlan,
     cloneSetDest,
     cloneTrustContinue,
+    cloneDetectRepoKeys,
+    cloneAddRepoKey,
+    cloneGitAccessContinue,
     cloneSizeSites,
     startClone,
     cloneRetrySite,
