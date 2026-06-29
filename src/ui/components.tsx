@@ -309,3 +309,26 @@ export function Centered({ children }: { children: ReactNode }) {
     </box>
   )
 }
+
+// A grouped, key-chipped action legend ("Site Control" / "Server Control"): a heading,
+// then dim group titles each over a list of `key → outcome` rows. Shared by the Search
+// actions pane and the Servers detail pane so the suite reads the same everywhere.
+export type ActionGroup = { title: string; items: [string, string][] }
+export function ControlPanel({ heading, groups }: { heading: string; groups: ActionGroup[] }) {
+  return (
+    <box style={{ flexDirection: "column" }}>
+      <text content={heading} fg={theme.accent} />
+      {groups.map((group) => (
+        <box key={group.title} style={{ flexDirection: "column" }}>
+          <text content={group.title.toUpperCase()} fg={theme.textFaint} wrapMode="none" />
+          {group.items.map(([k, label]) => (
+            <box key={k} style={{ flexDirection: "row" }}>
+              <text content={` ${k} `} fg={theme.bg} bg={theme.brandDim} style={{ flexShrink: 0 }} />
+              <text content={`  ${label}`} fg={theme.text} wrapMode="none" />
+            </box>
+          ))}
+        </box>
+      ))}
+    </box>
+  )
+}

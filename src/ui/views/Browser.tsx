@@ -293,7 +293,7 @@ export function Browser({ rows }: { rows: number }) {
           {focus === "sites" && focusedSite ? (
             <SiteDetail site={focusedSite} serverName={server?.name ?? "—"} />
           ) : server ? (
-            <ServerDetail server={server} siteCount={sites.length} />
+            <ServerDetail server={server} siteCount={sites.length} showControl />
           ) : (
             <text content="No data" fg={theme.textFaint} />
           )}
