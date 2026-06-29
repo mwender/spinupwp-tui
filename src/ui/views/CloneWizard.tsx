@@ -61,6 +61,9 @@ export function CloneWizard() {
     startClone,
     cloneRetrySite,
     verifyCloneSite,
+    cutoverCheck,
+    startCutover,
+    cloneCutoverFinish,
     toggleCloneLowerTtl,
     clearClone,
     isSudoConnected,
@@ -96,6 +99,15 @@ export function CloneWizard() {
       void cloneDetectRepoKeys()
     }
   }, [job?.step, cloneDetectRepoKeys])
+
+  // Read + classify each site's DNS record once, when we land on the cutover step.
+  const cutoverChecked = useRef(false)
+  useEffect(() => {
+    if (job?.step === "cutover" && !cutoverChecked.current) {
+      cutoverChecked.current = true
+      void cutoverCheck()
+    }
+  }, [job?.step, cutoverCheck])
 
   // Dev-only auto-sudo (both ends) from .env so the flow is testable headlessly.
   const devSudoTried = useRef(new Set<number>())
@@ -238,6 +250,13 @@ export function CloneWizard() {
         for (const s of job.sites) if (s.selected && s.step === "error") cloneRetrySite(s.sourceSiteId)
         return
       }
+    }
+
+    if (job.step === "cutover") {
+      // c — flip every "ready" record to the new server (the live-traffic write).
+      if (name === "c") return startCutover()
+      if (name === "r") return void cutoverCheck()
+      if (name === "return") return cloneCutoverFinish()
     }
   })
 
@@ -497,20 +516,53 @@ export function CloneWizard() {
     )
   }
 
-  // DNS cutover roster — still scaffolding (slice 6).
+  // DNS cutover roster (slice 6) — repoint each cloned site's A record to the new IP.
   function cutoverPane() {
-    return (
-      <Panel title=" DNS cutover " active>
-        <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-          {selected.map((s) => (
-            <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1 }}>
-              <text content={s.domain} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
-              <box style={{ flexGrow: 1 }} />
-              <text content="○ pending" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-            </box>
-          ))}
+    const cloned = selected.filter((s) => s.step === "done")
+    const ready = cloned.filter((s) => s.cutover?.status === "ready").length
+    const flipping = cloned.filter((s) => s.cutover?.status === "flipping" || s.cutover?.status === "checking").length
+    const cutDone = cloned.filter((s) => s.cutover?.status === "done").length
+    const manual = cloned.filter((s) => s.cutover?.status === "manual").length
+    const errored = cloned.filter((s) => s.cutover?.status === "error").length
+    const targetIp = job!.destServerIp || (job!.destServerId != null ? servers.find((s) => s.id === job!.destServerId)?.ip_address ?? "" : "") || "the new server"
+    const rowFor = (s: (typeof cloned)[number]) => {
+      const c = s.cutover
+      const st = c?.status ?? "pending"
+      const busy = st === "checking" || st === "flipping"
+      const glyph = st === "done" ? "✓" : st === "manual" ? "!" : st === "error" ? "✕" : st === "ready" ? "○" : "·"
+      const gcolor = st === "done" ? theme.good : st === "manual" ? theme.warn : st === "error" ? theme.bad : st === "ready" ? theme.brand : theme.textFaint
+      const detail =
+        st === "checking" ? "reading DNS…"
+        : st === "flipping" ? "updating…"
+        : st === "done" ? `now → ${c?.targetValue ?? targetIp}`
+        : st === "ready" ? `${c?.currentValue ?? "?"} → ${c?.targetValue ?? targetIp}`
+        : st === "manual" ? `manual: ${c?.reason ?? "edit by hand"}`
+        : st === "error" ? truncate(c?.error ?? "failed", 30)
+        : "pending"
+      const dcolor = st === "error" ? theme.bad : st === "done" ? theme.good : st === "manual" ? theme.warn : theme.textFaint
+      return (
+        <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1 }}>
+          {busy ? <Spinner color={theme.brand} /> : <text content={glyph} fg={gcolor} style={{ flexShrink: 0 }} />}
+          <text content={` ${s.domain}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
           <box style={{ flexGrow: 1 }} />
-          <text content="Batched, partial-aware DNS cutover ships in slice 6 (setRecordValue)." fg={theme.textFaint} wrapMode="none" />
+          <text content={detail} fg={dcolor} wrapMode="none" style={{ flexShrink: 0 }} />
+        </box>
+      )
+    }
+    return (
+      <Panel title=" DNS cutover — point traffic at the new server " active>
+        <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
+          <text content={`Repoint each cloned site's A record → ${targetIp}. This moves LIVE traffic.`} fg={theme.textDim} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          {cloned.map(rowFor)}
+          <box style={{ flexGrow: 1 }} />
+          <text content={`✓ ${cutDone} cut over · ○ ${ready} ready · ⠹ ${flipping} working${manual ? ` · ! ${manual} manual` : ""}${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
+          {manual > 0 ? <text content="Manual records can't be API-edited — repoint them in your DNS host." fg={theme.textFaint} wrapMode="none" /> : null}
+          {ready > 0 ? (
+            <text content={`❯ c — cut over ${ready} record${ready === 1 ? "" : "s"} to the new server (live traffic)`} fg={theme.brand} wrapMode="none" />
+          ) : (
+            <text content="⏎ — finish" fg={theme.textFaint} wrapMode="none" />
+          )}
         </box>
       </Panel>
     )
@@ -633,6 +685,15 @@ export function CloneWizard() {
         { key: "esc", label: "close" },
       ]
     }
+    if (job!.step === "cutover") {
+      const ready = selected.filter((s) => s.step === "done" && s.cutover?.status === "ready").length
+      return [
+        ...(ready > 0 ? [{ key: "c", label: "cut over" }] : []),
+        { key: "r", label: "re-check" },
+        { key: "⏎", label: "finish" },
+        { key: "esc", label: "close" },
+      ]
+    }
     if (job!.step === "gitaccess") {
       const keys = job!.repoKeys ?? []
       const canAdd = keys.some((k) => k.auto && (k.status === "missing" || k.status === "error"))
@@ -651,7 +712,8 @@ export function CloneWizard() {
 
   function countDone(step: "clone" | "cutover") {
     if (step === "clone") return job!.sites.filter((s) => s.selected && s.step === "done").length
-    return 0
+    // cutover badge counts records repointed (or already on the new IP).
+    return job!.sites.filter((s) => s.selected && s.cutover?.status === "done").length
   }
   function totalSize() {
     const known = job!.sites.filter((s) => s.selected && s.sizeBytes != null).reduce((a, s) => a + (s.sizeBytes ?? 0), 0)
