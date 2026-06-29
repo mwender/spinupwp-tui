@@ -364,3 +364,91 @@ export async function runBedrockPull(
     onProgress("revoke", "ok")
   }
 }
+
+// ---- Verify a cloned site (slice 5) ---------------------------------------
+//
+// Read-only confirmation that the clone matches the source: compare a handful of
+// wp-cli facts on each side (run as the respective site user from the Bedrock/Std-WP
+// root, identical to the pull) plus an HTTP --resolve fetch of the clone via the dest
+// IP. Nothing is mutated; safe to re-run. wp-cli runs the same from both stacks
+// because both resolve via the site's wp-cli.yml / wp-config from /sites/{domain}/files.
+
+export interface VerifyCheck {
+  key: string
+  label: string
+  source: string
+  clone: string
+  ok: boolean
+}
+export interface VerifyResult {
+  ok: boolean
+  checks: VerifyCheck[]
+}
+export interface VerifySpec {
+  domain: string
+  sourceSiteUser: string
+  destSiteUser: string
+  destIp: string
+}
+
+// One round-trip per side: collect labeled wp-cli facts as `key=value` lines.
+async function wpFacts(ctx: SudoCtx, root: string, user: string): Promise<Record<string, string>> {
+  const script = [
+    `cd ${shq(root)} 2>/dev/null || exit 0`,
+    `u() { sudo -u ${shq(user)} -H wp "$@" 2>/dev/null; }`,
+    `echo "core=$(u core version)"`,
+    `echo "posts=$(u post list --post_type=any --format=count)"`,
+    `echo "pages=$(u post list --post_type=page --format=count)"`,
+    `echo "users=$(u user list --format=count)"`,
+    `echo "plugins=$(u plugin list --status=active --format=count)"`,
+    `echo "siteurl=$(u option get siteurl)"`,
+    `echo "home=$(u option get home)"`,
+  ].join("\n")
+  const res = await exec(ctx, script, 60_000)
+  const out: Record<string, string> = {}
+  for (const line of res.stdout.split("\n")) {
+    const m = line.match(/^(\w+)=(.*)$/)
+    if (m) out[m[1]] = (m[2] ?? "").trim()
+  }
+  return out
+}
+
+// HTTP status of the clone fetched via the dest IP (DNS-independent, like the manual
+// `curl --resolve` checks). 2xx/3xx counts as serving.
+async function curlStatus(domain: string, ip: string): Promise<string> {
+  try {
+    const proc = Bun.spawn(
+      ["curl", "-sS", "-o", "/dev/null", "-m", "20", "-w", "%{http_code}", "-L", "--resolve", `${domain}:80:${ip}`, "--resolve", `${domain}:443:${ip}`, `http://${domain}/`],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+    const code = (await new Response(proc.stdout).text()).trim()
+    await proc.exited
+    return code || "—"
+  } catch {
+    return "err"
+  }
+}
+
+export async function verifyClone(source: SudoCtx, dest: SudoCtx, spec: VerifySpec): Promise<VerifyResult> {
+  const root = `/sites/${spec.domain}/files`
+  const [sf, cf, http] = await Promise.all([
+    wpFacts(source, root, spec.sourceSiteUser),
+    wpFacts(dest, root, spec.destSiteUser),
+    curlStatus(spec.domain, spec.destIp),
+  ])
+  const checks: VerifyCheck[] = []
+  checks.push({ key: "http", label: "Clone serves (HTTP)", source: "—", clone: http, ok: /^[23]\d\d$/.test(http) })
+  const cmp = (key: string, label: string) => {
+    const s = sf[key] ?? ""
+    const c = cf[key] ?? ""
+    checks.push({ key, label, source: s || "—", clone: c || "—", ok: s !== "" && s === c })
+  }
+  cmp("core", "WordPress version")
+  cmp("posts", "Posts")
+  cmp("pages", "Pages")
+  cmp("users", "Users")
+  cmp("plugins", "Active plugins")
+  cmp("siteurl", "Site URL")
+  cmp("home", "Home URL")
+  return { ok: checks.every((c) => c.ok), checks }
+}

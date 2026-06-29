@@ -37,7 +37,7 @@ import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dns
 import { deriveSiteUser, seedVanityIndex, aRecordResolves } from "../lib/vanitySite.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
-import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, type SudoCtx, type CloneStage } from "../lib/serverClone.ts"
+import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, verifyClone, type SudoCtx, type CloneStage, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, type RepoHost } from "../lib/gitDeployKey.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
@@ -161,6 +161,9 @@ export interface CloneSiteState {
   detail?: string // current sub-activity (the pull stage), for the roster
   failedStep?: CloneSiteStep
   error?: string
+  verifying?: boolean // slice 5: verify drill-down in flight
+  verify?: CloneVerifyResult // source-vs-clone comparison + HTTP check
+  verifyError?: string
 }
 export interface CloneJob {
   sourceServerId: number
@@ -364,6 +367,7 @@ interface StoreValue extends DataState {
   cloneSizeSites: () => Promise<void> // measure source sites' webroot+DB over source sudo → sizeBytes
   startClone: () => void // run the fan-out (worker pool, cap = concurrency) over selected sites
   cloneRetrySite: (siteId: number) => void // re-run one failed site
+  verifyCloneSite: (siteId: number) => void // slice 5: verify one cloned site (source-vs-clone)
   clearClone: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
   // session. loadProviderMetadata fetches lazily on demand.
@@ -2485,6 +2489,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [cloneJob, sudoCtxFor, driveCloneSite],
   )
 
+  // Verify one cloned site (slice 5): read-only source-vs-clone comparison + HTTP
+  // check over the existing sudo contexts. Idempotent; results land in site.verify.
+  const verifyCloneSite = useCallback(
+    (siteId: number) => {
+      const j = cloneJob
+      if (!j || j.destServerId == null) return
+      const site = j.sites.find((s) => s.sourceSiteId === siteId)
+      const source = sudoCtxFor(j.sourceServerId)
+      const dest = sudoCtxFor(j.destServerId)
+      if (!site || !source || !dest) return
+      const destIp = j.destServerIp ?? dest.server.ip_address ?? ""
+      setCloneSite(siteId, (s) => ({ ...s, verifying: true, verifyError: undefined }))
+      void (async () => {
+        try {
+          const res = await verifyClone(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destIp })
+          setCloneSite(siteId, (s) => ({ ...s, verifying: false, verify: res }))
+        } catch (err) {
+          setCloneSite(siteId, (s) => ({ ...s, verifying: false, verifyError: (err as Error).message }))
+        }
+      })()
+    },
+    [cloneJob, sudoCtxFor, setCloneSite],
+  )
+
   // When every selected site has settled, mark the job done (a summary terminal).
   useEffect(() => {
     if (!cloneJob || cloneJob.step !== "clone") return
@@ -2616,6 +2644,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneSizeSites,
     startClone,
     cloneRetrySite,
+    verifyCloneSite,
     clearClone,
     providerMetadata,
     providerMetadataLoading,

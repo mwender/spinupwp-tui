@@ -17,6 +17,7 @@ import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl } from "../../lib/spinupweb.ts"
 import { useStore, cloneNeedsGitAccess, type CloneStep, type CloneSiteStep, type RepoKeyState } from "../store.tsx"
+import type { VerifyCheck } from "../../lib/serverClone.ts"
 
 // Dev-only: skip provisioning and use an existing server as the clone dest (e.g. a
 // pre-made web2). Set SPINUP_DEV_CLONE_DEST=<serverId> in .env. The real flow never
@@ -59,6 +60,7 @@ export function CloneWizard() {
     cloneSizeSites,
     startClone,
     cloneRetrySite,
+    verifyCloneSite,
     toggleCloneLowerTtl,
     clearClone,
     isSudoConnected,
@@ -75,11 +77,13 @@ export function CloneWizard() {
   const [idx, setIdx] = useState(0)
   const [sizeTried, setSizeTried] = useState(false)
   const [cloneStarted, setCloneStarted] = useState(false)
+  const [verifyOpen, setVerifyOpen] = useState<number | null>(null) // slice 5: drilled-into site
 
   // Kick the fan-out once, when we land on the Clone step.
   useEffect(() => {
     if (job?.step === "clone" && !cloneStarted) {
       setCloneStarted(true)
+      setIdx(0)
       startClone()
     }
   }, [job?.step, cloneStarted, startClone])
@@ -145,7 +149,10 @@ export function CloneWizard() {
     const raw = key.name ?? ""
     const name = key.shift && raw.length === 1 ? raw.toUpperCase() : raw
 
-    if (name === "escape" || name === "q") return close()
+    if (name === "escape" || name === "q") {
+      if (verifyOpen != null) return setVerifyOpen(null) // back out of the verify drill-down first
+      return close()
+    }
 
     if (job.step === "plan") {
       // S — connect sudo on the SOURCE (pre-flight; the pull needs it later).
@@ -209,6 +216,23 @@ export function CloneWizard() {
     }
 
     if (job.step === "clone" || job.step === "done") {
+      const sel = job.sites.filter((s) => s.selected)
+      // While drilled into a verify view, only re-run (v) and ←/Esc(handled above) apply.
+      if (verifyOpen != null) {
+        if (name === "v") return verifyCloneSite(verifyOpen)
+        if (name === "left" || name === "h") return setVerifyOpen(null)
+        return
+      }
+      const n = sel.length
+      if (n > 0 && (name === "up" || name === "k")) return setIdx((i) => (i - 1 + n) % n)
+      if (n > 0 && (name === "down" || name === "j")) return setIdx((i) => (i + 1) % n)
+      const cur = sel[idx]
+      // v / Enter — verify the highlighted DONE site (drill in + run the comparison).
+      if ((name === "v" || name === "return") && cur && cur.step === "done") {
+        setVerifyOpen(cur.sourceSiteId)
+        verifyCloneSite(cur.sourceSiteId)
+        return
+      }
       // r — retry every failed site.
       if (name === "r") {
         for (const s of job.sites) if (s.selected && s.step === "error") cloneRetrySite(s.sourceSiteId)
@@ -280,6 +304,7 @@ export function CloneWizard() {
     if (job!.step === "server") return serverPane()
     if (job!.step === "trust") return trustPane()
     if (job!.step === "gitaccess") return gitAccessPane()
+    if ((job!.step === "clone" || job!.step === "done") && verifyOpen != null) return verifyPane(verifyOpen)
     if (job!.step === "clone" || job!.step === "done") return clonePane()
     if (job!.step === "cutover") return cutoverPane()
     // error — scaffolding for now.
@@ -500,16 +525,18 @@ export function CloneWizard() {
     return (
       <Panel title={` Clone sites · ${job!.concurrency} at a time `} active>
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-          {selected.map((s) => {
+          {selected.map((s, i) => {
             const active = !["queued", "done", "error"].includes(s.step)
+            const cur = i === idx
+            const vmark = s.verify ? (s.verify.ok ? " ✓verified" : " ✕mismatch") : s.verifying ? " verifying…" : ""
             return (
-              <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1 }}>
+              <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1, backgroundColor: cur ? theme.bgAlt : undefined }}>
                 {active ? <Spinner color={theme.brand} /> : <text content={s.step === "done" ? "✓" : s.step === "error" ? "✕" : "○"} fg={s.step === "done" ? theme.good : s.step === "error" ? theme.bad : theme.textFaint} style={{ flexShrink: 0 }} />}
-                <text content={` ${s.domain}`} fg={s.step === "error" ? theme.text : s.step === "done" ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+                <text content={` ${s.domain}`} fg={cur || s.step === "error" || s.step === "done" ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
                 <box style={{ flexGrow: 1 }} />
                 <text
-                  content={s.step === "error" ? truncate(s.error ?? "failed", 30) : s.step === "done" ? "done" : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}`}
-                  fg={s.step === "error" ? theme.bad : s.step === "done" ? theme.good : theme.textFaint}
+                  content={(s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? "done" : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}`) + vmark}
+                  fg={s.step === "error" || (s.verify && !s.verify.ok) ? theme.bad : s.verify?.ok ? theme.good : s.step === "done" ? theme.good : theme.textFaint}
                   wrapMode="none"
                   style={{ flexShrink: 0 }}
                 />
@@ -518,7 +545,54 @@ export function CloneWizard() {
           })}
           <box style={{ flexGrow: 1 }} />
           <text content={`✓ ${done} done · ⠹ ${running} running · ${queued} queued${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
+          {done > 0 ? <text content="↑↓ select · v verify a done site" fg={theme.textFaint} wrapMode="none" /> : null}
           {errored > 0 ? <text content="r retry failed · esc background" fg={theme.textFaint} wrapMode="none" /> : <text content="esc — keeps running in the background" fg={theme.textFaint} wrapMode="none" />}
+        </box>
+      </Panel>
+    )
+  }
+
+  // Verify drill-down (slice 5) — source-vs-clone facts + HTTP for one done site.
+  function verifyPane(siteId: number) {
+    const site = job!.sites.find((s) => s.sourceSiteId === siteId)
+    if (!site) return null
+    const v = site.verify
+    const row = (c: VerifyCheck) => (
+      <box key={c.key} style={{ flexDirection: "row", height: 1 }}>
+        <text content={c.ok ? "✓ " : "✕ "} fg={c.ok ? theme.good : theme.bad} style={{ flexShrink: 0 }} />
+        <text content={c.label} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+        <box style={{ flexGrow: 1 }} />
+        <text content={truncate(c.source, 22)} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 0, width: 24 }} />
+        <text content={truncate(c.clone, 22)} fg={c.ok ? theme.textDim : theme.bad} wrapMode="none" style={{ flexShrink: 0, width: 24 }} />
+      </box>
+    )
+    return (
+      <Panel title={` Verify · ${site.domain} `} active>
+        <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
+          {site.verifying ? (
+            <box style={{ flexDirection: "row", height: 1 }}>
+              <Spinner color={theme.brand} />
+              <text content=" Comparing source vs clone…" fg={theme.textDim} wrapMode="none" />
+            </box>
+          ) : site.verifyError ? (
+            <text content={`Verify failed: ${site.verifyError}`} fg={theme.bad} wrapMode="none" />
+          ) : v ? (
+            <>
+              <box style={{ flexDirection: "row", height: 1 }}>
+                <text content=" " style={{ flexShrink: 0 }} />
+                <text content="check" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
+                <box style={{ flexGrow: 1 }} />
+                <text content="source" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0, width: 24 }} />
+                <text content="clone" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0, width: 24 }} />
+              </box>
+              {v.checks.map(row)}
+              <box style={{ flexGrow: 1 }} />
+              <text content={v.ok ? "✓ Clone matches the source." : "✕ Differences found — review the ✕ rows above."} fg={v.ok ? theme.good : theme.bad} wrapMode="none" />
+              <text content="v re-run · ← back to roster" fg={theme.textFaint} wrapMode="none" />
+            </>
+          ) : (
+            <text content="Press v to compare this clone against its source." fg={theme.textDim} wrapMode="none" />
+          )}
         </box>
       </Panel>
     )
@@ -546,6 +620,16 @@ export function CloneWizard() {
         { key: "G", label: "sudo source" },
         { key: "w", label: "SpinupWP" },
         ...(both ? [{ key: "⏎", label: "continue" }] : []),
+        { key: "esc", label: "close" },
+      ]
+    }
+    if (job!.step === "clone" || job!.step === "done") {
+      if (verifyOpen != null) return [{ key: "v", label: "re-run" }, { key: "←", label: "back" }, { key: "esc", label: "close" }]
+      const done = selected.filter((s) => s.step === "done").length
+      const errored = selected.filter((s) => s.step === "error").length
+      return [
+        ...(done > 0 ? [{ key: "↑↓", label: "select" }, { key: "v", label: "verify" }] : []),
+        ...(errored > 0 ? [{ key: "r", label: "retry failed" }] : []),
         { key: "esc", label: "close" },
       ]
     }
