@@ -151,6 +151,7 @@ export interface CloneSiteState {
   stack: "wp" | "bedrock" // from source git.repo → drives blank-vs-git create
   gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
   gitBranch?: string // source git.branch
+  additionalDomains?: string[] // extra domains served by the site → extra cutover records
   excludeUploads: boolean // per-site opt-out (default false = sync uploads/)
   phpVersion?: string // matched from source for the dest create
   publicFolder?: string // matched from source for the dest create
@@ -166,18 +167,34 @@ export interface CloneSiteState {
   verifyError?: string
   cutover?: CloneCutoverState // slice 6: DNS repoint state for this site's domain
 }
-// Slice 6: per-site DNS cutover. The site's domain A record is repointed from the old
-// server IP to the new one. "ready" = editable + currently on the old IP (will flip);
-// "manual" = not API-editable (proxied/alias/no account) → the user repoints it by hand.
+// Slice 6: per-site DNS cutover. Each A record among the site's domains (primary +
+// additional_domains) is repointed from the old server IP to the new one. www-style
+// CNAMEs that point at the apex follow it automatically, so a hostname with no A
+// record is simply skipped (not flagged). "ready" = editable + on the old IP (will
+// flip); "manual" = not API-editable (proxied/alias/no account) → repoint by hand.
 export type CloneCutoverStatus = "pending" | "checking" | "ready" | "flipping" | "done" | "manual" | "error"
-export interface CloneCutoverState {
+export interface CutoverRecord {
+  name: string // the hostname this A record sits at
   status: CloneCutoverStatus
-  recordName?: string
-  recordType?: string
   currentValue?: string // value read from the zone (the old IP, usually)
   targetValue?: string // the new server IP
   reason?: string // when manual: why it can't be auto-flipped
   error?: string
+}
+export interface CloneCutoverState {
+  status: CloneCutoverStatus // aggregate over records (rail badge + summary)
+  records: CutoverRecord[]
+}
+// Roll the per-record statuses into one site status: anything still in motion wins,
+// then any flippable work, then errors, then manual, else fully done.
+export function aggregateCutover(records: CutoverRecord[]): CloneCutoverStatus {
+  if (records.length === 0) return "checking"
+  if (records.some((r) => r.status === "checking")) return "checking"
+  if (records.some((r) => r.status === "flipping")) return "flipping"
+  if (records.some((r) => r.status === "ready")) return "ready"
+  if (records.some((r) => r.status === "error")) return "error"
+  if (records.some((r) => r.status === "manual")) return "manual"
+  return "done"
 }
 export interface CloneJob {
   sourceServerId: number
@@ -194,6 +211,7 @@ export interface CloneJob {
   destServerIp?: string
   sites: CloneSiteState[] // the fan-out
   repoKeys?: RepoKeyState[] // deploy-key onboarding (Bedrock dests; gitaccess step)
+  fanoutStarted?: boolean // startClone ran — survives the wizard being backgrounded/reopened
   startedAt: number
 }
 // The gitaccess step is only needed when a selected site is Bedrock (a git repo whose
@@ -385,6 +403,7 @@ interface StoreValue extends DataState {
   cutoverCheck: () => Promise<void> // slice 6: read + classify each site's DNS record
   startCutover: () => void // slice 6: flip every "ready" record to the new IP (batched)
   cloneCutoverFinish: () => void // slice 6: cutover → done summary
+  backgroundClone: () => void // hide the wizard, keep the in-flight clone running (reopen with C)
   clearClone: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
   // session. loadProviderMetadata fetches lazily on demand.
@@ -2196,7 +2215,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // New-server step (the first prod write, hard-gated).
   const beginClone = useCallback(
     (server: Server) => {
-      if (cloneJob && isCloneInFlight(cloneJob) && cloneJob.sourceServerId === server.id) return // reopen in progress
+      // A clone is already in flight (possibly backgrounded): reopen IT rather than
+      // start/clobber another — pressing C on any server brings back the live one.
+      if (cloneJob && isCloneInFlight(cloneJob)) {
+        setCloneServer(servers.find((s) => s.id === cloneJob.sourceServerId) ?? server)
+        return
+      }
       const srcSites = sitesForServer(server.id)
       const sites: CloneSiteState[] = srcSites.map((s) => ({
         sourceSiteId: s.id,
@@ -2206,6 +2230,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         stack: cloneStackFor(s),
         gitRepo: s.git?.repo ?? undefined,
         gitBranch: s.git?.branch ?? undefined,
+        additionalDomains: (s.additional_domains ?? []).map((d) => d.domain),
         excludeUploads: false,
         phpVersion: s.php_version ?? undefined,
         publicFolder: s.public_folder ?? undefined,
@@ -2225,8 +2250,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setCloneServer(server)
       setCloneJob(draft)
     },
-    [cloneJob, sitesForServer],
+    [cloneJob, sitesForServer, servers],
   )
+
+  // Background an in-flight clone: hide the wizard but KEEP the job running (the
+  // worker pool lives in the store). Reopen with C on the source server. Distinct
+  // from clearClone, which discards the job entirely.
+  const backgroundClone = useCallback(() => setCloneServer(null), [])
 
   const mutateCloneSite = useCallback((sourceSiteId: number, fn: (s: CloneSiteState) => CloneSiteState) => {
     setCloneJob((j) => (j ? { ...j, sites: j.sites.map((s) => (s.sourceSiteId === sourceSiteId ? fn(s) : s)) } : j))
@@ -2473,14 +2503,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   // Run the fan-out: a worker pool (cap = concurrency) over the selected sites.
+  // Guarded by fanoutStarted so reopening a backgrounded wizard never re-queues a
+  // running clone (the workers live in the store, not the unmounted component).
   const startClone = useCallback(() => {
     const j = cloneJob
-    if (!j || j.destServerId == null) return
+    if (!j || j.destServerId == null || j.fanoutStarted) return
     const source = sudoCtxFor(j.sourceServerId)
     const dest = sudoCtxFor(j.destServerId)
     if (!source || !dest) return // both ends must be sudo-connected (trust step ensured)
     const destServerId = j.destServerId
-    setCloneJob((cur) => (cur ? { ...cur, step: "clone", sites: cur.sites.map((s) => (s.selected ? { ...s, step: "queued" as CloneSiteStep, error: undefined, failedStep: undefined } : s)) } : cur))
+    setCloneJob((cur) => (cur ? { ...cur, step: "clone", fanoutStarted: true, sites: cur.sites.map((s) => (s.selected ? { ...s, step: "queued" as CloneSiteStep, error: undefined, failedStep: undefined } : s)) } : cur))
     const queue = j.sites.filter((s) => s.selected)
     let cursor = 0
     const worker = async () => {
@@ -2542,74 +2574,105 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [cloneJob])
 
   // ---- DNS cutover (slice 6) ------------------------------------------------
-  // Read each cloned site's domain A record, classify it (already-on-new = done;
-  // editable-on-old = ready to flip; not API-editable = manual), and stash the plan
-  // in site.cutover. Read-only; the flip is a separate explicit action.
+  const destIpOf = useCallback(
+    (j: CloneJob) => j.destServerIp ?? (j.destServerId != null ? servers.find((s) => s.id === j.destServerId)?.ip_address ?? "" : ""),
+    [servers],
+  )
+  // Update one record within a site's cutover, recomputing the aggregate status.
+  const setCutoverRecord = useCallback(
+    (siteId: number, name: string, fn: (r: CutoverRecord) => CutoverRecord) => {
+      setCloneSite(siteId, (s) => {
+        if (!s.cutover) return s
+        const records = s.cutover.records.map((r) => (r.name === name ? fn(r) : r))
+        return { ...s, cutover: { status: aggregateCutover(records), records } }
+      })
+    },
+    [setCloneSite],
+  )
+
+  // Read every A record across each cloned site's domains (primary + additional),
+  // classify it (already-on-new = done; editable-on-old = ready; not-API-editable =
+  // manual), and stash the plan in site.cutover. A hostname with no A record (a www
+  // CNAME → apex, or absent) is skipped — only a missing PRIMARY A is flagged.
+  // Read-only; the flip is a separate explicit action.
   const cutoverCheck = useCallback(async () => {
     const j = cloneJob
     if (!j) return
-    const targetIp = j.destServerIp ?? (j.destServerId != null ? servers.find((s) => s.id === j.destServerId)?.ip_address ?? "" : "")
+    const targetIp = destIpOf(j)
     const dones = j.sites.filter((s) => s.selected && s.step === "done")
     await Promise.all(
       dones.map(async (site) => {
-        const setCut = (cutover: CloneCutoverState) => setCloneSite(site.sourceSiteId, (s) => ({ ...s, cutover }))
-        setCut({ status: "checking", targetValue: targetIp })
-        try {
-          const rc = await resolveZoneConn(site.domain)
-          if ("error" in rc) return setCut({ status: "manual", recordName: site.domain, recordType: "A", targetValue: targetIp, reason: rc.error })
-          const res = await getZoneRecord(rc.conn.id, rc.zone.apex, site.domain, "A")
-          if (!res.ok || !res.record) return setCut({ status: "manual", recordName: site.domain, recordType: "A", targetValue: targetIp, reason: res.error ?? "no A record found" })
-          const rec = res.record
-          const cur = rec.values[0] ?? ""
-          const base = { recordName: rec.name, recordType: "A", currentValue: cur, targetValue: targetIp }
-          if (cur === targetIp) return setCut({ status: "done", ...base })
-          if (!rec.editable) return setCut({ status: "manual", ...base, reason: rec.reason ?? "not editable" })
-          setCut({ status: "ready", ...base })
-        } catch (err) {
-          setCut({ status: "error", recordName: site.domain, recordType: "A", targetValue: targetIp, error: (err as Error).message })
+        const hostnames = [site.domain, ...(site.additionalDomains ?? [])]
+        setCloneSite(site.sourceSiteId, (s) => ({ ...s, cutover: { status: "checking", records: hostnames.map((name) => ({ name, status: "checking" as CloneCutoverStatus, targetValue: targetIp })) } }))
+        const records: CutoverRecord[] = []
+        for (const name of hostnames) {
+          try {
+            const rc = await resolveZoneConn(name)
+            if ("error" in rc) {
+              records.push({ name, status: "manual", targetValue: targetIp, reason: rc.error })
+              continue
+            }
+            const res = await getZoneRecord(rc.conn.id, rc.zone.apex, name, "A")
+            if (!res.ok || !res.record) {
+              // No A record here — typically a www CNAME that follows the apex, or
+              // absent. Skip silently; only flag a missing PRIMARY domain A.
+              if (name === site.domain) records.push({ name, status: "manual", targetValue: targetIp, reason: res.error ?? "no A record" })
+              continue
+            }
+            const cur = res.record.values[0] ?? ""
+            const base = { name, currentValue: cur, targetValue: targetIp }
+            if (cur === targetIp) records.push({ ...base, status: "done" })
+            else if (!res.record.editable) records.push({ ...base, status: "manual", reason: res.record.reason ?? "not editable" })
+            else records.push({ ...base, status: "ready" })
+          } catch (err) {
+            records.push({ name, status: "error", targetValue: targetIp, error: (err as Error).message })
+          }
         }
+        setCloneSite(site.sourceSiteId, (s) => ({ ...s, cutover: { status: aggregateCutover(records), records } }))
       }),
     )
-  }, [cloneJob, servers, resolveZoneConn, getZoneRecord, setCloneSite])
+  }, [cloneJob, destIpOf, resolveZoneConn, getZoneRecord, setCloneSite])
 
-  // Flip every "ready" site's A record to the new IP, together (batched). Re-resolves
-  // zone+record at flip time (no creds held in state), repoints via setValue, polls
-  // async providers to INSYNC. Partial-aware: manual/error sites are left as-is.
+  // Flip every "ready" A record to the new IP, together (batched, across all sites).
+  // Re-resolves zone+record at flip time (no creds held in state), repoints via
+  // setValue, polls async providers to INSYNC. Partial-aware: manual/error left as-is.
   const startCutover = useCallback(() => {
     const j = cloneJob
     if (!j) return
-    const targetIp = j.destServerIp ?? (j.destServerId != null ? servers.find((s) => s.id === j.destServerId)?.ip_address ?? "" : "")
+    const targetIp = destIpOf(j)
     if (!targetIp) return
-    const ready = j.sites.filter((s) => s.selected && s.cutover?.status === "ready")
-    for (const site of ready) {
-      const setCut = (fn: (c: CloneCutoverState) => CloneCutoverState) => setCloneSite(site.sourceSiteId, (s) => ({ ...s, cutover: fn(s.cutover ?? { status: "ready" }) }))
-      setCut((c) => ({ ...c, status: "flipping", error: undefined }))
-      void (async () => {
-        try {
-          const rc = await resolveZoneConn(site.domain)
-          if ("error" in rc) return setCut((c) => ({ ...c, status: "manual", reason: rc.error }))
-          const conn = rc.conn
-          const provider = recordProviderFor(conn.provider)
-          if (!provider?.setValue) return setCut((c) => ({ ...c, status: "manual", reason: "this provider isn't API-editable" }))
-          const res = await getZoneRecord(conn.id, rc.zone.apex, site.domain, "A")
-          if (!res.ok || !res.record) return setCut((c) => ({ ...c, status: "error", error: res.error ?? "couldn't read the record" }))
-          const change = await provider.setValue(conn.creds, res.zoneId, res.record, targetIp)
-          if (!change.ok) return setCut((c) => ({ ...c, status: "error", error: change.error ?? "repoint failed" }))
-          if (change.pollId && provider.pollChange) {
-            for (let i = 0; i < 40; i++) {
-              const st = await provider.pollChange(conn.creds, change.pollId)
-              if (st === "done") break
-              if (st === "failed") return setCut((c) => ({ ...c, status: "error", error: "the DNS change failed to apply" }))
-              await new Promise((r) => setTimeout(r, 3000))
+    for (const site of j.sites.filter((s) => s.selected && s.cutover)) {
+      for (const rec of site.cutover!.records.filter((r) => r.status === "ready")) {
+        const name = rec.name
+        const upd = (fn: (r: CutoverRecord) => CutoverRecord) => setCutoverRecord(site.sourceSiteId, name, fn)
+        upd((r) => ({ ...r, status: "flipping", error: undefined }))
+        void (async () => {
+          try {
+            const rc = await resolveZoneConn(name)
+            if ("error" in rc) return upd((r) => ({ ...r, status: "manual", reason: rc.error }))
+            const conn = rc.conn
+            const provider = recordProviderFor(conn.provider)
+            if (!provider?.setValue) return upd((r) => ({ ...r, status: "manual", reason: "this provider isn't API-editable" }))
+            const res = await getZoneRecord(conn.id, rc.zone.apex, name, "A")
+            if (!res.ok || !res.record) return upd((r) => ({ ...r, status: "error", error: res.error ?? "couldn't read the record" }))
+            const change = await provider.setValue(conn.creds, res.zoneId, res.record, targetIp)
+            if (!change.ok) return upd((r) => ({ ...r, status: "error", error: change.error ?? "repoint failed" }))
+            if (change.pollId && provider.pollChange) {
+              for (let i = 0; i < 40; i++) {
+                const st = await provider.pollChange(conn.creds, change.pollId)
+                if (st === "done") break
+                if (st === "failed") return upd((r) => ({ ...r, status: "error", error: "the DNS change failed to apply" }))
+                await new Promise((r) => setTimeout(r, 3000))
+              }
             }
+            upd((r) => ({ ...r, status: "done", currentValue: targetIp }))
+          } catch (err) {
+            upd((r) => ({ ...r, status: "error", error: (err as Error).message }))
           }
-          setCut((c) => ({ ...c, status: "done", currentValue: targetIp }))
-        } catch (err) {
-          setCut((c) => ({ ...c, status: "error", error: (err as Error).message }))
-        }
-      })()
+        })()
+      }
     }
-  }, [cloneJob, servers, resolveZoneConn, getZoneRecord, setCloneSite])
+  }, [cloneJob, destIpOf, resolveZoneConn, getZoneRecord, setCutoverRecord])
 
   const cloneCutoverFinish = useCallback(() => {
     setCloneJob((j) => (j && j.step === "cutover" ? { ...j, step: "done" } : j))
@@ -2741,6 +2804,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cutoverCheck,
     startCutover,
     cloneCutoverFinish,
+    backgroundClone,
     clearClone,
     providerMetadata,
     providerMetadataLoading,

@@ -1,7 +1,7 @@
 // Top navigation bar: brand mark, tab strip, and live account summary.
 
 import { theme } from "../lib/theme.ts"
-import { useStore, isNewServerInFlight, isVanityInFlight, type Route } from "./store.tsx"
+import { useStore, isNewServerInFlight, isVanityInFlight, isCloneInFlight, type Route } from "./store.tsx"
 import { timeAgo, truncate } from "../lib/format.ts"
 import { Spinner } from "./components.tsx"
 import { APP_NAME, APP_VERSION } from "../version.ts"
@@ -26,11 +26,14 @@ const SUBTITLES: Record<Route, string> = {
 }
 
 export function Header() {
-  const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob, vanityJob } = useStore()
+  const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob, vanityJob, cloneJob, cloneServer } = useStore()
   const updateReady = updateInfo?.updateAvailable ?? false
   const building = isNewServerInFlight(newServerJob)
   const connecting = isVanityInFlight(vanityJob)
   const vanityStuck = vanityJob != null && vanityJob.step === "error"
+  // Show a clone badge only when it's running AND backgrounded (wizard closed) — the
+  // open wizard covers the screen, so no badge is needed there.
+  const cloning = isCloneInFlight(cloneJob) && cloneServer == null
 
   return (
     <box style={{ flexDirection: "column", flexShrink: 0 }}>
@@ -81,6 +84,14 @@ export function Header() {
           </box>
         )}
         {vanityStuck && <text content={`  ⚠ ${truncate(vanityJob!.hostname, 20)} — press V  `} fg={theme.bad} style={{ flexShrink: 0 }} wrapMode="none" />}
+        {/* A backgrounded clone keeps running in the store — surface it so it's
+            reachable (press C on the source server to reopen the live roster). */}
+        {cloning && (
+          <box style={{ flexDirection: "row", flexShrink: 0, alignItems: "center" }}>
+            <Spinner interval={120} color={theme.warn} />
+            <text content={`  Cloning ${truncate(cloneJob!.sourceServerName, 20)} — press C  `} fg={theme.warn} wrapMode="none" />
+          </box>
+        )}
         {loading && <Spinner interval={100} />}
         <text content={`  ${servers.length} servers · ${sites.length} sites  `} fg={theme.textDim} style={{ flexShrink: 0 }} />
         <text content={lastUpdated ? `updated ${timeAgo(lastUpdated.toISOString())}` : "loading…"} fg={theme.textFaint} style={{ flexShrink: 0 }} />

@@ -19,10 +19,9 @@ import { serverWebUrl } from "../../lib/spinupweb.ts"
 import { useStore, cloneNeedsGitAccess, type CloneStep, type CloneSiteStep, type RepoKeyState } from "../store.tsx"
 import type { VerifyCheck } from "../../lib/serverClone.ts"
 
-// Dev-only: skip provisioning and use an existing server as the clone dest (e.g. a
-// pre-made web2). Set SPINUP_DEV_CLONE_DEST=<serverId> in .env. The real flow never
-// depends on this — it's purely a dev shortcut so the downstream slices are testable
-// without a ~10-min provision each run.
+// Choosing an existing server as the dest is a first-class feature now (the `d` picker
+// on the Destination step). SPINUP_DEV_CLONE_DEST just pre-points the picker cursor at
+// a given server id — a dev convenience for repeated testing, never required.
 const DEV_CLONE_DEST = Number(process.env.SPINUP_DEV_CLONE_DEST) || null
 // Dev-only: auto-connect sudo on both ends from .env (SPINUP_DEV_SUDO_SOURCE/DEST,
 // each "user:password"), so the full clone is testable headlessly without typing
@@ -30,7 +29,7 @@ const DEV_CLONE_DEST = Number(process.env.SPINUP_DEV_CLONE_DEST) || null
 const DEV_SUDO = { source: process.env.SPINUP_DEV_SUDO_SOURCE || "", dest: process.env.SPINUP_DEV_SUDO_DEST || "" }
 
 const STEP_PLAN = { step: "plan" as CloneStep, label: "Plan" }
-const STEP_SERVER = { step: "server" as CloneStep, label: "New server" }
+const STEP_SERVER = { step: "server" as CloneStep, label: "Destination" }
 const STEP_TRUST = { step: "trust" as CloneStep, label: "Connect dest" }
 const STEP_GITACCESS = { step: "gitaccess" as CloneStep, label: "Git access" }
 const STEP_CLONE = { step: "clone" as CloneStep, label: "Clone sites" }
@@ -64,6 +63,7 @@ export function CloneWizard() {
     cutoverCheck,
     startCutover,
     cloneCutoverFinish,
+    backgroundClone,
     toggleCloneLowerTtl,
     clearClone,
     isSudoConnected,
@@ -79,17 +79,19 @@ export function CloneWizard() {
 
   const [idx, setIdx] = useState(0)
   const [sizeTried, setSizeTried] = useState(false)
-  const [cloneStarted, setCloneStarted] = useState(false)
   const [verifyOpen, setVerifyOpen] = useState<number | null>(null) // slice 5: drilled-into site
+  const [pickExisting, setPickExisting] = useState(false) // dest step: choosing an existing server
+  const [destIdx, setDestIdx] = useState(0) // cursor in the existing-server picker
 
-  // Kick the fan-out once, when we land on the Clone step.
+  // Kick the fan-out once, when we land on the Clone step. Guarded by the job's
+  // fanoutStarted flag (not component state) so reopening a backgrounded wizard
+  // never re-queues a clone that's already running in the store.
   useEffect(() => {
-    if (job?.step === "clone" && !cloneStarted) {
-      setCloneStarted(true)
+    if (job?.step === "clone" && !job.fanoutStarted) {
       setIdx(0)
       startClone()
     }
-  }, [job?.step, cloneStarted, startClone])
+  }, [job?.step, job?.fanoutStarted, startClone])
 
   // Detect deploy keys once, when we land on the Git-access step.
   const detectTried = useRef(false)
@@ -100,14 +102,14 @@ export function CloneWizard() {
     }
   }, [job?.step, cloneDetectRepoKeys])
 
-  // Read + classify each site's DNS record once, when we land on the cutover step.
-  const cutoverChecked = useRef(false)
+  // Read + classify each site's DNS record when we land on the cutover step — but
+  // only if it hasn't been checked yet (so reopening a backgrounded wizard doesn't
+  // reset in-progress flips). The check itself is read-only.
   useEffect(() => {
-    if (job?.step === "cutover" && !cutoverChecked.current) {
-      cutoverChecked.current = true
-      void cutoverCheck()
-    }
-  }, [job?.step, cutoverCheck])
+    if (job?.step !== "cutover") return
+    const cloned = job.sites.filter((s) => s.selected && s.step === "done")
+    if (cloned.length > 0 && cloned.every((s) => !s.cutover)) void cutoverCheck()
+  }, [job?.step, job?.sites, cutoverCheck])
 
   // Dev-only auto-sudo (both ends) from .env so the flow is testable headlessly.
   const devSudoTried = useRef(new Set<number>())
@@ -154,6 +156,10 @@ export function CloneWizard() {
 
   const close = () => clearClone()
 
+  // Existing servers eligible as a clone destination (anything but the source),
+  // name-sorted. The DEV override (SPINUP_DEV_CLONE_DEST) just pre-points the cursor.
+  const eligibleDests = servers.filter((s) => s.id !== job?.sourceServerId).slice().sort((a, b) => a.name.localeCompare(b.name))
+
   useKeyboard((key) => {
     if (!job || !server) return
     // A layered overlay (NewServer / SudoConnect) owns the keyboard while open.
@@ -163,6 +169,10 @@ export function CloneWizard() {
 
     if (name === "escape" || name === "q") {
       if (verifyOpen != null) return setVerifyOpen(null) // back out of the verify drill-down first
+      if (pickExisting) return setPickExisting(false) // back out of the server picker first
+      // Once the fan-out has launched, esc BACKGROUNDS the clone (it keeps running);
+      // reopen with C on the source server. Before launch / at the summary, esc cancels.
+      if (job.step === "clone" || job.step === "cutover") return backgroundClone()
       return close()
     }
 
@@ -180,7 +190,26 @@ export function CloneWizard() {
     }
 
     if (job.step === "server") {
-      if (devDest && name === "d") return cloneSetDest(devDest)
+      if (pickExisting) {
+        const n = eligibleDests.length
+        if (n === 0) return
+        if (name === "up" || name === "k") return setDestIdx((i) => (i - 1 + n) % n)
+        if (name === "down" || name === "j") return setDestIdx((i) => (i + 1) % n)
+        if (name === "return") {
+          const chosen = eligibleDests[destIdx]
+          if (chosen) {
+            setPickExisting(false)
+            cloneSetDest(chosen)
+          }
+        }
+        return
+      }
+      // d — choose an existing server as the destination (open the picker).
+      if (name === "d" && eligibleDests.length > 0) {
+        const start = devDest ? Math.max(0, eligibleDests.findIndex((s) => s.id === devDest.id)) : 0
+        setDestIdx(start)
+        return setPickExisting(true)
+      }
       if (name === "return") {
         // Reuse the standalone New-server flow, seeded from the source.
         setNewServerSource(server)
@@ -272,7 +301,7 @@ export function CloneWizard() {
       {/* header */}
       <box style={{ flexDirection: "row", height: 1, backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1, alignItems: "center" }}>
         <text content="✦ Clone server  " fg={theme.brand} style={{ flexShrink: 0 }} />
-        <text content={`${server.name} (${selected.length} of ${job.sites.length} sites) → new server`} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+        <text content={`${server.name} (${selected.length} of ${job.sites.length} sites) → ${job.destServerName || "destination"}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
       </box>
 
       {/* two panes */}
@@ -338,24 +367,52 @@ export function CloneWizard() {
   }
 
   function serverPane() {
+    if (pickExisting) return pickExistingPane()
     const sp = job!.specs
+    const canPick = eligibleDests.length > 0
     return (
-      <Panel title=" New server — provision the destination " active>
+      <Panel title=" Destination — provision new or pick existing " active>
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-          <text content="Stand up a fresh server to receive the cloned sites." fg={theme.textDim} wrapMode="none" />
+          <text content="Where should the cloned sites land?" fg={theme.textDim} wrapMode="none" />
           <box style={{ height: 1 }} />
-          <text content="Match source:" fg={theme.textFaint} wrapMode="none" />
-          <text content={`  ${sp.providerName || "—"} · ${sp.region || "—"} · ${sp.size || "—"}`} fg={theme.text} wrapMode="none" />
+          <text content="❯ Enter — provision a NEW server" fg={theme.brand} wrapMode="none" />
+          <text content={`    matched to source: ${sp.providerName || "—"} · ${sp.region || "—"} · ${sp.size || "—"}`} fg={theme.textFaint} wrapMode="none" />
           <box style={{ height: 1 }} />
-          <text content="❯ Enter — open the new-server form (provider/region/size/cost)" fg={theme.brand} wrapMode="none" />
-          {devDest ? (
-            <>
-              <box style={{ height: 1 }} />
-              <text content={`d — DEV: use existing dest ${devDest.name} (skip provisioning)`} fg={theme.warn} wrapMode="none" />
-            </>
-          ) : null}
+          {canPick ? (
+            <text content={`❯ d — use an EXISTING server (${eligibleDests.length} available)`} fg={theme.brand} wrapMode="none" />
+          ) : (
+            <text content="d — use an existing server (none available — provision one)" fg={theme.textFaint} wrapMode="none" />
+          )}
+          <text content="    e.g. a pre-built box, or consolidate onto an existing server" fg={theme.textFaint} wrapMode="none" />
           <box style={{ flexGrow: 1 }} />
           <text content="Provisioning runs in the background and the wizard waits for it." fg={theme.textFaint} wrapMode="none" />
+        </box>
+      </Panel>
+    )
+  }
+
+  // Existing-server picker (the promoted "use an existing destination" feature).
+  function pickExistingPane() {
+    return (
+      <Panel title=" Destination — pick an existing server " active>
+        <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
+          <text content="Clone INTO one of your existing servers:" fg={theme.textDim} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          {eligibleDests.map((s, i) => {
+            const sel = i === destIdx
+            const meta = `${s.provider_name || "—"} · ${s.region || "—"}${s.ip_address ? "  " + s.ip_address : ""}`
+            return (
+              <box key={s.id} style={{ flexDirection: "row", height: 1, backgroundColor: sel ? theme.bgAlt : undefined }}>
+                <text content={sel ? "❯ " : "  "} fg={theme.brand} style={{ flexShrink: 0 }} />
+                <text content={s.name} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+                <box style={{ flexGrow: 1 }} />
+                <text content={meta} fg={sel ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+              </box>
+            )
+          })}
+          <box style={{ flexGrow: 1 }} />
+          <text content="The dest needs a sudo connection next (and a deploy key for Bedrock) — the wizard walks you through it." fg={theme.textFaint} wrapMode="none" />
+          <text content="↑↓ select · ⏎ use this server · esc back" fg={theme.textFaint} wrapMode="none" />
         </box>
       </Panel>
     )
@@ -516,34 +573,36 @@ export function CloneWizard() {
     )
   }
 
-  // DNS cutover roster (slice 6) — repoint each cloned site's A record to the new IP.
+  // DNS cutover roster (slice 6) — one row per A record across the cloned sites'
+  // domains (primary + additional). www CNAMEs that follow the apex aren't listed.
   function cutoverPane() {
     const cloned = selected.filter((s) => s.step === "done")
-    const ready = cloned.filter((s) => s.cutover?.status === "ready").length
-    const flipping = cloned.filter((s) => s.cutover?.status === "flipping" || s.cutover?.status === "checking").length
-    const cutDone = cloned.filter((s) => s.cutover?.status === "done").length
-    const manual = cloned.filter((s) => s.cutover?.status === "manual").length
-    const errored = cloned.filter((s) => s.cutover?.status === "error").length
+    const recs = cloned.flatMap((s) => (s.cutover?.records ?? []).map((r) => ({ r, siteId: s.sourceSiteId })))
+    const count = (st: string) => recs.filter((x) => x.r.status === st).length
+    const ready = count("ready")
+    const working = count("checking") + count("flipping")
+    const cutDone = count("done")
+    const manual = count("manual")
+    const errored = count("error")
     const targetIp = job!.destServerIp || (job!.destServerId != null ? servers.find((s) => s.id === job!.destServerId)?.ip_address ?? "" : "") || "the new server"
-    const rowFor = (s: (typeof cloned)[number]) => {
-      const c = s.cutover
-      const st = c?.status ?? "pending"
+    const rowFor = ({ r, siteId }: (typeof recs)[number]) => {
+      const st = r.status
       const busy = st === "checking" || st === "flipping"
       const glyph = st === "done" ? "✓" : st === "manual" ? "!" : st === "error" ? "✕" : st === "ready" ? "○" : "·"
       const gcolor = st === "done" ? theme.good : st === "manual" ? theme.warn : st === "error" ? theme.bad : st === "ready" ? theme.brand : theme.textFaint
       const detail =
         st === "checking" ? "reading DNS…"
         : st === "flipping" ? "updating…"
-        : st === "done" ? `now → ${c?.targetValue ?? targetIp}`
-        : st === "ready" ? `${c?.currentValue ?? "?"} → ${c?.targetValue ?? targetIp}`
-        : st === "manual" ? `manual: ${c?.reason ?? "edit by hand"}`
-        : st === "error" ? truncate(c?.error ?? "failed", 30)
+        : st === "done" ? `now → ${r.targetValue ?? targetIp}`
+        : st === "ready" ? `${r.currentValue ?? "?"} → ${r.targetValue ?? targetIp}`
+        : st === "manual" ? `manual: ${r.reason ?? "edit by hand"}`
+        : st === "error" ? truncate(r.error ?? "failed", 28)
         : "pending"
       const dcolor = st === "error" ? theme.bad : st === "done" ? theme.good : st === "manual" ? theme.warn : theme.textFaint
       return (
-        <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1 }}>
+        <box key={`${siteId}|${r.name}`} style={{ flexDirection: "row", height: 1 }}>
           {busy ? <Spinner color={theme.brand} /> : <text content={glyph} fg={gcolor} style={{ flexShrink: 0 }} />}
-          <text content={` ${s.domain}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+          <text content={` ${r.name}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
           <box style={{ flexGrow: 1 }} />
           <text content={detail} fg={dcolor} wrapMode="none" style={{ flexShrink: 0 }} />
         </box>
@@ -552,11 +611,11 @@ export function CloneWizard() {
     return (
       <Panel title=" DNS cutover — point traffic at the new server " active>
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-          <text content={`Repoint each cloned site's A record → ${targetIp}. This moves LIVE traffic.`} fg={theme.textDim} wrapMode="none" />
+          <text content={`Repoint each A record → ${targetIp}. This moves LIVE traffic (www CNAMEs follow the apex).`} fg={theme.textDim} wrapMode="none" />
           <box style={{ height: 1 }} />
-          {cloned.map(rowFor)}
+          {recs.length === 0 ? <text content="Reading DNS…" fg={theme.textDim} wrapMode="none" /> : recs.map(rowFor)}
           <box style={{ flexGrow: 1 }} />
-          <text content={`✓ ${cutDone} cut over · ○ ${ready} ready · ⠹ ${flipping} working${manual ? ` · ! ${manual} manual` : ""}${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
+          <text content={`✓ ${cutDone} cut over · ○ ${ready} ready · ⠹ ${working} working${manual ? ` · ! ${manual} manual` : ""}${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
           {manual > 0 ? <text content="Manual records can't be API-edited — repoint them in your DNS host." fg={theme.textFaint} wrapMode="none" /> : null}
           {ready > 0 ? (
             <text content={`❯ c — cut over ${ready} record${ready === 1 ? "" : "s"} to the new server (live traffic)`} fg={theme.brand} wrapMode="none" />
@@ -598,7 +657,11 @@ export function CloneWizard() {
           <box style={{ flexGrow: 1 }} />
           <text content={`✓ ${done} done · ⠹ ${running} running · ${queued} queued${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
           {done > 0 ? <text content="↑↓ select · v verify a done site" fg={theme.textFaint} wrapMode="none" /> : null}
-          {errored > 0 ? <text content="r retry failed · esc background" fg={theme.textFaint} wrapMode="none" /> : <text content="esc — keeps running in the background" fg={theme.textFaint} wrapMode="none" />}
+          {job!.step === "clone" ? (
+            <text content={errored > 0 ? "r retry failed · esc — clone keeps running in the background" : "esc — clone keeps running in the background (reopen with C)"} fg={theme.textFaint} wrapMode="none" />
+          ) : (
+            <text content={errored > 0 ? "r retry failed · esc close" : "esc — close"} fg={theme.textFaint} wrapMode="none" />
+          )}
         </box>
       </Panel>
     )
@@ -662,7 +725,8 @@ export function CloneWizard() {
       ]
     }
     if (job!.step === "server") {
-      return [{ key: "⏎", label: "provision" }, ...(devDest ? [{ key: "d", label: "dev: use existing" }] : []), { key: "esc", label: "close" }]
+      if (pickExisting) return [{ key: "↑↓", label: "select" }, { key: "⏎", label: "use server" }, { key: "esc", label: "back" }]
+      return [{ key: "⏎", label: "provision new" }, ...(eligibleDests.length > 0 ? [{ key: "d", label: "use existing" }] : []), { key: "esc", label: "close" }]
     }
     if (job!.step === "trust") {
       const destServer = job!.destServerId != null ? servers.find((s) => s.id === job!.destServerId) ?? null : null
@@ -682,16 +746,16 @@ export function CloneWizard() {
       return [
         ...(done > 0 ? [{ key: "↑↓", label: "select" }, { key: "v", label: "verify" }] : []),
         ...(errored > 0 ? [{ key: "r", label: "retry failed" }] : []),
-        { key: "esc", label: "close" },
+        { key: "esc", label: job!.step === "clone" ? "background" : "close" },
       ]
     }
     if (job!.step === "cutover") {
-      const ready = selected.filter((s) => s.step === "done" && s.cutover?.status === "ready").length
+      const ready = selected.filter((s) => s.step === "done").flatMap((s) => s.cutover?.records ?? []).filter((r) => r.status === "ready").length
       return [
         ...(ready > 0 ? [{ key: "c", label: "cut over" }] : []),
         { key: "r", label: "re-check" },
         { key: "⏎", label: "finish" },
-        { key: "esc", label: "close" },
+        { key: "esc", label: "background" },
       ]
     }
     if (job!.step === "gitaccess") {
