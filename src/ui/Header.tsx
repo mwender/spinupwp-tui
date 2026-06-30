@@ -49,7 +49,7 @@ export function Header() {
       >
         <text content={`◆ ${APP_NAME}`} fg={theme.brand} style={{ flexShrink: 0 }} />
         <text content={` v${APP_VERSION}`} fg={theme.textFaint} style={{ flexShrink: 0 }} />
-        {updateReady && <text content={` ✦ v${updateInfo!.latest}`} fg={theme.brand} style={{ flexShrink: 0 }} />}
+        {updateReady && <text content={` ✦ v${updateInfo!.latest}`} fg={theme.update} attributes={1} style={{ flexShrink: 0 }} />}
         <box style={{ width: 2, flexShrink: 0 }} />
         {TABS.map((tab) => {
           const active = tab.route === route
