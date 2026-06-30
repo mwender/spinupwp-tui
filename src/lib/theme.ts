@@ -16,6 +16,7 @@ export const theme = {
   selectedBg: "#1f6f53",
   good: "#3fb950",
   warn: "#d29922",
+  update: "#ffd23f", // bright gold — "new version available" nudge; brighter/cleaner than warn-amber so it reads as "new", not "caution"
   bad: "#f85149",
   info: "#5ec8ff",
   purple: "#bc8cff",

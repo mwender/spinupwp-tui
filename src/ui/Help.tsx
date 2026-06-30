@@ -153,8 +153,8 @@ function AboutColumn({ width, updateInfo }: { width: number; updateInfo: UpdateI
       <text content="UPDATING" fg={theme.accent} attributes={1} />
       {updateInfo?.updateAvailable ? (
         <box style={{ flexDirection: "row" }}>
-          <Sparkle />
-          <text content={`  v${updateInfo.latest} available`} fg={theme.brand} attributes={1} wrapMode="none" />
+          <Sparkle color={theme.update} />
+          <text content={`  v${updateInfo.latest} available`} fg={theme.update} attributes={1} wrapMode="none" />
         </box>
       ) : updateInfo ? (
         line("You're on the latest.", theme.textFaint)
