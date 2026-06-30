@@ -1,7 +1,7 @@
 # Site-creation API findings (from building the clone-wizard test source)
 
 Empirical findings from creating the clone-wizard **test source** on
-`web1.spinuptui.com` (39838): a Standard-WP site (`wp.spinuptui.com`) and a
+`web1.spinuptui.com`: a Standard-WP site (`wp.spinuptui.com`) and a
 Bedrock/git site (`bedrock.spinuptui.com`). These **correct several assumptions in
 `docs/2026-06-24_clone-to-server-spec.md`** and feed two future features: the clone
 wizard (item 5) and in-app Standard-WP/Bedrock site creation. Verified live against
@@ -140,11 +140,11 @@ so a Valet driver is the first; detect others by their CLIs/markers.
 
 ## Test source state (for the clone wizard)
 
-`web1.spinuptui.com` (server 39838, IP 206.189.192.97) now hosts:
-- `wp.spinuptui.com` (252038) — Standard WP — **clone**
-- `bedrock.spinuptui.com` (252037) — Bedrock, repo `mwender/bedrock-spinuptui` — **clone**
-- `web1.spinuptui.com` (252027) — vanity placeholder — **do NOT clone**
+`web1.spinuptui.com` (the test source) hosts:
+- `wp.spinuptui.com` — Standard WP — **clone**
+- `bedrock.spinuptui.com` — Bedrock, repo `mwender/bedrock-spinuptui` — **clone**
+- `web1.spinuptui.com` — vanity placeholder — **do NOT clone**
 
-Dest test server: `web2.spinuptui.com` (39839, IP 147.182.135.35). Dev sudo creds for
-both are in the project `.env` (`SPINUP_DEV_SUDO_SOURCE` = web1, `SPINUP_DEV_SUDO_DEST`
-= web2).
+Dest test server: `web2.spinuptui.com`. The server IDs / IPs and the dev sudo creds for
+both ends live in the project `.env` (`SPINUP_DEV_CLONE_DEST`, `SPINUP_DEV_SUDO_SOURCE` =
+web1, `SPINUP_DEV_SUDO_DEST` = web2). See `docs/clone-wizard-testing.md`.
