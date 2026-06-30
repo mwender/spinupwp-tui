@@ -9,6 +9,13 @@ terminal app for the SpinupWP API.
 - `bun run typecheck` — `tsc --noEmit`. Keep this green.
 - Must run under **Bun**, not Node — OpenTUI loads native code via Bun's FFI.
 
+## Testing the clone wizard
+
+Re-driving the server-clone wizard (`C`) against the dedicated test boxes
+(`web1`/`web2.spinuptui.com`) — the step-by-step re-run recipe, the dev `.env`
+shortcuts, the "what's proven", and the hard-won transport lessons — lives in
+**`docs/clone-wizard-testing.md`**. Start there before any clone test.
+
 ## Releasing
 
 Follow **RELEASING.md** for every release — it's the source of truth. In short:
