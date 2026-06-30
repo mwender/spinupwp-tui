@@ -47,6 +47,19 @@ versions; such changes are called out here.
   (`Granted   your key + spinup-tui`). The same `K` overlay can **remove** keys too
   (`a`/`r` to toggle grant/remove) — the reverse of grant, leaving every other key (incl.
   SpinupWP-managed ones) untouched. See `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
+- **Save your sudo password to the macOS Keychain (opt-in).** Connecting sudo (`S`)
+  now offers a **"Remember in macOS Keychain"** toggle. Tick it and the next time you
+  open `S` on that server, sudo **auto-unlocks** — no re-typing the password. The
+  password lives **only** in your login Keychain (service `spinup-sudo`, one item per
+  server) and the in-memory session; **`config.json` never holds it** — only the
+  username and a `keychain: true` marker. Manage it from the connected panel: **`f`**
+  forgets the saved password (the live session stays connected), and disconnecting
+  (**`x`**) a saved server shows a **no-password reconnect** panel (`⏎` to reconnect,
+  `f` to forget) instead of the credential form — you never re-enter a password
+  Spinup already holds. The first auto-unlock may surface macOS's own "allow access"
+  prompt; choose **Always Allow** and it stays silent after. Off macOS this is absent
+  and sudo stays in-memory per session, exactly as before. Uses the built-in
+  `security` CLI — no new dependencies.
 - **Create a new server (`c`).** Press `c` on a server in the Servers tab to
   provision a new one, pre-filled to **match** the selected server's provider,
   region, and size. The form prices the build from the provider's catalog

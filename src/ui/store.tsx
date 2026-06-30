@@ -40,6 +40,7 @@ import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, verifyClone, type SudoCtx, type CloneStage, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, type RepoHost } from "../lib/gitDeployKey.ts"
+import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
@@ -466,8 +467,12 @@ interface StoreValue extends DataState {
   sudoConnectServer: Server | null
   setSudoConnectServer: (s: Server | null) => void
   isSudoConnected: (serverId: number) => boolean
-  connectSudo: (server: Server, user: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>
+  connectSudo: (server: Server, user: string, password: string, remember?: boolean) => Promise<{ ok: true } | { ok: false; error: string }>
+  connectSudoFromKeychain: (server: Server) => Promise<{ ok: true } | { ok: false; error: string }>
   disconnectSudo: (serverId: number) => void
+  sudoSavedFor: (serverId: number) => boolean // a sudo password is saved in the Keychain
+  forgetSudoKeychain: (serverId: number) => Promise<void>
+  keychainAvailable: boolean // macOS Keychain storage is available (opt-in sudo save)
   // The site whose local-link overlay is open, or null. Set by site views.
   localLinkSite: Site | null
   setLocalLinkSite: (s: Site | null) => void
@@ -725,6 +730,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     () => new Map(Object.entries(cfgRef.current.sudoUsers).map(([id, v]) => [Number(id), v.user])),
   )
   const sudoPwRef = useRef<Map<number, string>>(new Map())
+  // Servers whose sudo password is saved in the macOS Keychain (opt-in). Hydrated
+  // from the config flag; the password itself is never in config — only this marker.
+  const [sudoSaved, setSudoSaved] = useState<Set<number>>(
+    () => new Set(Object.entries(cfgRef.current.sudoUsers).filter(([, v]) => v.keychain).map(([id]) => Number(id))),
+  )
   const [preferredGrantKeys, setPreferredGrantKeysState] = useState<string[]>(() => [...cfgRef.current.preferredGrantKeys])
   // Keys Spinup has granted, by site id → set of key bodies. Drives the row badge.
   const [grantedKeys, setGrantedKeys] = useState<Map<number, Set<string>>>(
@@ -1282,35 +1292,88 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const sudoUserFor = useCallback((serverId: number) => sudoUsers.get(serverId), [sudoUsers])
 
-  // Persist the per-server sudo username (only — the password never touches disk).
-  const persistSudoUser = useCallback((serverId: number, user: string) => {
-    setSudoUsers((prev) => {
-      const next = new Map(prev).set(serverId, user)
-      const record: Record<string, { user: string }> = {}
-      for (const [id, u] of next) record[String(id)] = { user: u }
-      cfgRef.current.sudoUsers = record
-      void saveConfig({ sudoUsers: record })
-      return next
-    })
+  // Persist per-server sudo metadata: the username + the keychain-saved flag (the
+  // password itself never touches disk — it's in-memory + optionally the Keychain).
+  const persistSudoMeta = useCallback((users: Map<number, string>, saved: Set<number>) => {
+    const record: Record<string, { user: string; keychain?: boolean }> = {}
+    for (const [id, u] of users) record[String(id)] = saved.has(id) ? { user: u, keychain: true } : { user: u }
+    cfgRef.current.sudoUsers = record
+    void saveConfig({ sudoUsers: record })
   }, [])
-
   const isSudoConnected = useCallback((serverId: number) => sudoConnected.has(serverId), [sudoConnected])
+  const sudoSavedFor = useCallback((serverId: number) => sudoSaved.has(serverId), [sudoSaved])
 
-  // Connect sudo on a server: validate the credentials live, then (on success)
-  // persist the username, hold the password in memory, and mark the server connected
-  // for the session. Returns the verify result so the overlay can show pass/fail.
+  // Mark a verified connection live + hold the password in memory; persist username +
+  // (opt-in, macOS) the password into the Keychain. `remember` toggles Keychain
+  // storage — unchecking it on a server that had one saved removes it.
+  const finishConnect = useCallback(
+    async (server: Server, sudoUser: string, password: string, remember: boolean) => {
+      sudoPwRef.current.set(server.id, password)
+      setSudoConnected((prev) => new Set(prev).add(server.id))
+      const users = new Map(sudoUsers).set(server.id, sudoUser)
+      setSudoUsers(users)
+      let saved = sudoSaved
+      if (keychainAvailable()) {
+        if (remember && !sudoSaved.has(server.id)) {
+          if (await setSudoPassword(server.id, password)) saved = new Set(sudoSaved).add(server.id)
+        } else if (remember && sudoSaved.has(server.id)) {
+          await setSudoPassword(server.id, password) // refresh in case the password changed
+        } else if (!remember && sudoSaved.has(server.id)) {
+          await deleteSudoPassword(server.id)
+          saved = new Set(sudoSaved)
+          saved.delete(server.id)
+        }
+        if (saved !== sudoSaved) setSudoSaved(saved)
+      }
+      persistSudoMeta(users, saved)
+    },
+    [sudoUsers, sudoSaved, persistSudoMeta],
+  )
+
+  // Connect sudo on a server: validate the credentials live, then (on success) mark it
+  // connected, hold the password in memory, persist the username, and optionally save
+  // the password to the Keychain. Returns the verify result so the overlay shows pass/fail.
   const connectSudo = useCallback(
-    async (server: Server, user: string, password: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+    async (server: Server, user: string, password: string, remember = false): Promise<{ ok: true } | { ok: false; error: string }> => {
       const sudoUser = user.trim()
       if (!sudoUser) return { ok: false, error: "Enter a sudo username." }
       const res = await verifySudo(server, { sudoUser, sudoPassword: password })
       if (!res.ok) return res
-      persistSudoUser(server.id, sudoUser)
-      sudoPwRef.current.set(server.id, password)
-      setSudoConnected((prev) => new Set(prev).add(server.id))
+      await finishConnect(server, sudoUser, password, remember)
       return { ok: true }
     },
-    [persistSudoUser],
+    [finishConnect],
+  )
+
+  // Auto-connect from the Keychain (the `S` overlay calls this on open when a password
+  // is saved). Retrieve → verify → connect, all without prompting for the password.
+  const connectSudoFromKeychain = useCallback(
+    async (server: Server): Promise<{ ok: true } | { ok: false; error: string }> => {
+      const sudoUser = sudoUsers.get(server.id)
+      if (!sudoUser) return { ok: false, error: "No saved sudo user for this server." }
+      const password = await getSudoPassword(server.id)
+      if (password == null) return { ok: false, error: "Couldn't read the saved password from the Keychain." }
+      const res = await verifySudo(server, { sudoUser, sudoPassword: password })
+      if (!res.ok) return res
+      await finishConnect(server, sudoUser, password, true)
+      return { ok: true }
+    },
+    [sudoUsers, finishConnect],
+  )
+
+  // Forget a server's Keychain-saved password (the username + any live session stay).
+  const forgetSudoKeychain = useCallback(
+    async (serverId: number) => {
+      await deleteSudoPassword(serverId)
+      setSudoSaved((prev) => {
+        if (!prev.has(serverId)) return prev
+        const next = new Set(prev)
+        next.delete(serverId)
+        persistSudoMeta(sudoUsers, next)
+        return next
+      })
+    },
+    [sudoUsers, persistSudoMeta],
   )
 
   // Disconnect sudo on a server: forget the held password and clear the connected flag.
@@ -2846,7 +2909,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSudoConnectServer,
     isSudoConnected,
     connectSudo,
+    connectSudoFromKeychain,
     disconnectSudo,
+    sudoSavedFor,
+    forgetSudoKeychain,
+    keychainAvailable: keychainAvailable(),
     localLinkSite,
     setLocalLinkSite,
     localLinks,

@@ -57,8 +57,9 @@ export interface AppConfig {
   // Per-server sudo user for privileged writes-over-SSH (e.g. dropping Spinup's
   // machine key into a site user's authorized_keys), keyed by server id (string,
   // since JSON object keys are strings). Only the username is stored — the sudo
-  // PASSWORD is held in-memory for the session and never written to disk.
-  sudoUsers: Record<string, { user: string }>
+  // PASSWORD is held in-memory for the session and (opt-in, macOS) the Keychain,
+  // never config.json. `keychain: true` flags that a password is saved in Keychain.
+  sudoUsers: Record<string, { user: string; keychain?: boolean }>
   // The public keys (by key body, the base64 second field) the user last chose to
   // grant. Pre-selected in the grant-key picker so they don't re-pick every time.
   preferredGrantKeys: string[]
@@ -128,7 +129,7 @@ export interface StoredConfig {
   providers?: StoredProviders
   serverProviders?: Record<string, ServerProviderRef>
   jobs?: Record<string, StoredJob>
-  sudoUsers?: Record<string, { user: string }>
+  sudoUsers?: Record<string, { user: string; keychain?: boolean }>
   preferredGrantKeys?: string[]
   grantedKeys?: Record<string, string[]>
 }
