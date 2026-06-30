@@ -6,6 +6,7 @@
 // trigger a refresh.
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { toast } from "@opentui-ui/toast"
 import { SpinupWPClient, ApiError, type ServerService } from "../api/client.ts"
 import type { Server, Site, Event, ProviderMetadata, CreateServerPayload, CreateSitePayload } from "../api/types.ts"
 import { loadConfig, saveConfig, type ServerProviderRef } from "../config.ts"
@@ -78,6 +79,15 @@ export interface ServerOpProgress {
 
 export function isServerOpInFlight(p: ServerOpProgress | undefined): boolean {
   return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
+}
+
+// Display names for the restartable services (used in completion toasts; `reboot`
+// is handled separately). Keyed by ServerService.
+const SERVICE_NAMES: Record<ServerService, string> = {
+  nginx: "Nginx",
+  php: "PHP-FPM",
+  mysql: "MySQL",
+  redis: "Redis",
 }
 
 // Progress of a server-provisioning job (POST /servers), tracked in the store so
@@ -938,13 +948,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // marker and clearing the persisted job once settled. Shared by a fresh upgrade
   // and resume-on-startup (event-backed, so it reconnects cleanly).
   const trackPhpUpgradeEvent = useCallback(
-    (siteId: number, version: string, eventId: number) => {
+    (siteId: number, version: string, eventId: number, domain: string) => {
       const poll = async () => {
         try {
           const ev = await client.getEvent(eventId)
           if (ev.status === UPGRADE_DONE) {
             await refresh() // pull the new php_version into the store…
             clearPhpUpgrade(siteId) // …then the row reflects truth, no marker needed
+            // Non-focus-stealing nudge — the upgrade often finishes after the user
+            // has closed the overlay and moved on (it tracks in the background).
+            toast.success(`${domain} upgraded to PHP ${version}`)
           } else if (ev.status === UPGRADE_FAIL) {
             setUpgrade(siteId, { target: version, status: UPGRADE_FAIL, error: ev.output?.trim() || "The upgrade event failed on SpinupWP." })
             void removeJob(phpJobId(siteId))
@@ -984,7 +997,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // Persist so a restart resumes tracking this site's upgrade, then poll.
         setUpgrade(site.id, { target: version, status: "running" })
         void saveJob({ id: phpJobId(site.id), kind: "phpUpgrade", status: "running", startedAt, eventId, inputs: { siteId: site.id, version, domain: site.domain } })
-        trackPhpUpgradeEvent(site.id, version, eventId)
+        trackPhpUpgradeEvent(site.id, version, eventId, site.domain)
       }
       void run()
     },
@@ -1030,6 +1043,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (ev.status === UPGRADE_DONE) {
               await refresh() // reboot clears reboot_required; status may flip too
               clearServerOp(server.id)
+              // Background-completion nudge — a reboot can take minutes and the user
+              // has usually closed the overlay (it tracks in the background).
+              toast.success(kind === "reboot" ? `${server.name} rebooted` : `${SERVICE_NAMES[kind] ?? kind} restarted on ${server.name}`)
             } else if (ev.status === UPGRADE_FAIL) {
               setOp(server.id, { kind, label, status: UPGRADE_FAIL, error: ev.output?.trim() || "The operation failed on SpinupWP." })
             } else {
@@ -2709,7 +2725,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             break
           }
           setUpgrade(inp.siteId, { target: inp.version, status: job.status })
-          trackPhpUpgradeEvent(inp.siteId, inp.version, job.eventId)
+          trackPhpUpgradeEvent(inp.siteId, inp.version, job.eventId, inp.domain ?? "Your site")
           break
         case "vanity": {
           const vj = job.inputs as VanityJob | undefined

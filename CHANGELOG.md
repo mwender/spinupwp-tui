@@ -12,6 +12,13 @@ versions; such changes are called out here.
 ## [Unreleased]
 
 ### Added
+- **Completion toasts for background writes.** When a **PHP upgrade** or a **server
+  reboot / service restart** finishes, a non-focus-stealing toast slides in at the
+  top-right — `web3.example.com upgraded to PHP 8.3`, `web1.example.com rebooted`,
+  `Nginx restarted on web1.example.com`. These operations keep tracking in the
+  background after you close their overlay, so the toast is the "it's done" signal you
+  would otherwise have to go looking for; it auto-dismisses (~4s) and never takes
+  keyboard focus. Built on `@opentui-ui/toast`.
 - **Privileged writes over SSH: connect sudo (`S`) + grant Spinup's SSH key (`K`).**
   The first things Spinup writes that the SpinupWP API simply can't do (it has no
   SSH-key or sudo-user surface). Press **`S`** on a server to **connect sudo** for the
