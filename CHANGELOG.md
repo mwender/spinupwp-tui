@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-30
+
 ### Added
 - **Completion toasts for background writes.** When a **PHP upgrade** or a **server
   reboot / service restart** finishes, a non-focus-stealing toast slides in at the
@@ -436,7 +438,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/mwender/spinupwp-tui/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/mwender/spinupwp-tui/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/mwender/spinupwp-tui/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mwender/spinupwp-tui/compare/v0.6.0...v0.7.0
