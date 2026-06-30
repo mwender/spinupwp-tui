@@ -61,6 +61,31 @@ versions; such changes are called out here.
   Server Providers) and saves it for you — once per provider, no hand-editing
   config. First step of the clone-to-new-server workflow (see
   `docs/2026-06-24_clone-to-server-spec.md`).
+- **Clone a whole server to a new one (`C`).** Press `C` on a server to open the
+  clone wizard — a guided, two-pane journey that lifts one or more of a server's
+  sites onto a fresh (or existing) destination, **without touching DNS until you
+  say so**, so you can stage and verify a migration before cutting over. The steps:
+  **Plan** — pick which of the source's sites to clone (all selected by default;
+  `space` toggles), and Spinup sizes each one live (`du` + `wp db size`) into a
+  payload total so you know what you're moving; a concurrency throttle protects the
+  source. **Destination** — provision a new server pre-matched to the source, or
+  `d` to pick an existing server as the target. **Connect** — connect sudo on
+  **both** ends (the clone is a server-to-server **pull**: the destination pulls
+  from the source over SSH using a granted key + agent forwarding, and the source
+  key is revoked when it's done). **Clone sites** — a live roster runs the sites
+  concurrently, each advancing `create → pull → config → verify → done`. Both
+  stacks are handled: **Standard WP** (files via tar-over-ssh, DB via cat-over-ssh,
+  wp-config re-stamped for the dest) and **Bedrock** (git-native — create from the
+  repo, `composer install` over SSH, pull `uploads` + `auth.json`, re-stamp `.env`
+  keeping custom vars). **Verify** — a source-vs-clone drill-down (wp-cli value
+  diff + a `--resolve` HTTP check that hits the new server while DNS still points at
+  the old one). **DNS cutover** — when you're satisfied, repoint **every** A record
+  across each site's domains (apex + additional) to the new server in one batched,
+  partial-aware pass; www-style CNAMEs that follow the apex are skipped, not
+  clobbered. The clone runs in the **background** — `esc` doesn't abandon it; a
+  header badge (`⠹ Cloning <server> — press C`) surfaces the in-flight job and `C`
+  on the source reopens the live roster. See
+  `docs/2026-06-24_clone-to-server-spec.md`.
 - **Connect a new server with a vanity site (`V`).** A freshly-created server has
   no site, so there's nothing to attach an SSH key to and no way for Spinup to
   reach it. Press `V` on a server with no sites to build a small placeholder site
