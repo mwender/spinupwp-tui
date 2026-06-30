@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { Toaster } from "@opentui-ui/toast/react"
 import { theme } from "../lib/theme.ts"
 import { useStore } from "./store.tsx"
 import { Splash } from "./Splash.tsx"
@@ -15,10 +16,15 @@ import { Search } from "./views/Search.tsx"
 import { Events } from "./views/Events.tsx"
 import { Health } from "./views/Health.tsx"
 import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
+import { GrantKey } from "./views/GrantKey.tsx"
+import { SudoConnect } from "./views/SudoConnect.tsx"
 import { DbBackup } from "./views/DbBackup.tsx"
 import { DbSync } from "./views/DbSync.tsx"
 import { MediaFallback } from "./views/MediaFallback.tsx"
 import { ServerActions } from "./views/ServerActions.tsx"
+import { NewServer } from "./views/NewServer.tsx"
+import { VanityNewSite } from "./views/VanityNewSite.tsx"
+import { CloneWizard } from "./views/CloneWizard.tsx"
 import { LocalLinkOverlay } from "./views/LocalLink.tsx"
 import { Discover } from "./views/Discover.tsx"
 import { Forgotten } from "./views/Forgotten.tsx"
@@ -48,10 +54,15 @@ export function App() {
     showExplain ||
     store.healthServer !== null ||
     store.phpUpgradeSite !== null ||
+    store.grantKeySite !== null ||
+    store.sudoConnectServer !== null ||
     store.dbBackupSite !== null ||
     store.dbSyncSite !== null ||
     store.mediaFallbackSite !== null ||
     store.serverActionsServer !== null ||
+    store.newServerOpen ||
+    store.vanityServer !== null ||
+    store.cloneServer !== null ||
     store.localLinkSite !== null ||
     store.discoverOpen ||
     store.forgottenOpen ||
@@ -84,6 +95,12 @@ export function App() {
     // The PHP-upgrade overlay owns the keyboard while open.
     if (store.phpUpgradeSite) return
 
+    // The grant-SSH-key overlay owns the keyboard while open.
+    if (store.grantKeySite) return
+
+    // The connect-sudo overlay owns the keyboard while open.
+    if (store.sudoConnectServer) return
+
     // The DB-backup overlay owns the keyboard while open.
     if (store.dbBackupSite) return
 
@@ -95,6 +112,15 @@ export function App() {
 
     // The server-actions overlay owns the keyboard while open.
     if (store.serverActionsServer) return
+
+    // The new-server overlay owns the keyboard while open.
+    if (store.newServerOpen) return
+
+    // The vanity-site overlay owns the keyboard while open.
+    if (store.vanityServer) return
+
+    // The clone wizard owns the keyboard while open.
+    if (store.cloneServer) return
 
     // The local-link overlay owns the keyboard while open.
     if (store.localLinkSite) return
@@ -181,16 +207,25 @@ export function App() {
       {showExplain && <ExplainOverlay route={store.route} />}
       {store.healthServer && <Health />}
       {store.phpUpgradeSite && <PhpUpgrade />}
+      {store.grantKeySite && <GrantKey />}
+      {store.sudoConnectServer && <SudoConnect />}
       {store.dbBackupSite && <DbBackup />}
       {store.dbSyncSite && <DbSync />}
       {store.mediaFallbackSite && <MediaFallback />}
       {store.serverActionsServer && <ServerActions />}
+      {store.newServerOpen && <NewServer />}
+      {store.vanityServer && <VanityNewSite />}
+      {store.cloneServer && <CloneWizard />}
       {store.localLinkSite && <LocalLinkOverlay />}
       {store.discoverOpen && <Discover />}
       {store.forgottenOpen && <Forgotten />}
       {store.dnsInventoryServer && <DnsInventory />}
       {store.connectZoneTarget && <ProviderConnect />}
       {store.dnsRecordsTarget && <DnsRecords />}
+      {/* Async-completion toasts (PHP upgrade, server reboot/restart). Mounted last
+          so it draws over every view + overlay; top-right, nudged clear of the
+          2-row Header. It never takes keyboard focus. */}
+      <Toaster position="top-right" offset={{ top: 2, right: 2 }} />
     </box>
   )
 }

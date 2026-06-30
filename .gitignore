@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 *.log
 dist/
+# Dev-only built bundle (anscribe capture, gated behind SPINUP_DEV_CAPTURE);
+# rebuilt on demand, never shipped to end users — see the OpenTUI tooling notes.
+vendor/

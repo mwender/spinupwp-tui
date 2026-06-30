@@ -11,6 +11,132 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-30
+
+### Added
+- **Completion toasts for background writes.** When a **PHP upgrade** or a **server
+  reboot / service restart** finishes, a non-focus-stealing toast slides in at the
+  top-right — `web3.example.com upgraded to PHP 8.3`, `web1.example.com rebooted`,
+  `Nginx restarted on web1.example.com`. These operations keep tracking in the
+  background after you close their overlay, so the toast is the "it's done" signal you
+  would otherwise have to go looking for; it auto-dismisses (~4s) and never takes
+  keyboard focus. Built on `@opentui-ui/toast`.
+- **Privileged writes over SSH: connect sudo (`S`) + grant Spinup's SSH key (`K`).**
+  The first things Spinup writes that the SpinupWP API simply can't do (it has no
+  SSH-key or sudo-user surface). Press **`S`** on a server to **connect sudo** for the
+  session: enter the SpinupWP sudo user + its sudo password once, Spinup validates
+  them against the live server, and then holds them **in memory for the session
+  only** (the username persists to config; the **password is never written to
+  disk**). A connected server shows a green **● sudo** on its row; press `S` again to
+  disconnect. With sudo connected, press **`K`** on a site to drop Spinup's
+  **dedicated machine key**
+  into that site user's `authorized_keys` over sudo — an ed25519 identity generated
+  once into the config dir (`keys/spinup-tui`), commented `spinup-tui@<your-host>`,
+  and deliberately **never added to your SpinupWP account** so SpinupWP's
+  `authorized_keys` reconciliation leaves it untouched. The remote script is
+  **idempotent** (`grep -qxF` — re-running never duplicates the line), and a confirm
+  overlay shows the exact remote command before anything fires. **`K` shows a key
+  picker:** choose any of **your personal keys** (discovered from `~/.ssh/*.pub` and
+  the ssh-agent — so you can SSH/SFTP as yourself) and/or the **machine key**, deploy
+  several at once, and your selection is remembered for next time. **Choose the scope**
+  too: just this site, or **every site on the server** in one pass (the same idempotent
+  append runs on each, with a per-site progress readout and a retry for any that fail).
+  And when you **connect a new server (vanity flow)**, you can connect sudo right from
+  the flow (`S`, same as on a server); with sudo connected, the SSH-key step grants your
+  saved keys there (`g`) and publishes — no more manual "add your key in SpinupWP"
+  round-trip. The site list shows which keys are on a site at a glance — **👤 your key**
+  and/or **🔑 the spinup-tui machine key** — and the Details panel spells it out
+  (`Granted   your key + spinup-tui`). The same `K` overlay can **remove** keys too
+  (`a`/`r` to toggle grant/remove) — the reverse of grant, leaving every other key (incl.
+  SpinupWP-managed ones) untouched. See `docs/2026-06-26_sudo-ssh-key-provisioning-spec.md`.
+- **Save your sudo password to the macOS Keychain (opt-in).** Connecting sudo (`S`)
+  now offers a **"Remember in macOS Keychain"** toggle. Tick it and the next time you
+  open `S` on that server, sudo **auto-unlocks** — no re-typing the password. The
+  password lives **only** in your login Keychain (service `spinup-sudo`, one item per
+  server) and the in-memory session; **`config.json` never holds it** — only the
+  username and a `keychain: true` marker. Manage it from the connected panel: **`f`**
+  forgets the saved password (the live session stays connected), and disconnecting
+  (**`x`**) a saved server shows a **no-password reconnect** panel (`⏎` to reconnect,
+  `f` to forget) instead of the credential form — you never re-enter a password
+  Spinup already holds. The first auto-unlock may surface macOS's own "allow access"
+  prompt; choose **Always Allow** and it stays silent after. Off macOS this is absent
+  and sudo stays in-memory per session, exactly as before. Uses the built-in
+  `security` CLI — no new dependencies.
+- **Create a new server (`c`).** Press `c` on a server in the Servers tab to
+  provision a new one, pre-filled to **match** the selected server's provider,
+  region, and size. The form prices the build from the provider's catalog
+  (DigitalOcean / Vultr / Linode / Hetzner) so you see a monthly cost before
+  confirming, suggests a hostname from your fleet's naming convention (e.g. the
+  next `webN.example.com`), and lets you switch provider (`p`), region (`g`), or
+  size (`e`) and toggle backups. The
+  build fires `POST /servers` and tracks the ~10-minute provisioning in the
+  background, so closing the overlay doesn't abandon it. Because the SpinupWP API
+  can't list your configured server providers, the first time you create on a
+  provider the overlay asks for its SpinupWP provider id (from Account Settings →
+  Server Providers) and saves it for you — once per provider, no hand-editing
+  config. First step of the clone-to-new-server workflow (see
+  `docs/2026-06-24_clone-to-server-spec.md`).
+- **Clone a whole server to a new one (`C`).** Press `C` on a server to open the
+  clone wizard — a guided, two-pane journey that lifts one or more of a server's
+  sites onto a fresh (or existing) destination, **without touching DNS until you
+  say so**, so you can stage and verify a migration before cutting over. The steps:
+  **Plan** — pick which of the source's sites to clone (all selected by default;
+  `space` toggles), and Spinup sizes each one live (`du` + `wp db size`) into a
+  payload total so you know what you're moving; a concurrency throttle protects the
+  source. **Destination** — provision a new server pre-matched to the source, or
+  `d` to pick an existing server as the target. **Connect** — connect sudo on
+  **both** ends (the clone is a server-to-server **pull**: the destination pulls
+  from the source over SSH using a granted key + agent forwarding, and the source
+  key is revoked when it's done). **Clone sites** — a live roster runs the sites
+  concurrently, each advancing `create → pull → config → verify → done`. Both
+  stacks are handled: **Standard WP** (files via tar-over-ssh, DB via cat-over-ssh,
+  wp-config re-stamped for the dest) and **Bedrock** (git-native — create from the
+  repo, `composer install` over SSH, pull `uploads` + `auth.json`, re-stamp `.env`
+  keeping custom vars). **Verify** — a source-vs-clone drill-down (wp-cli value
+  diff + a `--resolve` HTTP check that hits the new server while DNS still points at
+  the old one). **DNS cutover** — when you're satisfied, repoint **every** A record
+  across each site's domains (apex + additional) to the new server in one batched,
+  partial-aware pass; www-style CNAMEs that follow the apex are skipped, not
+  clobbered. The clone runs in the **background** — `esc` doesn't abandon it; a
+  header badge (`⠹ Cloning <server> — press C`) surfaces the in-flight job and `C`
+  on the source reopens the live roster. See
+  `docs/2026-06-24_clone-to-server-spec.md`.
+- **Connect a new server with a vanity site (`V`).** A freshly-created server has
+  no site, so there's nothing to attach an SSH key to and no way for Spinup to
+  reach it. Press `V` on a server with no sites to build a small placeholder site
+  at the server's own hostname: Spinup writes the DNS A record (Route 53), waits
+  for it to resolve, creates the site, enables HTTPS (a free Let's Encrypt
+  certificate), hands you off to add your SSH key (the site's **SFTP & SSH → Site
+  User**), then publishes a minimal, brand-neutral status page. Press `o` on the
+  success screen to open the live site. The whole build runs in the background and
+  survives closing the overlay — reopen it with `V`, and a header badge tracks it.
+- **Background jobs survive a restart.** Long-running work — a server provision, a
+  PHP upgrade, a vanity-site build — is now persisted, so quitting and relaunching
+  Spinup reconnects to it instead of forgetting it. SSH-based jobs that can't be
+  reconnected (a production DB backup/sync) are clearly flagged as **interrupted**
+  on restart rather than silently lost.
+
+### Changed
+- **New-server progress shows a live elapsed timer**, and a header badge surfaces
+  an in-flight provision (or vanity-site build) from any tab.
+- **Servers with no sites are flagged in amber** in the Servers list — an empty
+  server is a dead end until it has a site (press `V` to create one).
+- **The vanity build's "Wait for DNS to propagate" step now shows a timer.** A
+  live count-down (`m:ss left`) ticks through the ~2-minute window; if it lapses you
+  can **keep waiting** (`w`) and the timer flips to a count-up (`m:ss elapsed`) from
+  that same point so you can see exactly how long it's been — without being prompted
+  again. From there, **`c` continues now** (create the site and move on) or **`s`
+  skips SSL** (publish over HTTP and add the certificate later).
+- **DNS connection resolution re-checks itself instead of trusting a stale cache.**
+  Writing the vanity A record (and, later, the clone DNS cutover) used a cached list
+  of which zones each connected account serves; a zone you registered *today* wasn't
+  in it, so the build failed with a misleading "no editable DNS connection serves
+  this zone." Now, when no account matches but one *is* connected for that provider,
+  Spinup re-verifies that provider's accounts and retries before giving up — so a
+  freshly-registered zone just works, no manual refresh. The cache also expires
+  entries after 24h so they refresh on their own. The error messages now distinguish
+  "no account connected" from "connected but it doesn't serve this zone."
+
 ## [0.8.0] - 2026-06-23
 
 ### Added
@@ -312,7 +438,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/mwender/spinupwp-tui/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/mwender/spinupwp-tui/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/mwender/spinupwp-tui/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mwender/spinupwp-tui/compare/v0.6.0...v0.7.0

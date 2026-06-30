@@ -4,7 +4,16 @@
 // token-scope endpoint, a write that comes back 403 is treated as "token is
 // read-only" (see mutate()).
 
-import type { ApiList, ApiSingle, Server, Site, Event } from "./types.ts"
+import type {
+  ApiList,
+  ApiSingle,
+  Server,
+  Site,
+  Event,
+  ProviderMetadata,
+  CreateServerPayload,
+  CreateSitePayload,
+} from "./types.ts"
 
 // The restartable services SpinupWP exposes (POST /servers/{id}/services/{svc}/restart).
 export type ServerService = "nginx" | "php" | "mysql" | "redis"
@@ -163,6 +172,21 @@ export class SpinupWPClient {
     return res.data
   }
 
+  // The catalog of sizes + regions (with pricing) a provider offers. Provider is
+  // a key the API recognizes: digitalocean | vultr | linode | hetzner. The
+  // endpoint may or may not be data-wrapped, so normalize defensively.
+  async providerMetadata(provider: string): Promise<ProviderMetadata> {
+    const raw = await this.request<Record<string, unknown>>(`/providers/${provider}/metadata`)
+    const data = raw && typeof raw === "object" && "data" in raw ? (raw.data as Record<string, unknown>) : raw
+    return data as unknown as ProviderMetadata
+  }
+
+  // Provision a managed server. Async on SpinupWP's side: returns an event_id to
+  // poll via getEvent() (provisioning averages ~10 min). Needs a Read/Write token.
+  createServer(payload: CreateServerPayload): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>("/servers", "POST", payload)
+  }
+
   // ---- Sites ------------------------------------------------------------
 
   listSites(serverId?: number): Promise<Site[]> {
@@ -172,6 +196,21 @@ export class SpinupWPClient {
   async getSite(id: number): Promise<Site> {
     const res = await this.request<ApiSingle<Site>>(`/sites/${id}`)
     return res.data
+  }
+
+  // Create a site. Async on SpinupWP's side: returns an event_id to poll via
+  // getEvent(). Needs a Read/Write token. HTTPS is enabled separately — see
+  // enableHttps().
+  createSite(payload: CreateSitePayload): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>("/sites", "POST", payload)
+  }
+
+  // Enable HTTPS on a site. `type: "webroot"` requests a Let's Encrypt cert (the
+  // domain must already resolve to the server for LE to issue, so this runs after
+  // the DNS A record has propagated). Async → returns an event_id to poll. Needs a
+  // Read/Write token.
+  enableHttps(siteId: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/https`, "POST", { type: "webroot" })
   }
 
   // ---- Events -----------------------------------------------------------

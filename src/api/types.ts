@@ -106,6 +106,79 @@ export interface Site {
   status: string
 }
 
+// Server-provider metadata (GET /providers/{provider}/metadata) — the catalog of
+// sizes and regions a provider offers, including pricing. Used to show "match
+// source" specs + a monthly cost before creating a server.
+export interface ProviderSize {
+  slug: string
+  type?: string
+  memory: number // MB
+  vcpus: number
+  disk: number // GB
+  transfer?: number
+  priceMonthly: number
+  backupPriceMonthly?: number
+  available?: boolean
+  processor?: string
+}
+
+export interface ProviderRegion {
+  slug: string
+  name: string
+  available?: boolean
+  continent?: string
+  sizes: string[] // size slugs offered in this region
+}
+
+export interface ProviderMetadata {
+  regions: Record<string, ProviderRegion[]> // grouped by continent name
+  sizes: ProviderSize[]
+}
+
+// Request body for POST /servers (provision a managed server). The API uses
+// bracketed form keys (server_provider[id], …) which map to these nested objects.
+export interface CreateServerPayload {
+  server_provider: {
+    id?: number // an existing provider connection (from SpinupWP Account Settings)
+    name?: string // or provider name + token to use an unsaved provider
+    api_token?: string
+    region: string
+    size: string
+    enable_backups?: boolean
+  }
+  hostname: string
+  timezone?: string
+  database?: { root_password?: string }
+  database_provider?: { id: number }
+  post_provision_script?: string
+}
+
+// POST /sites. HTTPS is NOT a creation field — it's enabled afterward via
+// POST /sites/{id}/https (see SpinupWPClient.enableHttps). For a vanity/placeholder
+// site we use installation_method "blank" (empty docroot we drop an index.php into).
+export interface CreateSitePayload {
+  server_id: number
+  domain: string
+  site_user: string
+  installation_method: "wp" | "wp_subdirectory" | "wp_subdomain" | "git" | "blank"
+  php_version?: string // defaults to 8.3 server-side
+  public_folder?: string // defaults to "/"
+  database?: { name?: string; username?: string; password?: string; table_prefix?: string }
+  page_cache?: { enabled?: boolean }
+  // installation_method "git" (Bedrock): SpinupWP clones `git.repo` at create time
+  // using the SERVER's deploy key (git_publickey) — it must already be a read-only
+  // deploy key on the repo or the clone fails. `deploy_script` is TOP-LEVEL (a nested
+  // git.deploy_script is silently ignored); the write key is `push_to_deploy` (the
+  // read shape echoes it back as git.push_enabled). See the site-creation findings doc.
+  deploy_script?: string
+  git?: {
+    repo: string
+    branch?: string
+    push_to_deploy?: boolean
+    always_run_deploy_script?: boolean
+  }
+}
+
 export interface Event {
   id: number
   initiated_by: string | null

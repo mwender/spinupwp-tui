@@ -45,6 +45,51 @@ export interface AppConfig {
   // from the stored config and the environment. Env-sourced connections carry
   // `env: true` and are read-only in the UI. Secrets live here (file is chmod 600).
   providerConnections: Record<ConnProvider, Connection[]>
+  // SpinupWP server-provider connections, keyed by provider name
+  // (digitalocean | vultr | linode | hetzner). The API exposes no endpoint to
+  // list these, so — like accountSlug — the id is configured. Required to create
+  // a server on that provider (POST /servers needs server_provider[id]). Find the
+  // id in SpinupWP → Account Settings → Server Providers.
+  serverProviders: Record<string, ServerProviderRef>
+  // In-flight resumable jobs, keyed by job id. Hydrated at startup so a build
+  // (e.g. a server provision) keeps its tracker across a quit/relaunch.
+  jobs: Record<string, StoredJob>
+  // Per-server sudo user for privileged writes-over-SSH (e.g. dropping Spinup's
+  // machine key into a site user's authorized_keys), keyed by server id (string,
+  // since JSON object keys are strings). Only the username is stored — the sudo
+  // PASSWORD is held in-memory for the session and (opt-in, macOS) the Keychain,
+  // never config.json. `keychain: true` flags that a password is saved in Keychain.
+  sudoUsers: Record<string, { user: string; keychain?: boolean }>
+  // The public keys (by key body, the base64 second field) the user last chose to
+  // grant. Pre-selected in the grant-key picker so they don't re-pick every time.
+  preferredGrantKeys: string[]
+  // Keys Spinup has granted, keyed by site id (string) → key bodies. Drives the
+  // "has Spinup's key" row badge and informs revoke. Optimistic (a record of what
+  // Spinup wrote, not a live probe); revoke removes entries.
+  grantedKeys: Record<string, string[]>
+}
+
+export interface ServerProviderRef {
+  id: number
+  databaseProviderId?: number
+}
+
+// A long-running, fire-and-forget job persisted across restarts so the app can
+// resume tracking it (see docs/2026-06-24_clone-to-server-spec.md "Resumable
+// jobs"). `eventId` is the resume key — the SpinupWP event we re-attach a poller
+// to on startup. `inputs` is the kind-specific payload needed to continue/retry
+// (e.g. { hostname } for a server create). Only in-flight jobs are persisted;
+// they're removed once terminal.
+export interface StoredJob {
+  id: string
+  kind: string
+  status: string
+  step?: string
+  failedStep?: string
+  error?: string
+  startedAt: number
+  eventId?: number
+  inputs?: unknown
 }
 
 // Stored connection (no `provider`/`env` discriminators — added on load).
@@ -82,6 +127,11 @@ export interface StoredConfig {
   localSites?: Record<string, LocalLink>
   localSync?: boolean
   providers?: StoredProviders
+  serverProviders?: Record<string, ServerProviderRef>
+  jobs?: Record<string, StoredJob>
+  sudoUsers?: Record<string, { user: string; keychain?: boolean }>
+  preferredGrantKeys?: string[]
+  grantedKeys?: Record<string, string[]>
 }
 
 export function configDir(): string {
@@ -91,6 +141,12 @@ export function configDir(): string {
 
 export function configPath(): string {
   return join(configDir(), "config.json")
+}
+
+// Where Spinup's dedicated machine keypair (spinup-tui[.pub]) lives. Generated
+// lazily on first privileged use (see lib/ssh.ts ensureSpinupKey).
+export function keysDir(): string {
+  return join(configDir(), "keys")
 }
 
 function readStoredConfig(): StoredConfig {
@@ -159,6 +215,11 @@ export function loadConfig(): AppConfig {
     localRoots: stored.localRoots ?? [],
     localSites: stored.localSites ?? {},
     providerConnections,
+    serverProviders: stored.serverProviders ?? {},
+    jobs: stored.jobs ?? {},
+    sudoUsers: stored.sudoUsers ?? {},
+    preferredGrantKeys: stored.preferredGrantKeys ?? [],
+    grantedKeys: stored.grantedKeys ?? {},
   }
 }
 

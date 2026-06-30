@@ -3,7 +3,7 @@
 import { useEffect } from "react"
 import { theme, statusColor, diskColor } from "../lib/theme.ts"
 import { formatBytes, diskUsedPct, bar, formatDate, timeAgo, truncate } from "../lib/format.ts"
-import { Field, StatusBadge } from "./components.tsx"
+import { Field, StatusBadge, ControlPanel, type ActionGroup } from "./components.tsx"
 import { classifyStack, stackColor } from "../lib/stack.ts"
 import { probeKindColor } from "../lib/probe.ts"
 import { resolveLocalLink } from "../lib/local.ts"
@@ -12,7 +12,7 @@ import type { Drift } from "../lib/gitStatus.ts"
 import { useStore, isUpgradeInFlight, isServerOpInFlight } from "./store.tsx"
 import type { Server, Site } from "../api/types.ts"
 
-export function ServerDetail({ server, siteCount }: { server: Server; siteCount: number }) {
+export function ServerDetail({ server, siteCount, showControl = false }: { server: Server; siteCount: number; showControl?: boolean }) {
   const { rebootInfo, serverOps } = useStore()
   const ds = server.disk_space
   const pct = diskUsedPct(ds?.used, ds?.total)
@@ -69,12 +69,36 @@ export function ServerDetail({ server, siteCount }: { server: Server; siteCount:
         valueColor={server.upgrade_required ? theme.warn : theme.good}
       />
       <Field label="Created" value={formatDate(server.created_at)} />
+
+      {/* Server Control — mirrors Search's Site Control. Only rendered where the keys
+          actually fire (the Browser's Servers pane), via showControl; Search's query
+          mode passes it off and surfaces the pressable list in its actions focus. */}
+      {showControl ? (
+        <>
+          <box style={{ height: 1 }} />
+          <ControlPanel heading="Server Control" groups={SERVER_CONTROL} />
+        </>
+      ) : null}
     </box>
   )
 }
 
+export const SERVER_CONTROL: ActionGroup[] = [
+  { title: "Clone", items: [["C", "Clone this server →"]] },
+  { title: "Access", items: [["S", "Connect sudo"]] },
+  {
+    title: "Manage",
+    items: [
+      ["a", "Reboot / restart services"],
+      ["h", "Server health"],
+      ["N", "DNS records (migrate lens)"],
+    ],
+  },
+  { title: "Open", items: [["w", "Open in SpinupWP"]] },
+]
+
 export function SiteDetail({ site, serverName }: { site: Site; serverName: string }) {
-  const { probes, probingIds, isProbeStale, phpUpgrades, localLinks } = useStore()
+  const { probes, probingIds, isProbeStale, phpUpgrades, localLinks, grantedKeyKinds } = useStore()
   const updates = (site.wp_plugin_updates || 0) + (site.wp_theme_updates || 0) + (site.wp_core_update ? 1 : 0)
   const stack = classifyStack(site)
   const probe = probes.get(site.id)
@@ -88,6 +112,13 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       ? "missing — path not found"
       : `${linkState!.label} · ${link.path}`
   const linkColor = !link ? theme.textFaint : !linkState!.exists ? theme.bad : theme.good
+  // SSH keys Spinup has granted into this site user's authorized_keys, split into
+  // your personal key(s) vs the spinup-tui machine key (so it's never ambiguous).
+  const keyKinds = grantedKeyKinds(site.id)
+  const keyParts: string[] = []
+  if (keyKinds.personal > 0) keyParts.push(keyKinds.personal > 1 ? `your keys (${keyKinds.personal})` : "your key")
+  if (keyKinds.machine > 0) keyParts.push("spinup-tui")
+  const keyValue = keyParts.length ? `${keyParts.join(" + ")} · K` : "not granted · K"
   return (
     <box style={{ flexDirection: "column" }}>
       <box style={{ flexDirection: "row" }}>
@@ -120,6 +151,7 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
         }
       />
       <Field label="User" value={site.site_user ?? "—"} />
+      <Field label="Granted" value={keyValue} valueColor={keyParts.length ? theme.good : theme.textFaint} />
       <Field label="Public dir" value={site.public_folder ?? "/"} />
       <Field label="Local" value={linkValue} valueColor={linkColor} />
       <SiteDnsSection site={site} />

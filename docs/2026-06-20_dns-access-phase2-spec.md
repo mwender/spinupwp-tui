@@ -5,7 +5,7 @@ DNS, and by what means? **Still no writes.** Phase 2 only *verifies read access*
 (lists the zones each connected account can see) and surfaces a glyph. Editing +
 the migrate-a-site TTL workflow are Phase 3.
 
-Builds on Phase 1 (`docs/dns-zone-host-spec.md`). The zone-host detection from
+Builds on Phase 1 (`docs/2026-06-20_dns-zone-host-spec.md`). The zone-host detection from
 Phase 1 tells us the provider; Phase 2 answers whether we hold credentials that
 can reach that zone.
 

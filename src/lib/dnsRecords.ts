@@ -63,6 +63,14 @@ export interface RecordProvider {
   // Change one record's TTL. `zoneId` comes from getRecord; `record` carries the
   // values to preserve (Route 53 needs the full set on an upsert).
   setTtl(creds: Record<string, string>, zoneId: string, record: DnsRecord, ttl: number): Promise<ChangeResult>
+  // Create (or replace) a single record name → value. Used by the vanity-site flow
+  // to add the server hostname's A record. Resolves the zone itself (no prior
+  // getRecord). Optional — providers without it fall back to a web handoff.
+  createRecord?(creds: Record<string, string>, apex: string, name: string, type: string, value: string, ttl: number): Promise<ChangeResult>
+  // Repoint one EXISTING record to a new value (the DNS cutover write). `zoneId` +
+  // `record` come from getRecord; the record's current TTL/type are preserved.
+  // Optional — providers without it fall back to a manual handoff.
+  setValue?(creds: Record<string, string>, zoneId: string, record: DnsRecord, value: string): Promise<ChangeResult>
   // Poll an async change to completion. Only providers that return a pollId set this.
   pollChange?(creds: Record<string, string>, pollId: string): Promise<ChangeStatus>
 }
@@ -246,6 +254,48 @@ const route53: RecordProvider = {
     return { ok: true, pollId: changeId }
   },
 
+  async createRecord(rawCreds, apex, name, type, value, ttl) {
+    const creds = awsCreds(rawCreds)
+    const zone = await awsZoneId(creds, apex)
+    if (!zone.id) return { ok: false, error: zone.error }
+    // UPSERT creates the record, or replaces it if the exact name+type already
+    // exists (the vanity host is purpose-built, so a collision means re-point it
+    // at this server — what we want). The confirm overlay shows the exact write.
+    const body =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<ChangeResourceRecordSetsRequest xmlns="https://route53.amazonaws.com/doc/2013-04-01/">` +
+      `<ChangeBatch><Comment>spinup: create ${type} ${stripDot(name)}</Comment><Changes><Change>` +
+      `<Action>UPSERT</Action><ResourceRecordSet>` +
+      `<Name>${xmlEscape(stripDot(name))}</Name><Type>${type}</Type><TTL>${ttl}</TTL>` +
+      `<ResourceRecords><ResourceRecord><Value>${xmlEscape(value)}</Value></ResourceRecord></ResourceRecords>` +
+      `</ResourceRecordSet></Change></Changes></ChangeBatch>` +
+      `</ChangeResourceRecordSetsRequest>`
+    const r = await awsPost(creds, "route53", R53_HOST, `${R53_BASE}/hostedzone/${zone.id}/rrset/`, body)
+    if (r.status !== 200) return { ok: false, error: awsErrorMessage(r.body) || `Route 53 HTTP ${r.status}` }
+    const changeId = r.body.match(/<Id>([^<]+)<\/Id>/)?.[1]?.replace(/^\/change\//, "")
+    return { ok: true, pollId: changeId }
+  },
+
+  async setValue(rawCreds, zoneId, record, value) {
+    const creds = awsCreds(rawCreds)
+    // UPSERT the record to the new single value, preserving its TTL (A records carry
+    // one; fall back to 300 if somehow absent). Type/name unchanged → a clean repoint.
+    const ttl = record.ttl ?? 300
+    const body =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<ChangeResourceRecordSetsRequest xmlns="https://route53.amazonaws.com/doc/2013-04-01/">` +
+      `<ChangeBatch><Comment>spinup: repoint ${stripDot(record.name)} to ${value}</Comment><Changes><Change>` +
+      `<Action>UPSERT</Action><ResourceRecordSet>` +
+      `<Name>${xmlEscape(record.name)}</Name><Type>${record.type}</Type><TTL>${ttl}</TTL>` +
+      `<ResourceRecords><ResourceRecord><Value>${xmlEscape(value)}</Value></ResourceRecord></ResourceRecords>` +
+      `</ResourceRecordSet></Change></Changes></ChangeBatch>` +
+      `</ChangeResourceRecordSetsRequest>`
+    const r = await awsPost(creds, "route53", R53_HOST, `${R53_BASE}/hostedzone/${zoneId}/rrset/`, body)
+    if (r.status !== 200) return { ok: false, error: awsErrorMessage(r.body) || `Route 53 HTTP ${r.status}` }
+    const changeId = r.body.match(/<Id>([^<]+)<\/Id>/)?.[1]?.replace(/^\/change\//, "")
+    return { ok: true, pollId: changeId }
+  },
+
   async pollChange(rawCreds, pollId) {
     const creds = awsCreds(rawCreds)
     const r = await awsGet(creds, "route53", R53_HOST, `${R53_BASE}/change/${pollId}`)
@@ -310,6 +360,20 @@ const cloudflare: RecordProvider = {
       method: "PATCH",
       headers: cfHeaders(token),
       body: JSON.stringify({ ttl }),
+    })
+    const json = (await res.json().catch(() => undefined)) as { success?: boolean; errors?: { message?: string }[] } | undefined
+    if (!res.ok || !json?.success) return { ok: false, error: cfError(json, res.status) }
+    return { ok: true } // Cloudflare applies synchronously
+  },
+
+  async setValue(rawCreds, zoneId, record, value) {
+    const token = rawCreds.token ?? ""
+    if (!record.recordId) return { ok: false, error: "Missing Cloudflare record id." }
+    // PATCH only the content — name/type/ttl/proxied stay as configured.
+    const res = await fetch(`${CF_API}/zones/${zoneId}/dns_records/${record.recordId}`, {
+      method: "PATCH",
+      headers: cfHeaders(token),
+      body: JSON.stringify({ content: value }),
     })
     const json = (await res.json().catch(() => undefined)) as { success?: boolean; errors?: { message?: string }[] } | undefined
     if (!res.ok || !json?.success) return { ok: false, error: cfError(json, res.status) }

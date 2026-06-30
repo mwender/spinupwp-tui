@@ -14,7 +14,7 @@
 Once you're in, the dashboard looks like this:
 
 ```
- ◆ Spinup v0.8.0   1 Dashboard   2 Servers   3 Stacks   4 Search   5 Events   20 servers · 171 sites
+ ◆ Spinup v0.9.0   1 Dashboard   2 Servers   3 Stacks   4 Search   5 Events   20 servers · 171 sites
 
  ┌──────────────┐ ┌───────────────┐ ┌───────────────────┐ ┌──────────────────────┐
  │ Servers      │ │ Sites         │ │ Fleet Disk        │ │ WP Updates           │
@@ -83,11 +83,36 @@ Once you're in, the dashboard looks like this:
   (Nginx / PHP-FPM / MySQL / Redis). Servers needing a reboot show a `↻rbt`
   badge, and the overlay reads the box over SSH to show *why* (the pending
   kernel/security packages). (See "Server actions" below.)
+- **Create & connect a server** — press `c` on the Servers tab to provision a new
+  server (DigitalOcean / Vultr / Linode / Hetzner), priced from the provider catalog
+  and pre-filled to match a selected server. Then press `V` on a server with **no
+  sites** to connect it end to end: Spinup writes the DNS A record, creates a
+  placeholder "vanity" site, enables HTTPS, hands you off to add your SSH key, and
+  publishes a status page — turning a bare server into one you can actually work
+  with. Long builds run in the background and survive a restart. (See "Creating &
+  connecting servers" below.)
+- **Clone a whole server to a new one** — press `C` on a server to clone one or
+  more of its sites onto a fresh (or existing) destination, **without touching DNS
+  until you say so**. A guided wizard plans + sizes the sites, provisions or picks
+  the destination, pulls each site server-to-server (Standard WP **and** Bedrock),
+  verifies the clone against the source, and finally repoints DNS on your word.
+  Runs in the background with a header badge. (See "Cloning a server" below.)
+- **Privileged writes over SSH (sudo + SSH keys)** — the SpinupWP API can't manage
+  SSH keys or sudo users, so Spinup does it directly. Press `S` on a server to
+  **connect sudo** for the session (optionally **remembered in your macOS Keychain**
+  so it auto-unlocks next time), then `K` on a site to **grant or revoke** your
+  personal key and/or Spinup's dedicated machine key — one site or every site on the
+  server. (See "Privileged writes over SSH" below.)
+- **Completion toasts** — background writes that take a while (a PHP upgrade, a
+  server reboot/restart) raise a non-focus-stealing toast when they finish, so you're
+  not left guessing after you've moved on.
 
 > The tool is **read-only by default** and works great with a Read Only API
-> token. The write actions — upgrading a site's PHP version and rebooting /
-> restarting services — need a **Read/Write** token; everything else keeps
-> working without one.
+> token. The write actions — creating a server, connecting it with a vanity site,
+> cloning a server, upgrading a site's PHP version, and rebooting / restarting
+> services — need a **Read/Write** token. The SSH actions (sudo connect, grant key,
+> clone pull) use **your own SSH access**, not the API token; everything else keeps
+> working without any of it.
 
 ## Requirements
 
@@ -206,6 +231,11 @@ These can be set in `config.json` or via an environment variable:
 | `f` | Report sites with no usable local copy (Stacks tab) |
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
+| `c` | Create a new server (Servers tab; needs a Read/Write token) |
+| `V` | Connect a 0-site server with a vanity site — DNS + site + HTTPS + SSH-key handoff (Servers tab; needs a Read/Write token) |
+| `C` | Clone a server's sites to a new/existing destination (Servers tab; needs a Read/Write token + sudo) |
+| `S` | Connect sudo on a server for privileged writes — optionally remembered in the macOS Keychain (Servers tab) |
+| `K` | Grant / revoke an SSH key on a site, or every site on the server (needs sudo connected) |
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `r` | Refresh data from the API |
@@ -282,7 +312,9 @@ it finishes.
   can press `Esc` to close the modal and it keeps going — the site's row shows a
   spinner and the target version (`→8.3`) until it settles, then refreshes to the
   new version (or flags `⬆!` if it failed). The SiteDetail "PHP" field shows the
-  same in-progress state. You can launch upgrades on several sites at once.
+  same in-progress state. You can launch upgrades on several sites at once. When an
+  upgrade finishes, a **toast** confirms it (`example.com upgraded to PHP 8.3`) —
+  useful since it often completes after you've closed the modal and moved on.
 
 ## Server actions
 
@@ -305,6 +337,117 @@ server's row keeps a spinner).
   file 1:1).
 - **Reboot is the big one** — its confirmation calls out that it takes the whole
   server down briefly (every site on it); a service restart is a brief blip.
+- **A toast on completion.** A reboot can take minutes; when it (or a restart)
+  finishes, a non-focus-stealing toast tells you (`example.com rebooted` /
+  `Nginx restarted on example.com`), so you don't have to keep checking.
+
+## Creating & connecting servers
+
+Two write actions on the **Servers** tab that stand up a new server and make it
+usable — both **need a Read/Write token**.
+
+**Create a server (`c`).** Opens a form pre-filled to **match** the selected
+server's provider, region, and size (or from scratch on an empty fleet). It prices
+the build from the provider's catalog (DigitalOcean / Vultr / Linode / Hetzner),
+suggests a hostname from your fleet's naming convention, and lets you switch
+provider (`p`), region (`g`), or size (`e`) and toggle backups (`b`) before
+confirming. Because the SpinupWP API can't list your configured server providers,
+the first time you build on a provider the overlay asks for its SpinupWP provider
+id (Account Settings → Server Providers) and saves it — once per provider. The
+build fires `POST /servers` and tracks the ~10-minute provision in the background.
+
+**Connect it with a vanity site (`V`).** A brand-new server has **no site**, so
+there's nothing to attach an SSH key to and no way for Spinup to reach it — empty
+servers are flagged in **amber** in the Servers list. Press `V` on one to build a
+small placeholder ("vanity") site at the server's own hostname, end to end:
+
+1. **DNS** — writes an `A` record for the hostname → the server IP (AWS Route 53),
+   using the connection from the DNS module.
+2. **Propagate** — waits for the record to resolve (so Let's Encrypt can issue);
+   after ~2 minutes it offers to skip SSL for now or keep waiting.
+3. **Site** — creates a blank site (`installation_method: "blank"`).
+4. **HTTPS** — enables a free Let's Encrypt certificate.
+5. **SSH key** — deep-links you to the site's **SFTP & SSH → Site User** to add
+   your key (the API can't do this), then waits for you to confirm.
+6. **Publish** — seeds a minimal, brand-neutral status page (it reads its own
+   hostname, so it's reusable on any server). Press `o` to open the live site.
+
+The whole build is a **resumable background job**: close the overlay and a header
+badge keeps tracking it; press `V` on the server to reopen it (even after the site
+exists). It survives quitting and relaunching the app. If a step fails, the overlay
+shows where, with `r` to retry or `x` to discard.
+
+## Privileged writes over SSH (sudo & SSH keys)
+
+Some things the SpinupWP API simply can't do — it has **no** surface for SSH keys or
+sudo users. Spinup does them directly over SSH instead, which means these actions use
+**your own SSH access**, not the API token.
+
+**Connect sudo (`S`).** Press `S` on a server and enter its SpinupWP **sudo user**
+and that user's **sudo password** once. Spinup validates them against the live server
+(`sudo -S -p '' true`) and then holds the password **in memory for the session only**
+— the username persists to config, the password is never written to plaintext config.
+A connected server shows a green `● sudo` badge on its row; `S` again disconnects.
+
+- **Remember in the macOS Keychain (opt-in).** Tick the toggle when connecting and the
+  password is saved to your **login Keychain** (service `spinup-sudo`, one item per
+  server) — never to `config.json`, which only keeps the username and a `keychain`
+  marker. Next time you press `S` on that server, sudo **auto-unlocks** with no
+  retyping (the first read may show macOS's own "allow access" prompt — choose Always
+  Allow). Press `f` to forget the saved password; disconnecting (`x`) a saved server
+  offers a no-password **reconnect** rather than the credential form. Off macOS the
+  toggle is absent and sudo stays in-memory per session.
+
+**Grant / revoke an SSH key (`K`).** With sudo connected, press `K` on a site to write
+keys into the site user's `authorized_keys`:
+
+- **Pick which keys** — any of **your personal keys** (discovered from `~/.ssh/*.pub`
+  and your ssh-agent, so you can SSH/SFTP as yourself) and/or Spinup's dedicated
+  **`spinup-tui` machine key** (an ed25519 identity generated once into the config dir,
+  deliberately **never added to your SpinupWP account** so SpinupWP's key reconciliation
+  can't clobber it). Your selection is remembered.
+- **Pick the scope** — just this site, or **every site on the server** in one pass
+  (per-site progress, with a retry for any that fail).
+- **Grant or remove** — `a`/`r` toggles the mode; removing pulls exactly the chosen
+  key lines and leaves every other key (including SpinupWP-managed ones) untouched. The
+  remote script is **idempotent** and a confirm overlay shows the exact command first.
+- Site rows show what's granted at a glance — **👤** (your key) and/or **🔑** (the
+  machine key).
+
+## Cloning a server
+
+Press **`C`** on a server to clone one or more of its sites onto a **new or existing**
+destination server — a guided, two-pane wizard that lets you stage and verify a whole
+migration and **only repoints DNS when you say so**. It needs a **Read/Write token**
+(to create the destination sites) and **sudo connected on both ends** (the copy runs
+over SSH). The steps:
+
+1. **Plan** — pick which of the source's sites to clone (all selected by default;
+   `space` toggles). Spinup sizes each one live (disk + database) into a payload total
+   so you know what you're moving; a concurrency cap protects the busy source.
+2. **Destination** — provision a fresh server pre-matched to the source (reusing the
+   `c` flow), or `d` to pick an existing server as the target.
+3. **Connect** — connect sudo on **both** servers. The clone is a server-to-server
+   **pull**: the destination pulls each site directly from the source over SSH (no
+   bytes routed through your laptop), authenticating with a key granted onto the source
+   for the job and **revoked when it's done**.
+4. **Clone sites** — a live roster runs the sites concurrently, each advancing
+   `create → pull → config → verify → done`. Both stacks are handled: **Standard WP**
+   (files + database, with `wp-config` re-stamped for the destination) and **Bedrock**
+   (git-native — created from the repo, `composer install` over SSH, uploads + secrets
+   pulled, `.env` re-stamped).
+5. **Verify** — drill into any cloned site for a source-vs-clone comparison (wp-cli
+   facts + an HTTP check that hits the **new** server while DNS still points at the old
+   one).
+6. **DNS cutover** — when you're satisfied, repoint **every** `A` record across each
+   site's domains (apex + additional) to the new server, in one batched, partial-aware
+   pass; `www`-style records that follow the apex are skipped, not clobbered. Records
+   in zones you can't edit are listed for hand-editing.
+
+The clone runs in the **background** — pressing `Esc` doesn't abandon it; a header
+badge (`⠹ Cloning … — press C`) surfaces the in-flight job and `C` reopens the live
+roster. Pairs naturally with the DNS module: **lower the TTLs** (`n`/`N` → `⏎`) a day
+or two ahead so the cutover propagates fast.
 
 ## Local working copies
 

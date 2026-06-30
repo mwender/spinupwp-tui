@@ -9,11 +9,11 @@ import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel, Field, StatusBadge, SiteMetaCell, Spinner } from "../components.tsx"
+import { Panel, Field, StatusBadge, SiteMetaCell, Spinner, ControlPanel } from "../components.tsx"
 import { isDbBackupInFlight } from "../../lib/dbBackup.ts"
 import { isDbSyncInFlight } from "../../lib/dbSync.ts"
 import { List, moveSelection } from "../List.tsx"
-import { ServerDetail, SiteDetail } from "../Details.tsx"
+import { ServerDetail, SiteDetail, SERVER_CONTROL } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl, siteWebUrl } from "../../lib/spinupweb.ts"
@@ -34,7 +34,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -213,6 +213,16 @@ export function Search({ rows }: { rows: number }) {
         if (srv) setServerActionsServer(srv)
         return
       }
+      // Server-only Server Control actions (server results show the full suite).
+      case "C":
+        if (current?.kind === "server") beginClone(current.server)
+        return
+      case "S":
+        if (current?.kind === "server") setSudoConnectServer(current.server)
+        return
+      case "N":
+        if (current?.kind === "server") setDnsInventoryServer(current.server)
+        return
     }
   })
 
@@ -385,16 +395,12 @@ function siteGroups(isWordpress: boolean, localSync: boolean): ActionGroup[] {
   ]
 }
 
-const SERVER_GROUPS: ActionGroup[] = [
-  { title: "Open", items: [["w", "Open in SpinupWP"]] },
-  { title: "Server", items: [["a", "Server actions (reboot / restart)"], ["h", "Server health"]] },
-]
-
 function ActionsCard({ result, serverName, localSync }: { result: Result; serverName: string; localSync: boolean }) {
   const isSite = result.kind === "site"
   const name = isSite ? result.site.domain : result.server.name
   const status = isSite ? result.site.status : result.server.connection_status
-  const groups = isSite ? siteGroups(result.site.is_wordpress, localSync) : SERVER_GROUPS
+  // Server results reuse the SAME Server Control suite as the Browser detail pane.
+  const groups = isSite ? siteGroups(result.site.is_wordpress, localSync) : SERVER_CONTROL
   return (
     <box style={{ flexDirection: "column" }}>
       <box style={{ flexDirection: "row" }}>
@@ -419,18 +425,7 @@ function ActionsCard({ result, serverName, localSync }: { result: Result; server
         </>
       )}
       <box style={{ height: 1 }} />
-      <text content="Site Control" fg={theme.accent} />
-      {groups.map((group) => (
-        <box key={group.title} style={{ flexDirection: "column" }}>
-          <text content={group.title.toUpperCase()} fg={theme.textFaint} wrapMode="none" />
-          {group.items.map(([k, label]) => (
-            <box key={k} style={{ flexDirection: "row" }}>
-              <text content={` ${k} `} fg={theme.bg} bg={theme.brandDim} style={{ flexShrink: 0 }} />
-              <text content={`  ${label}`} fg={theme.text} wrapMode="none" />
-            </box>
-          ))}
-        </box>
-      ))}
+      <ControlPanel heading={isSite ? "Site Control" : "Server Control"} groups={groups} />
       <box style={{ height: 1 }} />
       <text content="↑↓ select · ←/Esc back to search" fg={theme.textFaint} wrapMode="none" />
     </box>

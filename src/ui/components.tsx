@@ -55,12 +55,14 @@ export function Sparkle({ color = theme.brand, interval = 360 }: { color?: strin
 
 // A vertical checklist of stages that fills in as work progresses: completed
 // rows get a green ✓, the in-flight row spins, not-yet-reached rows are faint
-// ○, and a failed row gets a red ✕. Used by the DB backup/sync overlays so the
-// whole operation reads as one building stack rather than a swapping spinner.
-export type StepState = "done" | "active" | "pending" | "failed"
+// ○, and a failed row gets a red ✕. A `waiting` row (paused for the user to act)
+// gets an amber ❯ — distinct from the spinner so it reads as "your turn", not
+// "system working". Used by the DB backup/sync + vanity overlays.
+export type StepState = "done" | "active" | "pending" | "failed" | "waiting"
 export interface StepRow {
   label: string
   state: StepState
+  detail?: string // optional trailing text (e.g. a timer), shown dim after the label
 }
 
 export function Steps({ rows }: { rows: StepRow[] }) {
@@ -71,9 +73,17 @@ export function Steps({ rows }: { rows: StepRow[] }) {
           {r.state === "active" ? (
             <Spinner color={theme.brand} />
           ) : (
-            <text content={r.state === "done" ? "✓" : r.state === "failed" ? "✕" : "○"} fg={r.state === "done" ? theme.good : r.state === "failed" ? theme.bad : theme.textFaint} />
+            <text
+              content={r.state === "done" ? "✓" : r.state === "failed" ? "✕" : r.state === "waiting" ? "❯" : "○"}
+              fg={r.state === "done" ? theme.good : r.state === "failed" ? theme.bad : r.state === "waiting" ? theme.warn : theme.textFaint}
+            />
           )}
-          <text content={` ${r.label}`} fg={r.state === "pending" ? theme.textFaint : theme.text} wrapMode="none" />
+          <text
+            content={` ${r.label}`}
+            fg={r.state === "pending" ? theme.textFaint : r.state === "waiting" ? theme.warn : theme.text}
+            wrapMode="none"
+          />
+          {r.detail ? <text content={`  ${r.detail}`} fg={theme.textDim} wrapMode="none" /> : null}
         </box>
       ))}
     </box>
@@ -195,10 +205,24 @@ export function PhpVersionCell({
 //   ↑N = N pending WordPress updates
 // Presence-only by design — the inspector strip shows the full detail (path /
 // URL / on-disk validity) for the focused row.
-export function SiteMetaCell({ linked, updates, selected = false }: { linked: boolean; updates: number; selected?: boolean }) {
+export function SiteMetaCell({
+  linked,
+  updates,
+  personalKey = false,
+  machineKey = false,
+  selected = false,
+}: {
+  linked: boolean
+  updates: number
+  personalKey?: boolean // 👤 your key is on the site
+  machineKey?: boolean // 🔑 the spinup-tui machine key is on the site
+  selected?: boolean
+}) {
+  const keyMark = (personalKey ? "👤" : "") + (machineKey ? "🔑" : "")
   return (
     <box style={{ flexDirection: "row", flexShrink: 0 }}>
       <text content={linked ? "◆ " : "  "} fg={selected ? theme.text : theme.good} wrapMode="none" />
+      {keyMark ? <text content={keyMark + " "} wrapMode="none" /> : null}
       {updates > 0 ? <text content={`↑${updates} `} fg={selected ? theme.text : theme.warn} wrapMode="none" /> : null}
     </box>
   )
@@ -254,13 +278,25 @@ export function SecretInput({
     if (cleaned) setValue(valueRef.current + cleaned)
   })
 
+  // The field always keeps a visible bgAlt box (same as the regular text inputs);
+  // focus is carried by the green ❯ marker + caret, not by dimming the box.
   const hasValue = value.length > 0
-  const content = hasValue
-    ? MASK.repeat(value.length) + (focused ? "▏" : "")
-    : (focused ? "▏ " : "") + (placeholder ?? "")
   return (
-    <box style={{ height: 1, flexDirection: "row", backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1 }}>
-      <text content={content} fg={hasValue ? theme.text : theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+    <box
+      style={{
+        height: 1,
+        flexDirection: "row",
+        backgroundColor: theme.bgAlt,
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <text content={focused ? "❯ " : "  "} fg={focused ? theme.brand : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+      {hasValue ? <text content={MASK.repeat(value.length)} fg={theme.text} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+      {focused ? <text content="▏" fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+      {!hasValue ? (
+        <text content={placeholder ?? ""} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+      ) : null}
     </box>
   )
 }
@@ -270,6 +306,29 @@ export function Centered({ children }: { children: ReactNode }) {
   return (
     <box style={{ flexGrow: 1, justifyContent: "center", alignItems: "center", flexDirection: "column" }}>
       {children}
+    </box>
+  )
+}
+
+// A grouped, key-chipped action legend ("Site Control" / "Server Control"): a heading,
+// then dim group titles each over a list of `key → outcome` rows. Shared by the Search
+// actions pane and the Servers detail pane so the suite reads the same everywhere.
+export type ActionGroup = { title: string; items: [string, string][] }
+export function ControlPanel({ heading, groups }: { heading: string; groups: ActionGroup[] }) {
+  return (
+    <box style={{ flexDirection: "column" }}>
+      <text content={heading} fg={theme.accent} />
+      {groups.map((group) => (
+        <box key={group.title} style={{ flexDirection: "column" }}>
+          <text content={group.title.toUpperCase()} fg={theme.textFaint} wrapMode="none" />
+          {group.items.map(([k, label]) => (
+            <box key={k} style={{ flexDirection: "row" }}>
+              <text content={` ${k} `} fg={theme.bg} bg={theme.brandDim} style={{ flexShrink: 0 }} />
+              <text content={`  ${label}`} fg={theme.text} wrapMode="none" />
+            </box>
+          ))}
+        </box>
+      ))}
     </box>
   )
 }

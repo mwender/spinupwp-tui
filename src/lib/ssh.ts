@@ -9,6 +9,11 @@
 // from the user's terminal, we fail fast with a clear hint instead of hanging.
 // A persistent ControlMaster connection makes repeated polls fast.
 
+import { hostname, homedir } from "node:os"
+import { join } from "node:path"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { mkdir, chmod } from "node:fs/promises"
+import { keysDir } from "../config.ts"
 import type { Server, Site } from "../api/types.ts"
 
 export interface CpuCore {
@@ -223,6 +228,350 @@ function busyPct(a: { total: number; idle: number }, b: { total: number; idle: n
   const dIdle = b.idle - a.idle
   if (dTotal <= 0) return 0
   return Math.min(100, Math.max(0, (1 - dIdle / dTotal) * 100))
+}
+
+// ---- Privileged write-over-SSH (sudo) -------------------------------------
+//
+// The app's first WRITE over SSH: drop Spinup's dedicated machine key into a
+// site user's authorized_keys, via a per-server SUDO user. Everything above this
+// line is strictly read-only; this section is the one place we mutate a server.
+//
+// See docs/2026-06-26_sudo-ssh-key-provisioning-spec.md for the why (the SpinupWP
+// API has no SSH-key/sudo-user surface) and the clobber-safety analysis (an
+// appended key survives SpinupWP's authorized_keys reconciliation as long as it
+// isn't also a saved account key — hence a dedicated key NOT in the account).
+
+// Path to Spinup's dedicated machine keypair (private + .pub).
+function spinupKeyPaths(): { path: string; pub: string } {
+  const path = join(keysDir(), "spinup-tui")
+  return { path, pub: `${path}.pub` }
+}
+
+// Lazily generate (once) and return Spinup's dedicated ed25519 machine key. It is
+// NEVER added to the SpinupWP account, so SpinupWP never manages/removes it; the
+// public-key comment (`spinup-tui@<hostname>`) makes its origin obvious wherever
+// the authorized_keys line is seen. No passphrase — it's an unattended identity.
+export async function ensureSpinupKey(): Promise<{ path: string; pub: string; comment: string }> {
+  const { path, pub } = spinupKeyPaths()
+  const comment = `spinup-tui@${hostname()}`
+  if (existsSync(pub) && existsSync(path)) {
+    return { path, pub: readFileSync(pub, "utf8").trim(), comment }
+  }
+  await mkdir(keysDir(), { recursive: true })
+  const proc = Bun.spawn(
+    ["ssh-keygen", "-t", "ed25519", "-N", "", "-C", comment, "-f", path],
+    { stdout: "pipe", stderr: "pipe", stdin: "ignore" },
+  )
+  const code = await proc.exited
+  if (code !== 0) {
+    const err = await new Response(proc.stderr as ReadableStream<Uint8Array>).text()
+    throw new Error(`ssh-keygen failed (${code}): ${err.trim() || "could not generate the machine key"}`)
+  }
+  // The private key is a machine identity — restrict it to the owner.
+  try {
+    await chmod(path, 0o600)
+  } catch {
+    /* best-effort (e.g. filesystems without POSIX perms) */
+  }
+  return { path, pub: readFileSync(pub, "utf8").trim(), comment }
+}
+
+// SpinupWP serves each site from /sites/<domain>; the site user's home (and thus
+// its .ssh/authorized_keys) lives there.
+function siteHome(domain: string): string {
+  return `/sites/${domain}`
+}
+
+// Single-quote a value for safe embedding in a POSIX shell script.
+function shQuote(v: string): string {
+  return `'${v.replace(/'/g, `'\\''`)}'`
+}
+
+// The idempotent remote script that ensures EACH given key line is present in the
+// site user's authorized_keys (mode 600, owned siteuser:siteuser). `grep -qxF` makes
+// re-running a no-op; it verifies every key landed before echoing ===GRANTED, so a
+// partial write reports failure. Exported so the confirm overlay can show the exact
+// remote command before firing.
+export function buildGrantScript(siteUser: string, domain: string, pubkeys: string[]): string {
+  const U = shQuote(siteUser)
+  const H = shQuote(siteHome(domain))
+  const lines = [
+    `set -e`,
+    `U=${U}; H=${H}`,
+    `install -d -m 700 -o "$U" -g "$U" "$H/.ssh"`,
+    `touch "$H/.ssh/authorized_keys"`,
+  ]
+  // Append each key only if absent (idempotent), keyed off the exact line.
+  for (const k of pubkeys) {
+    const K = shQuote(k)
+    lines.push(`grep -qxF ${K} "$H/.ssh/authorized_keys" || printf '%s\\n' ${K} >> "$H/.ssh/authorized_keys"`)
+  }
+  lines.push(`chown "$U:$U" "$H/.ssh/authorized_keys"`)
+  lines.push(`chmod 600 "$H/.ssh/authorized_keys"`)
+  // Verify every key is present; bail (no ===GRANTED) if any is missing.
+  for (const k of pubkeys) {
+    lines.push(`grep -qxF ${shQuote(k)} "$H/.ssh/authorized_keys" || exit 7`)
+  }
+  lines.push(`echo ===GRANTED`)
+  return lines.join("\n")
+}
+
+// The reverse of buildGrantScript: remove EACH given key line from the site user's
+// authorized_keys (exact-line match via `grep -vxF`), leaving every other key. Safe
+// to re-run; verifies none remain before echoing ===REVOKED.
+export function buildRevokeScript(siteUser: string, domain: string, pubkeys: string[]): string {
+  const U = shQuote(siteUser)
+  const H = shQuote(siteHome(domain))
+  const patternArgs = pubkeys.map((k) => shQuote(k)).join(" ")
+  const lines = [
+    `set -e`,
+    `U=${U}; H=${H}`,
+    `F="$H/.ssh/authorized_keys"`,
+    `if [ -f "$F" ]; then`,
+    `  P="$(mktemp)"`,
+    `  printf '%s\\n' ${patternArgs} > "$P"`,
+    `  grep -vxF -f "$P" "$F" > "$F.tmp" || true`,
+    `  mv "$F.tmp" "$F"`,
+    `  rm -f "$P"`,
+    `  chown "$U:$U" "$F"`,
+    `  chmod 600 "$F"`,
+    `fi`,
+  ]
+  // Verify each removed key is really gone; bail (no ===REVOKED) if any remains.
+  for (const k of pubkeys) {
+    lines.push(`[ -f "$F" ] && grep -qxF ${shQuote(k)} "$F" 2>/dev/null && exit 8 || true`)
+  }
+  lines.push(`echo ===REVOKED`)
+  return lines.join("\n")
+}
+
+// A non-interactive ssh command, optionally feeding a sudo password (then a
+// script body) on stdin. We do NOT drive an interactive `sudo -i` shell: we run
+// one shot `sudo -S -p '' bash -s`, so the password is read from stdin (-S) and
+// never appears in argv (so not in the remote `ps`/history). When `password` is
+// null the remote command runs without sudo (used for the read-only probe).
+async function runSshStdin(
+  target: string,
+  port: number | null,
+  remoteCmd: string,
+  stdinPayload: string | null,
+  timeoutMs: number,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const portOpt = port && port !== 22 ? ["-p", String(port)] : []
+  let proc: ReturnType<typeof Bun.spawn>
+  try {
+    proc = Bun.spawn(["ssh", ...SSH_OPTS, ...portOpt, target, remoteCmd], {
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: stdinPayload == null ? "ignore" : "pipe",
+    })
+  } catch (err) {
+    return { code: -1, stdout: "", stderr: `Failed to launch ssh: ${(err as Error).message}` }
+  }
+  if (stdinPayload != null && proc.stdin) {
+    const sink = proc.stdin as { write: (s: string) => void; end: () => void }
+    sink.write(stdinPayload)
+    sink.end()
+  }
+  const timer = setTimeout(() => {
+    try {
+      proc.kill()
+    } catch {
+      /* already gone */
+    }
+  }, timeoutMs)
+  const code = await proc.exited
+  clearTimeout(timer)
+  const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text()
+  const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text()
+  return { code, stdout, stderr }
+}
+
+// Pull a meaningful last line out of ssh/sudo stderr for surfacing to the user.
+function lastErrorLine(stderr: string, fallback: string): string {
+  const line = stderr.trim().split("\n").map((l) => l.trim()).filter(Boolean).pop()
+  return line || fallback
+}
+
+export type GrantKeyResult =
+  | { ok: true; target: string }
+  | { ok: false; target: string; error: string }
+
+// Shared runner for a privileged per-site authorized_keys op (grant or revoke).
+// Probes `sudo -n true` first to fail cleanly (can't-sudo / can't-connect) BEFORE
+// sending the secret; if a password is required it's fed on stdin to `sudo -S`.
+// `build(siteUser)` produces the remote script (so the script is only built once
+// site_user is validated); `marker` is the success token the script echoes.
+async function runSudoSiteOp(
+  server: Server,
+  site: Site,
+  opts: { sudoUser: string; sudoPassword: string },
+  build: (siteUser: string) => string,
+  marker: string,
+): Promise<GrantKeyResult> {
+  const ip = server.ip_address
+  if (!ip) return { ok: false, target: "(no IP)", error: "Server has no IP address." }
+  const siteUser = site.site_user
+  if (!siteUser) return { ok: false, target: ip, error: "Site has no site_user — can't locate its authorized_keys." }
+  const target = `${opts.sudoUser}@${ip}`
+  const port = server.ssh_port ?? null
+
+  const probe = await runSshStdin(target, port, "sudo -n true 2>&1", null, 15000)
+  let needPassword = false
+  if (probe.code === 0) {
+    needPassword = false
+  } else if (probe.code === 255 || probe.code === -1) {
+    return { ok: false, target, error: lastErrorLine(probe.stdout + "\n" + probe.stderr, "Couldn't connect over SSH — is your key on the server for this user?") }
+  } else {
+    const out = (probe.stdout + " " + probe.stderr).toLowerCase()
+    if (/not in the sudoers|not allowed to run|may not run|unknown user|is not allowed/.test(out)) {
+      return { ok: false, target, error: `${opts.sudoUser} can't run sudo on this server.` }
+    }
+    needPassword = true
+    if (!opts.sudoPassword) return { ok: false, target, error: "A sudo password is required for this server." }
+  }
+
+  const script = build(siteUser)
+  const payload = needPassword ? `${opts.sudoPassword}\n${script}\n` : `${script}\n`
+  const res = await runSshStdin(target, port, "sudo -S -p '' bash -s", payload, 30000)
+  if (res.code !== 0 || !res.stdout.includes(marker)) {
+    const out = (res.stderr + " " + res.stdout).toLowerCase()
+    if (/incorrect password|sorry, try again|authentication failure/.test(out)) {
+      return { ok: false, target, error: "Sudo password was rejected." }
+    }
+    return { ok: false, target, error: lastErrorLine(res.stderr || res.stdout, `The remote command failed (ssh exit ${res.code}).`) }
+  }
+  return { ok: true, target: `${siteUser}@${ip}` }
+}
+
+// Append the given public keys to a site user's authorized_keys, via the server's
+// sudo user. Idempotent (re-running never duplicates a line). The caller resolves
+// which keys to deploy (machine key via ensureSpinupKey, personal via listPersonalKeys).
+export async function grantSiteSshKey(
+  server: Server,
+  site: Site,
+  opts: { sudoUser: string; sudoPassword: string; pubkeys: string[] },
+): Promise<GrantKeyResult> {
+  const keys = opts.pubkeys.map((k) => k.trim()).filter(Boolean)
+  if (keys.length === 0) return { ok: false, target: `${opts.sudoUser}@${server.ip_address ?? "?"}`, error: "No keys selected to grant." }
+  return runSudoSiteOp(server, site, opts, (siteUser) => buildGrantScript(siteUser, site.domain, keys), "===GRANTED")
+}
+
+// Remove the given public keys from a site user's authorized_keys, via sudo. The
+// reverse of grant; safe to re-run (removing an absent key is a no-op). Only the
+// exact lines given are removed — other keys (incl. SpinupWP-managed ones) are left.
+export async function revokeSiteSshKey(
+  server: Server,
+  site: Site,
+  opts: { sudoUser: string; sudoPassword: string; pubkeys: string[] },
+): Promise<GrantKeyResult> {
+  const keys = opts.pubkeys.map((k) => k.trim()).filter(Boolean)
+  if (keys.length === 0) return { ok: false, target: `${opts.sudoUser}@${server.ip_address ?? "?"}`, error: "No keys selected to remove." }
+  return runSudoSiteOp(server, site, opts, (siteUser) => buildRevokeScript(siteUser, site.domain, keys), "===REVOKED")
+}
+
+// A public key the user can choose to grant. The machine key (`spinup-tui`) plus any
+// personal keys discovered on this machine. `line` is the full authorized_keys line.
+export interface GrantableKey {
+  id: string // stable id for selection (the key body, base64)
+  kind: "machine" | "personal"
+  label: string // human label (comment or filename)
+  line: string // the full "ssh-… AAAA… comment" line
+  source: string // "spinup" | "~/.ssh/id_ed25519.pub" | "ssh-agent"
+}
+
+// The base64 body of a public-key line — the stable identity used to dedupe keys
+// across the agent and ~/.ssh, and to match what SpinupWP keys off.
+function keyBody(line: string): string {
+  const parts = line.trim().split(/\s+/)
+  return parts[1] ?? ""
+}
+
+function parsePubLine(line: string): { type: string; body: string; comment: string } | null {
+  const t = line.trim()
+  if (!t || !/^(ssh|ecdsa|sk-)/.test(t)) return null
+  const parts = t.split(/\s+/)
+  if (parts.length < 2) return null
+  return { type: parts[0], body: parts[1], comment: parts.slice(2).join(" ") }
+}
+
+// Discover the user's PERSONAL public keys to offer alongside the machine key:
+// every ~/.ssh/*.pub plus whatever the ssh-agent currently holds (`ssh-add -L`),
+// deduped by key body. These are the keys a human uses to log in as themselves.
+export async function listPersonalKeys(): Promise<GrantableKey[]> {
+  const byBody = new Map<string, GrantableKey>()
+  const add = (line: string, label: string, source: string) => {
+    const parsed = parsePubLine(line)
+    if (!parsed) return
+    if (byBody.has(parsed.body)) return // first source wins (files are listed first)
+    byBody.set(parsed.body, {
+      id: parsed.body,
+      kind: "personal",
+      label: parsed.comment || label,
+      line: line.trim(),
+      source,
+    })
+  }
+
+  // ~/.ssh/*.pub
+  try {
+    const dir = join(homedir(), ".ssh")
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".pub")) continue
+      try {
+        add(readFileSync(join(dir, name), "utf8"), name, `~/.ssh/${name}`)
+      } catch {
+        /* unreadable — skip */
+      }
+    }
+  } catch {
+    /* no ~/.ssh — fine */
+  }
+
+  // ssh-agent (keys the user has loaded). Best-effort; ignore if no agent.
+  try {
+    const proc = Bun.spawn(["ssh-add", "-L"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+    const code = await proc.exited
+    if (code === 0) {
+      const out = await new Response(proc.stdout as ReadableStream<Uint8Array>).text()
+      for (const line of out.split("\n")) add(line, "ssh-agent key", "ssh-agent")
+    }
+  } catch {
+    /* no ssh-add / no agent — fine */
+  }
+
+  // ed25519 first (the modern default people actually use), then the rest in
+  // discovery order — so the first entry is the most likely "my key".
+  return [...byBody.values()].sort((a, b) => {
+    const rank = (k: GrantableKey) => (k.line.startsWith("ssh-ed25519") ? 0 : 1)
+    return rank(a) - rank(b)
+  })
+}
+
+export { keyBody }
+
+export type SudoVerifyResult = { ok: true } | { ok: false; error: string }
+
+// Validate a server's sudo credentials live (login as the sudo user works AND the
+// password is accepted by sudo), so "arming" a server gives immediate pass/fail
+// before any real privileged action fires. `sudo -S -p '' true` reads the password
+// from stdin; passwordless sudo ignores stdin and still exits 0.
+export async function verifySudo(server: Server, opts: { sudoUser: string; sudoPassword: string }): Promise<SudoVerifyResult> {
+  const ip = server.ip_address
+  if (!ip) return { ok: false, error: "Server has no IP address." }
+  const target = `${opts.sudoUser}@${ip}`
+  const port = server.ssh_port ?? null
+  const res = await runSshStdin(target, port, "sudo -S -p '' true", `${opts.sudoPassword}\n`, 15000)
+  if (res.code === 0) return { ok: true }
+  if (res.code === 255 || res.code === -1) {
+    return { ok: false, error: lastErrorLine(res.stderr || res.stdout, "Couldn't connect over SSH — is your key on the sudo user?") }
+  }
+  const out = (res.stderr + " " + res.stdout).toLowerCase()
+  if (/incorrect password|sorry, try again|authentication failure/.test(out)) return { ok: false, error: "Sudo password was rejected." }
+  if (/not in the sudoers|not allowed to run|may not run|unknown user|is not allowed/.test(out)) {
+    return { ok: false, error: `${opts.sudoUser} can't run sudo on this server.` }
+  }
+  return { ok: false, error: lastErrorLine(res.stderr || res.stdout, `Verification failed (ssh exit ${res.code}).`) }
 }
 
 function parseHealth(out: string): HealthSnapshot {

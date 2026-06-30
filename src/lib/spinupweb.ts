@@ -19,3 +19,15 @@ export function serverWebUrl(id: number, accountSlug: string | null): string {
 export function siteWebUrl(id: number, accountSlug: string | null): string {
   return accountSlug ? `${WEB_BASE}/${accountSlug}/sites/${id}` : WEB_BASE
 }
+
+// Account Settings → Server Providers (where the server_provider ids live).
+export function serverProvidersSettingsUrl(accountSlug: string | null): string {
+  return accountSlug ? `${WEB_BASE}/${accountSlug}/settings#server-providers` : WEB_BASE
+}
+
+// A site's SFTP & SSH section — where you add an SSH key to the SITE USER so
+// Spinup can connect to that site (the vanity flow deep-links here for the manual
+// key step). The key is per-site, not a server sudo user.
+export function siteSftpUrl(id: number, accountSlug: string | null): string {
+  return accountSlug ? `${WEB_BASE}/${accountSlug}/sites/${id}#sftp` : WEB_BASE
+}
