@@ -11,6 +11,13 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-30
+
+### Changed
+- **The "update available" hint is easier to spot.** The `✦ vX.Y.Z` nudge in the
+  header (and the `?` About panel) is now **bright gold** and bold, instead of the
+  same green as the wordmark — so a newer release stands out at a glance.
+
 ## [0.9.0] - 2026-06-30
 
 ### Added
@@ -438,7 +445,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/mwender/spinupwp-tui/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/mwender/spinupwp-tui/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/mwender/spinupwp-tui/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/mwender/spinupwp-tui/compare/v0.7.0...v0.7.1

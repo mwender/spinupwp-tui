@@ -158,6 +158,14 @@ For a standalone binary that doesn't need Bun on `PATH` at runtime:
 bun run build:binary     # produces ./spinup — move it onto your PATH
 ```
 
+### Updating
+
+`git pull` in your checkout — the global `spinup` symlink picks up the new code
+immediately. **If a release changed dependencies, run `bun install` too** (the
+release notes call this out); a standalone binary needs a fresh `bun run
+build:binary`. The app tells you when a newer release exists — a gold `✦ vX.Y.Z`
+appears next to the version in the header (and in the `?` About panel).
+
 #### CLI subcommands
 
 ```
