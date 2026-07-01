@@ -17,6 +17,13 @@ versions; such changes are called out here.
   GitHub release (the same API the update-check hint already polls), so
   there's no separate feed to maintain. Shows once per version, dismisses with
   any key.
+- **Update in place with `u`.** When the gold `✦ vX.Y.Z` hint shows a newer
+  release, open `?` Help and press `u` to `git pull --ff-only` right there —
+  no more leaving the app to update manually. Refuses on a dirty checkout
+  (never overwrites uncommitted work) or diverged history (never merges/
+  rebases); since the running process can't hot-reload, it always tells you
+  plainly to restart afterward, with a `bun install` nudge when dependencies
+  changed. Manual `git pull` still works exactly as before.
 
 ### Fixed
 - **Cloudflare proxied records no longer block DNS cutover.** The clone

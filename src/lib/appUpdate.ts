@@ -1,5 +1,6 @@
 // "Update available" check: compare the running version to the latest GitHub
-// release, so a `✨ vX.Y.Z` hint can nudge users (who update with `git pull`).
+// release, so a `✨ vX.Y.Z` hint can nudge users — either to update in-app (`u`
+// in the Help/About overlay, see runSelfUpdate below) or with a manual `git pull`.
 //
 // Polling model: checked once per launch, backed by a disk cache with a 6h TTL —
 // so frequent open/close cycles reuse the cached result instead of hitting GitHub
@@ -122,4 +123,70 @@ export async function refreshUpdateInfo(current: string): Promise<UpdateInfo | n
   }
   // Network failed — keep whatever we had so the hint doesn't flicker off.
   return cache ? deriveInfo(current, cache.latest, cache.url) : null
+}
+
+// ---- In-app updater (`u` in the Help/About overlay) ------------------------
+
+// The real checkout directory, resolved through Bun's module system rather
+// than process.cwd() — `spinup` is typically a global symlink invoked from
+// wherever the user happens to be, so cwd is meaningless here. import.meta.dir
+// follows the symlink to this file's REAL location (verified: it does not
+// resolve to the symlink's own path or the invoking shell's cwd).
+function checkoutRoot(): string {
+  return join(import.meta.dir, "..", "..")
+}
+
+async function git(cwd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+  const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
+  return { code, stdout: stdout.trim(), stderr: stderr.trim() }
+}
+
+export interface SelfUpdateResult {
+  ok: boolean
+  message: string
+  // package.json / bun.lock changed — the running code on disk now needs
+  // `bun install` before it'll actually run.
+  needsInstall: boolean
+}
+
+// `git pull --ff-only` in the checkout, with the safety rails a self-updater
+// needs: refuse on a dirty tree (this is the user's own dev checkout, not an
+// opaque install dir — never silently overwrite their uncommitted work), and
+// never attempt a merge/rebase that could produce conflicts (--ff-only). Can't
+// hot-reload the already-running process — the result always says "on disk",
+// never implies the update is live without a restart.
+// `cwd` defaults to the real checkout; overridable so this is testable against
+// a disposable sandbox without ever touching the real repo's git state.
+export async function runSelfUpdate(cwd: string = checkoutRoot()): Promise<SelfUpdateResult> {
+  try {
+    const isRepo = await git(cwd, ["rev-parse", "--is-inside-work-tree"])
+    if (isRepo.code !== 0 || isRepo.stdout !== "true") {
+      return { ok: false, message: "This install isn't a git checkout — update it the way you installed it.", needsInstall: false }
+    }
+    const status = await git(cwd, ["status", "--porcelain"])
+    if (status.stdout.length > 0) {
+      return { ok: false, message: "Your checkout has uncommitted changes — commit or stash them, then try again.", needsInstall: false }
+    }
+    const before = await git(cwd, ["rev-parse", "HEAD"])
+    const pull = await git(cwd, ["pull", "--ff-only"])
+    if (pull.code !== 0) {
+      return { ok: false, message: pull.stderr || pull.stdout || "git pull failed.", needsInstall: false }
+    }
+    const after = await git(cwd, ["rev-parse", "HEAD"])
+    if (before.stdout && before.stdout === after.stdout) {
+      return { ok: true, message: "Already up to date.", needsInstall: false }
+    }
+    const diff = await git(cwd, ["diff", "--name-only", before.stdout, after.stdout])
+    const needsInstall = /(^|\/)(package\.json|bun\.lock)$/m.test(diff.stdout)
+    return {
+      ok: true,
+      needsInstall,
+      message: needsInstall
+        ? "Updated on disk — run `bun install`, then press q and restart spinup."
+        : "Updated on disk — press q and restart spinup.",
+    }
+  } catch (err) {
+    return { ok: false, message: `Update failed: ${(err as Error).message}`, needsInstall: false }
+  }
 }

@@ -163,11 +163,17 @@ bun run build:binary     # produces ./spinup — move it onto your PATH
 
 ### Updating
 
-`git pull` in your checkout — the global `spinup` symlink picks up the new code
-immediately. **If a release changed dependencies, run `bun install` too** (the
-release notes call this out); a standalone binary needs a fresh `bun run
-build:binary`. The app tells you when a newer release exists — a gold `✦ vX.Y.Z`
-appears next to the version in the header (and in the `?` About panel).
+The app tells you when a newer release exists — a gold `✦ vX.Y.Z` appears next
+to the version in the header (and in the `?` About panel). From there, press
+**`u`** to update in place (`git pull --ff-only` in your checkout; refuses if
+you have uncommitted changes, and never merges/rebases). It can't hot-reload
+the already-running process, so it tells you plainly when to restart — press
+`q`, then relaunch `spinup`. **If the update changed dependencies, it tells you
+to run `bun install` too** before restarting.
+
+Prefer to do it by hand? `git pull` in your checkout works the same way — the
+global `spinup` symlink picks up the new code immediately. A standalone binary
+needs a fresh `bun run build:binary` either way.
 
 #### CLI subcommands
 

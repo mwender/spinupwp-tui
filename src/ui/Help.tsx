@@ -2,13 +2,13 @@
 // responsive columns so it stays short on wide terminals and stacks on narrow
 // ones. Rendered on top via zIndex. Opened/closed with `?`.
 
-import type { ReactNode } from "react"
-import { useTerminalDimensions } from "@opentui/react"
+import { useState, type ReactNode } from "react"
+import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { theme } from "../lib/theme.ts"
 import { APP_NAME, APP_VERSION, REPO_URL } from "../version.ts"
-import { Sparkle } from "./components.tsx"
+import { Sparkle, Spinner } from "./components.tsx"
 import { useStore } from "./store.tsx"
-import type { UpdateInfo } from "../lib/appUpdate.ts"
+import { runSelfUpdate, type UpdateInfo, type SelfUpdateResult } from "../lib/appUpdate.ts"
 
 type Section = { title: string; keys: [string, string][] }
 
@@ -136,7 +136,17 @@ function ShortcutColumn({ sections, width }: { sections: Section[]; width: numbe
   )
 }
 
-function AboutColumn({ width, updateInfo }: { width: number; updateInfo: UpdateInfo | null }) {
+type SelfUpdateState = "idle" | "running" | SelfUpdateResult
+
+function AboutColumn({
+  width,
+  updateInfo,
+  selfUpdate,
+}: {
+  width: number
+  updateInfo: UpdateInfo | null
+  selfUpdate: SelfUpdateState
+}) {
   const line = (content: string, fg: string = theme.textDim): ReactNode => (
     <text content={content} fg={fg} wrapMode="none" />
   )
@@ -159,9 +169,24 @@ function AboutColumn({ width, updateInfo }: { width: number; updateInfo: UpdateI
       ) : updateInfo ? (
         line("You're on the latest.", theme.textFaint)
       ) : null}
-      {line("git pull in your checkout —")}
-      {line("the global spinup command")}
-      {line("picks it up immediately.")}
+      {updateInfo?.updateAvailable && selfUpdate === "idle" ? (
+        <box style={{ flexDirection: "row" }}>
+          <text content="u " fg={theme.brand} attributes={1} />
+          <text content="update now (git pull)" fg={theme.textDim} wrapMode="none" />
+        </box>
+      ) : null}
+      {selfUpdate === "running" ? (
+        <box style={{ flexDirection: "row" }}>
+          <Spinner color={theme.brand} interval={120} />
+          <text content=" pulling…" fg={theme.textDim} wrapMode="none" />
+        </box>
+      ) : null}
+      {selfUpdate !== "idle" && selfUpdate !== "running" ? (
+        <text content={selfUpdate.message} fg={selfUpdate.ok ? theme.good : theme.bad} />
+      ) : null}
+      {line("Manual: git pull in your")}
+      {line("checkout — spinup picks it")}
+      {line("up immediately.")}
       <box style={{ height: 1 }} />
       <box style={{ flexDirection: "row" }}>
         <text content="check  " fg={theme.textFaint} />
@@ -179,6 +204,14 @@ export function HelpOverlay({ onClose: _onClose }: { onClose: () => void }) {
   const { updateInfo } = useStore()
   const aboutLeft = width >= 96
   const twoShortcutCols = width >= 118
+
+  const [selfUpdate, setSelfUpdate] = useState<SelfUpdateState>("idle")
+  useKeyboard((key) => {
+    if (key.name !== "u") return
+    if (!updateInfo?.updateAvailable || selfUpdate === "running") return
+    setSelfUpdate("running")
+    void runSelfUpdate().then(setSelfUpdate)
+  })
 
   // Fill the terminal up to a cap, then size columns to the content area (box
   // width − 2 border − 4 padding). Computing widths from the real space keeps it
@@ -224,12 +257,12 @@ export function HelpOverlay({ onClose: _onClose }: { onClose: () => void }) {
       >
         {aboutLeft ? (
           <box style={{ flexDirection: "row", alignItems: "flex-start" }}>
-            <AboutColumn width={aboutWidth} updateInfo={updateInfo} />
+            <AboutColumn width={aboutWidth} updateInfo={updateInfo} selfUpdate={selfUpdate} />
             {shortcutCols}
           </box>
         ) : (
           <box style={{ flexDirection: "column" }}>
-            <AboutColumn width={aboutWidth} updateInfo={updateInfo} />
+            <AboutColumn width={aboutWidth} updateInfo={updateInfo} selfUpdate={selfUpdate} />
             <box style={{ height: 1 }} />
             {shortcutCols}
           </box>
