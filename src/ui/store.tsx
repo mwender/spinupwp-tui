@@ -1713,19 +1713,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Resolve many domains with a bounded pool (skips fresh/in-flight unless forced).
+  // Resolve many domains with a bounded pool (skips fresh/in-flight unless
+  // forced). Returns how many were actually queued, once every worker settles —
+  // most callers fire-and-forget it, but resolveAllFleetDomains awaits it to
+  // fire a completion toast.
   const dnsLookupMany = useCallback(
-    (domains: string[], force = false) => {
+    (domains: string[], force = false): Promise<number> => {
       const cache = dnsCacheRef.current!
       const keys = Array.from(new Set(domains.map(normalizeDomain).filter(Boolean)))
       const queue = keys.filter((k) => !dnsInFlight.current.has(k) && (force || cache.isStale(k)))
-      if (queue.length === 0) return
+      if (queue.length === 0) return Promise.resolve(0)
       const CONCURRENCY = 5
       let cursor = 0
       const worker = async () => {
         while (cursor < queue.length) await dnsResolveOne(queue[cursor++], force)
       }
-      for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i++) void worker()
+      const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker())
+      return Promise.all(workers).then(() => queue.length)
     },
     [dnsResolveOne],
   )
@@ -1767,8 +1771,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Resolve every site's domain(s) fleet-wide (bounded pool, skips fresh/in-flight
   // unless forced) — fills gaps in the lazy dnsZones cache so a provider's zone
   // list (e.g. GoDaddy's Manage Access screen) can become complete on demand.
+  // Runs in the background regardless of whether the triggering overlay is still
+  // open (same as the PHP-upgrade/reboot toasts), so the completion toast is the
+  // "it's done" signal for a lookup that can span hundreds of domains.
   const resolveAllFleetDomains = useCallback(
-    (force = false) => dnsLookupMany(sites.flatMap(domainsForSite), force),
+    (force = false) => {
+      void dnsLookupMany(sites.flatMap(domainsForSite), force).then((count) => {
+        if (count > 0) toast.success(`Fleet DNS resolved — ${count} domain${count === 1 ? "" : "s"} checked`)
+      })
+    },
     [dnsLookupMany, sites],
   )
 
