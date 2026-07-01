@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-01
+
 ### Added
 - **Servers running an end-of-life Ubuntu release are flagged.** SpinupWP's own
   web app warns when a site's Ubuntu version can no longer get new PHP installs —
@@ -28,8 +30,8 @@ versions; such changes are called out here.
   delegate access to this myself" from "a third party manages this domain." The
   inventory's NOTE column now shows a global assumed default ("Delegate Access" —
   most registrars are managed the same way) or, when set, a per-zone override in
-  amber — e.g. "Email service@integracon.com" for the one client domain a
-  third-party IT vendor actually owns. Set/clear the override from `c` "Manage
+  amber — e.g. a note pointing at the third-party IT vendor for the one client
+  domain you don't manage directly. Set/clear the override from `c` "Manage
   Access" on any inventory row (widened from GoDaddy-only to any host with a web
   handoff): the previously-empty Zones pane lists every zone already known
   fleet-wide for that host (from prior DNS lookups), landing the cursor on the
@@ -471,7 +473,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/mwender/spinupwp-tui/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/mwender/spinupwp-tui/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/mwender/spinupwp-tui/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/mwender/spinupwp-tui/compare/v0.7.1...v0.8.0

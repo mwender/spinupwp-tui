@@ -30,8 +30,11 @@ Once you're in, the dashboard looks like this:
 ## Features
 
 - **Fleet dashboard** — at-a-glance health of every server: connection status,
-  disk usage bars, pending reboots/OS upgrades, WordPress update counts, and a
-  recent activity feed.
+  disk usage bars, pending reboots/SpinupWP platform upgrades, WordPress update
+  counts, and a recent activity feed. Servers running an **end-of-life Ubuntu
+  release** are flagged too — a `⚠ os` badge in the Servers list, a red "Ubuntu …
+  EOL" line in a server's detail panel, and an entry in the dashboard's "Needs
+  attention" list pointing at the clone wizard (`C`).
 - **Server & site browser** — a three-pane navigator. Pick a server, see its
   sites, drill into full details (PHP version, HTTPS, page cache, backups, Git
   deployment, WP updates, and more).
@@ -104,8 +107,8 @@ Once you're in, the dashboard looks like this:
   personal key and/or Spinup's dedicated machine key — one site or every site on the
   server. (See "Privileged writes over SSH" below.)
 - **Completion toasts** — background writes that take a while (a PHP upgrade, a
-  server reboot/restart) raise a non-focus-stealing toast when they finish, so you're
-  not left guessing after you've moved on.
+  server reboot/restart, resolving your fleet's DNS) raise a non-focus-stealing
+  toast when they finish, so you're not left guessing after you've moved on.
 
 > The tool is **read-only by default** and works great with a Read Only API
 > token. The write actions — creating a server, connecting it with a vanity site,
@@ -595,10 +598,16 @@ never shown or changed. Moving a site can't take down its email.
   masked as you type. Listing hosts needs only read access (Cloudflare `Zone:Read`);
   **editing a TTL** needs write access — Route 53 record writes, or a Cloudflare
   `Zone.DNS:Edit` token.
-- **GoDaddy fallback.** GoDaddy's API is limited to larger accounts, so a GoDaddy
-  zone shows `↗`; press `w` (in the inventory or the connect overlay) to open your
-  GoDaddy Clients hub with the domain copied to your clipboard. The flow assumes
-  you manage client domains via Delegate Access from one main account.
+- **Web-only hosts (GoDaddy, Namecheap, Network Solutions, …).** A registrar with
+  no usable API shows `↗`; press `w` (in the inventory or the connect overlay) to
+  open its web console — for GoDaddy specifically, your Clients hub, with the
+  domain copied to your clipboard so you can paste it after logging in as the
+  client. Every `↗` zone also shows an **access note** — "Delegate Access" by
+  default (the assumed-normal case for a client's registrar), or your own
+  per-zone override (e.g. an IT vendor's contact) when that default doesn't hold.
+  Press `c` on any such zone to open **Manage Access**: it lists every zone
+  already known at that host, `n` edits the selected zone's note, and `r`
+  resolves your whole fleet's DNS to fill in any zones it hasn't seen yet.
 
 Provider credentials are optional — without them you still get the full host
 inventory and TTLs, just without the editable/account columns or in-place editing.
@@ -624,6 +633,7 @@ src/
     probe.ts         Tier-2 SSH stack probe (WHMCS / Bedrock / Laravel / WP / …)
     stackCache.ts    disk-backed probe cache (hydrate on start, write-through)
     phpEol.ts        PHP EOL dates + the version set offered by the upgrade picker
+    ubuntuEol.ts     Ubuntu LTS EOL dates (same embedded+refresh pattern as phpEol.ts)
   ui/
     App.tsx          shell: splash gating, key routing, layout
     store.tsx        React-context data store
