@@ -72,6 +72,11 @@ export interface AppConfig {
   // case and is never stored here — only the exceptions (e.g. "Integracon", a
   // third-party IT contact) are, so this stays empty for the common case.
   zoneAccessNotes: Record<string, string>
+  // The last app version the user actually saw the Release Notes overlay for
+  // (or, on a fresh install / pre-this-feature upgrade, silently seeded to the
+  // running version with no notes shown — nothing meaningful to announce). A
+  // mismatch against the running version is what triggers the overlay.
+  lastSeenVersion: string | null
 }
 
 export interface ServerProviderRef {
@@ -138,6 +143,7 @@ export interface StoredConfig {
   preferredGrantKeys?: string[]
   grantedKeys?: Record<string, string[]>
   zoneAccessNotes?: Record<string, string>
+  lastSeenVersion?: string
 }
 
 export function configDir(): string {
@@ -227,6 +233,7 @@ export function loadConfig(): AppConfig {
     preferredGrantKeys: stored.preferredGrantKeys ?? [],
     grantedKeys: stored.grantedKeys ?? {},
     zoneAccessNotes: stored.zoneAccessNotes ?? {},
+    lastSeenVersion: stored.lastSeenVersion?.trim() || null,
   }
 }
 

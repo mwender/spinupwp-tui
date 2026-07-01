@@ -16,6 +16,7 @@ import { Search } from "./views/Search.tsx"
 import { Events } from "./views/Events.tsx"
 import { Health } from "./views/Health.tsx"
 import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
+import { ReleaseNotes } from "./views/ReleaseNotes.tsx"
 import { GrantKey } from "./views/GrantKey.tsx"
 import { SudoConnect } from "./views/SudoConnect.tsx"
 import { DbBackup } from "./views/DbBackup.tsx"
@@ -52,6 +53,7 @@ export function App() {
   const overlayActive =
     showHelp ||
     showExplain ||
+    store.releaseNotesInfo !== null ||
     store.healthServer !== null ||
     store.phpUpgradeSite !== null ||
     store.grantKeySite !== null ||
@@ -88,6 +90,9 @@ export function App() {
 
     // While a text field is focused, let it consume everything else.
     if (store.inputMode) return
+
+    // The release-notes overlay owns the keyboard while open (any key dismisses).
+    if (store.releaseNotesInfo) return
 
     // The health overlay owns the keyboard while open (it handles Esc/q/r/h).
     if (store.healthServer) return
@@ -205,6 +210,7 @@ export function App() {
       </box>
       {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
       {showExplain && <ExplainOverlay route={store.route} />}
+      {store.releaseNotesInfo && <ReleaseNotes />}
       {store.healthServer && <Health />}
       {store.phpUpgradeSite && <PhpUpgrade />}
       {store.grantKeySite && <GrantKey />}

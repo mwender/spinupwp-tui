@@ -11,6 +11,13 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **"What's new" release notes.** After Spinup updates to a new version, a
+  one-time overlay shows what changed — sourced straight from that version's
+  GitHub release (the same API the update-check hint already polls), so
+  there's no separate feed to maintain. Shows once per version, dismisses with
+  any key.
+
 ### Fixed
 - **Cloudflare proxied records no longer block DNS cutover.** The clone
   wizard's cutover step used to mark every Cloudflare *proxied* (orange-cloud)

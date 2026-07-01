@@ -13,6 +13,7 @@ import { loadConfig, saveConfig, type ServerProviderRef } from "../config.ts"
 import { saveJob, removeJob } from "../lib/jobs.ts"
 import { APP_VERSION } from "../version.ts"
 import { cachedUpdateInfo, refreshUpdateInfo, type UpdateInfo } from "../lib/appUpdate.ts"
+import { fetchReleaseNotes, type ReleaseNotesInfo } from "../lib/releaseNotes.ts"
 import { resolveLocalLink, expandPath, normalizeLink, type LocalLink } from "../lib/local.ts"
 import type { Stack } from "../lib/stack.ts"
 import { openTerminalAt, openUrl, openSshSession } from "../lib/open.ts"
@@ -330,6 +331,9 @@ export interface DataState {
   lastUpdated: Date | null
   // Latest released version vs. the running one (null until/unless we learn it).
   updateInfo: UpdateInfo | null
+  // "What's new" notes for the running version, shown once after an update
+  // (null once dismissed, or when there's nothing to show — see releaseNotes.ts).
+  releaseNotesInfo: ReleaseNotesInfo | null
 }
 
 interface StoreValue extends DataState {
@@ -463,6 +467,8 @@ interface StoreValue extends DataState {
   // Per-zone access-note overrides (apex → text); see setZoneAccessNote's comment.
   zoneAccessNotes: Map<string, string>
   setZoneAccessNote: (apex: string, note: string) => void
+  // Dismiss the release-notes overlay and persist the running version as seen.
+  dismissReleaseNotes: () => void
   // Per-server sudo user (persisted, username only) for privileged writes.
   sudoUserFor: (serverId: number) => string | undefined
   // Sudo "connection" on a server: validate the sudo user + password against the
@@ -707,6 +713,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void refreshUpdateInfo(APP_VERSION).then((info) => {
       if (info) setUpdateInfo(info)
     })
+  }, [])
+  // Release notes: shown once after an update, sourced from the GitHub release
+  // for the exact running version (releaseNotes.ts — reuses the same API
+  // appUpdate.ts already polls, no new infrastructure).
+  const [releaseNotesInfo, setReleaseNotesInfo] = useState<ReleaseNotesInfo | null>(null)
+  useEffect(() => {
+    const seen = cfgRef.current.lastSeenVersion
+    if (seen === APP_VERSION) return
+    if (seen === null) {
+      // Fresh install, or upgrading from a pre-this-feature version — nothing
+      // meaningful to announce. Seed silently so future bumps trigger correctly.
+      cfgRef.current.lastSeenVersion = APP_VERSION
+      void saveConfig({ lastSeenVersion: APP_VERSION })
+      return
+    }
+    void fetchReleaseNotes(APP_VERSION).then((notes) => {
+      if (notes) setReleaseNotesInfo(notes)
+    })
+  }, [])
+  // Dismissing marks the version seen — only AFTER the user actually saw it
+  // (not on fetch success), so a crash/quit before dismissal retries next launch.
+  const dismissReleaseNotes = useCallback(() => {
+    setReleaseNotesInfo(null)
+    cfgRef.current.lastSeenVersion = APP_VERSION
+    void saveConfig({ lastSeenVersion: APP_VERSION })
   }, [])
   const [route, setRoute] = useState<Route>("dashboard")
   const [inputMode, setInputMode] = useState(false)
@@ -2902,6 +2933,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     error,
     lastUpdated,
     updateInfo,
+    releaseNotesInfo,
     client,
     route,
     setRoute,
@@ -2983,6 +3015,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     forgetGrantedKeys,
     zoneAccessNotes,
     setZoneAccessNote,
+    dismissReleaseNotes,
     sudoUserFor,
     sudoConnectServer,
     setSudoConnectServer,
