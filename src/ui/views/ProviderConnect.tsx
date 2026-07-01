@@ -26,6 +26,11 @@ import { apiProviderFor, PROVIDER_REGISTRY, type Connection } from "../../lib/pr
 type Mode = "list" | "add" | "note"
 type Pane = "connections" | "zones"
 
+// Fixed width (incl. the leading "● "/"  " marker) for the delegate-zones apex
+// column, so every row's note lands at the same column — sized for the longest
+// domains actually seen (e.g. "collisionsafetyconsultantstn.com").
+const ZONE_APEX_W = 38
+
 export function ProviderConnect() {
   const store = useStore()
   const {
@@ -62,7 +67,10 @@ export function ProviderConnect() {
     note(target ? `${label} opened · ${target.apex} copied — Login as the client, then paste.` : `${label} opened.`)
   }
   const [sel, setSel] = useState(0)
-  const [pane, setPane] = useState<Pane>("connections")
+  // Delegate-access providers (GoDaddy) have no connections to select on the
+  // left — the Zones pane on the right is the whole point of this screen — so
+  // land there directly instead of hiding its `n`/`r` hints behind a → press.
+  const [pane, setPane] = useState<Pane>(() => (descriptor?.defaultAccessNote ? "zones" : "connections"))
   const [zoneIndex, setZoneIndex] = useState(0)
   const [field, setField] = useState(0) // 0 = label; 1..N = descriptor.fields
   const [label, setLabel] = useState("")
@@ -285,7 +293,18 @@ export function ProviderConnect() {
                 content={descriptor!.console ? `No API key — press a to add one, or w for the ${descriptor!.consoleLabel ?? "web console"}.` : "No connections yet — press a to add one."}
                 fg={theme.textFaint}
               />
-            ) : (
+            ) : null}
+            {isDelegateMode ? (
+              <box style={{ flexDirection: "column", marginTop: 1 }}>
+                <text
+                  content={`Every zone on the right is a domain Spinup has already seen hosted here. Each shows an access note — "${descriptor!.defaultAccessNote}" by default, or your own note (e.g. a third-party IT contact) once you set one.`}
+                  fg={theme.textFaint}
+                />
+                <box style={{ height: 1 }} />
+                <text content="n edits the selected zone's note · r resolves your whole fleet's DNS to fill in any missing zones." fg={theme.textFaint} />
+              </box>
+            ) : null}
+            {connections.length > 0 && (
               connections.map((c, i) => {
                 const v = providerZones.get(c.id)
                 const selected = i === safeSel
@@ -371,18 +390,18 @@ export function ProviderConnect() {
               const isTarget = apex === target!.apex
               const { text: noteText, isOverride } = noteFor(apex)
               const noteColor = selected ? theme.text : isOverride ? theme.warn : theme.textDim
-              // Note is a fixed-width trailing column (never clips — CLAUDE.md's
-              // flexShrink:0 rule); apex is the one growable column and absorbs
-              // whatever width is left, matching DnsInventory's NAME/HOST pattern.
+              // Fixed-width apex column (baked into the content, like DnsInventory's
+              // NAME/HOST columns) so the note column lands at the same spot on
+              // every row — a flex-grow apex doesn't reserve trailing space.
               return (
                 <box style={{ flexDirection: "row" }}>
                   <text
-                    content={(isTarget ? "● " : "  ") + apex}
+                    content={((isTarget ? "● " : "  ") + truncate(apex, ZONE_APEX_W - 4)).padEnd(ZONE_APEX_W)}
                     fg={selected ? theme.text : isTarget ? theme.brand : theme.textDim}
                     wrapMode="none"
-                    style={{ flexGrow: 1, flexShrink: 1 }}
+                    style={{ flexShrink: 0 }}
                   />
-                  <text content={"  " + truncate(noteText, 18).padStart(18)} fg={noteColor} wrapMode="none" style={{ flexShrink: 0 }} />
+                  <text content={noteText} fg={noteColor} wrapMode="none" style={{ flexShrink: 1 }} />
                 </box>
               )
             }}
