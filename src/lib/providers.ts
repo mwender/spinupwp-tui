@@ -63,6 +63,11 @@ export interface ProviderDescriptor {
   // Longer in-overlay note shown when `console` is set — explains the assumed
   // access model + the handoff flow.
   accessNote?: string
+  // The assumed-normal per-zone access note for this provider's web-only zones
+  // (e.g. "Delegate Access" for GoDaddy). Shown dim as the default for every zone;
+  // a user-entered override (a genuine exception, e.g. a third-party IT contact)
+  // shows instead, in amber, so it stands out. See store.zoneAccessNotes.
+  defaultAccessNote?: string
   verify: (creds: Record<string, string>) => Promise<VerifyResult>
 }
 
@@ -225,6 +230,7 @@ export const PROVIDER_REGISTRY: Record<ConnProvider, ProviderDescriptor> = {
     consoleLabel: "Clients hub",
     accessNote:
       "Spinup assumes you manage GoDaddy domains via Delegate Access from one main account. Press w to open your Clients hub (the domain is copied to your clipboard) → Login as the client → paste the domain → Exit access before checking the next.",
+    defaultAccessNote: "Delegate Access",
     verify: verifyGodaddy,
   },
 }

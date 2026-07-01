@@ -14,7 +14,7 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { truncate, timeAgo } from "../../lib/format.ts"
 import { normalizeDomain, candidateHostnames } from "../../lib/dns.ts"
-import { apiProviderFor, consoleForHost, type AccessState } from "../../lib/providers.ts"
+import { apiProviderFor, consoleForHost, PROVIDER_REGISTRY, type AccessState } from "../../lib/providers.ts"
 import { openUrl, copyToClipboard } from "../../lib/open.ts"
 import { List, moveSelection } from "../List.tsx"
 import { StatusBar } from "../StatusBar.tsx"
@@ -63,6 +63,7 @@ type InvRow =
       account: string
       liveNs: string[]
       note: string
+      noteColor: string
       checkedAt: number | null
       // Site grouping: the primary zone is the site's `●` line; additional-domain
       // zones nest under it as `↳` lines. `extraZones` (on the primary) drives the
@@ -123,6 +124,7 @@ export function DnsInventory() {
     hostingFor,
     isHostingResolving,
     ttlWriteForHost,
+    zoneAccessNotes,
   } = useStore()
   const allConnections = useMemo(() => Object.values(connections).flat(), [connections])
   const showAccount = connectionCount >= 2
@@ -203,7 +205,15 @@ export function DnsInventory() {
         }
         const isPrimaryZone = g.apex === primaryApex
         const redirect = g.entries.find((e) => e.redirect?.enabled)?.redirect
-        const note = !isPrimaryZone && redirect ? `→ redirects to ${redirect.destination}` : ""
+        const redirectNote = !isPrimaryZone && redirect ? `→ redirects to ${redirect.destination}` : ""
+        // Fall back to the zone's access note (a user override, e.g. "Integracon",
+        // or the provider's assumed default, e.g. GoDaddy's "Delegate Access") when
+        // there's no redirect to show — an override is amber so it stands out.
+        const accessConnProvider = hostKey ? apiProviderFor(hostKey) : null
+        const accessDescriptor = accessConnProvider ? PROVIDER_REGISTRY[accessConnProvider] : undefined
+        const accessOverride = zoneAccessNotes.get(g.apex)
+        const note = redirectNote || (accessDescriptor?.defaultAccessNote ? accessOverride || accessDescriptor.defaultAccessNote : "")
+        const noteColor = redirectNote ? theme.textDim : accessOverride ? theme.warn : theme.textDim
         const access = accessForZone(g.apex, hostKey, liveNs)
 
         // The site's hostnames in this zone (apex first).
@@ -236,6 +246,7 @@ export function DnsInventory() {
           account: accountForZone(g.apex, hostKey, liveNs),
           liveNs,
           note,
+          noteColor,
           checkedAt: cached?.checkedAt ?? null,
           isPrimary: isPrimaryZone,
           extraZones: isPrimaryZone ? additionalZones : 0,
@@ -496,7 +507,7 @@ export function DnsInventory() {
         <text content={truncate(r.value, 38)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
         {r.pointsHere ? <text content=" ◀ here" fg={selected ? theme.text : theme.good} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
         {r.wwwFollows ? <text content=" +www" fg={selected ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
-        {r.note ? <text content={"  " + r.note} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+        {r.note ? <text content={"  " + r.note} fg={selected ? theme.text : r.noteColor} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
         <box style={{ flexGrow: 1 }} />
         {hostCell(r, selected)}
         {r.isPrimary && r.extraZones > 0 ? <text content={`  (+${r.extraZones})`} fg={selected ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} /> : null}

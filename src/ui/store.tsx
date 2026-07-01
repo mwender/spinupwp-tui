@@ -460,6 +460,9 @@ interface StoreValue extends DataState {
   grantedKeys: Map<number, Set<string>>
   forgetGrantedKeys: (siteId: number, bodies: string[]) => void
   clearGrantKey: (siteId: number) => void
+  // Per-zone access-note overrides (apex → text); see setZoneAccessNote's comment.
+  zoneAccessNotes: Map<string, string>
+  setZoneAccessNote: (apex: string, note: string) => void
   // Per-server sudo user (persisted, username only) for privileged writes.
   sudoUserFor: (serverId: number) => string | undefined
   // Sudo "connection" on a server: validate the sudo user + password against the
@@ -571,6 +574,11 @@ interface StoreValue extends DataState {
   // The cached zone-host for a domain (undefined = never looked up).
   zoneForDomain: (domain: string) => CachedDns | undefined
   isDnsResolving: (domain: string) => boolean
+  // Every distinct zone apex already known (fleet-wide) to be hosted at a host
+  // (e.g. "godaddy"). Sorted.
+  zonesForHostKey: (hostKey: string) => string[]
+  // Resolve every site's domain(s) fleet-wide, filling gaps in the lazy DNS cache.
+  resolveAllFleetDomains: (force?: boolean) => void
   // Website-hosting records (apex/www/additional + TTLs), keyed by hostname.
   // Read cred-free from each zone's authoritative NS; resolved lazily once the
   // zone's NS are known. The migration-focused inventory reads these.
@@ -742,6 +750,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Keys Spinup has granted, by site id → set of key bodies. Drives the row badge.
   const [grantedKeys, setGrantedKeys] = useState<Map<number, Set<string>>>(
     () => new Map(Object.entries(cfgRef.current.grantedKeys).map(([id, bodies]) => [Number(id), new Set(bodies)])),
+  )
+  // Per-zone access-note overrides (apex → text), e.g. "Integracon" for a
+  // GoDaddy zone a third party manages. Empty for a zone means "use the
+  // provider's defaultAccessNote" (e.g. "Delegate Access") — see providers.ts.
+  const [zoneAccessNotes, setZoneAccessNotes] = useState<Map<string, string>>(
+    () => new Map(Object.entries(cfgRef.current.zoneAccessNotes)),
   )
   // The spinup-tui machine key's body (base64), resolved once — lets us classify a
   // granted key as the MACHINE key vs one of the user's PERSONAL keys.
@@ -1441,6 +1455,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [persistGrantedKeys],
   )
   const siteHasGrantedKey = useCallback((siteId: number) => (grantedKeys.get(siteId)?.size ?? 0) > 0, [grantedKeys])
+
+  // Set (or, given "", clear) a zone's access-note override. Clearing removes the
+  // key entirely so config stays empty for the common "use the default" case.
+  const setZoneAccessNote = useCallback((apex: string, note: string) => {
+    setZoneAccessNotes((prev) => {
+      const next = new Map(prev)
+      const trimmed = note.trim()
+      if (trimmed) next.set(apex, trimmed)
+      else next.delete(apex)
+      const rec = Object.fromEntries(next)
+      cfgRef.current.zoneAccessNotes = rec
+      void saveConfig({ zoneAccessNotes: rec })
+      return next
+    })
+  }, [])
   // Break a site's granted keys into "personal" (yours) vs "machine" (spinup-tui),
   // so the UI can say which is on the site instead of an ambiguous "Spinup key".
   // Before the machine-key body resolves, everything counts as personal (brief).
@@ -1722,6 +1751,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const zoneForDomain = useCallback((domain: string) => dnsZones.get(normalizeDomain(domain)), [dnsZones])
   const isDnsResolving = useCallback((domain: string) => dnsResolving.has(normalizeDomain(domain)), [dnsResolving])
+
+  // Every distinct zone apex already known (from prior lookups, fleet-wide) to be
+  // hosted at a given DNS host (e.g. "godaddy") — sorted. Used by the GoDaddy
+  // "Manage Access" screen, which has no API to list zones itself.
+  const zonesForHostKey = useCallback(
+    (hostKey: string) => {
+      const apexes = new Set<string>()
+      for (const c of dnsZones.values()) if (c.zone?.providerKey === hostKey) apexes.add(c.zone.apex)
+      return [...apexes].sort()
+    },
+    [dnsZones],
+  )
+
+  // Resolve every site's domain(s) fleet-wide (bounded pool, skips fresh/in-flight
+  // unless forced) — fills gaps in the lazy dnsZones cache so a provider's zone
+  // list (e.g. GoDaddy's Manage Access screen) can become complete on demand.
+  const resolveAllFleetDomains = useCallback(
+    (force = false) => dnsLookupMany(sites.flatMap(domainsForSite), force),
+    [dnsLookupMany, sites],
+  )
 
   // ---- Website-hosting record lookups (Phase 3 inventory) --------------------
 
@@ -2916,6 +2965,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     grantedKeyKinds,
     grantedKeys,
     forgetGrantedKeys,
+    zoneAccessNotes,
+    setZoneAccessNote,
     sudoUserFor,
     sudoConnectServer,
     setSudoConnectServer,
@@ -2982,6 +3033,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     lookupServerDns,
     zoneForDomain,
     isDnsResolving,
+    zonesForHostKey,
+    resolveAllFleetDomains,
     hostingRecords,
     resolveServerHosting,
     hostingFor,

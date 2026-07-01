@@ -67,6 +67,11 @@ export interface AppConfig {
   // "has Spinup's key" row badge and informs revoke. Optimistic (a record of what
   // Spinup wrote, not a live probe); revoke removes entries.
   grantedKeys: Record<string, string[]>
+  // Per-zone access-note OVERRIDES only, keyed by zone apex. A provider's
+  // `defaultAccessNote` (e.g. GoDaddy's "Delegate Access") is the assumed normal
+  // case and is never stored here — only the exceptions (e.g. "Integracon", a
+  // third-party IT contact) are, so this stays empty for the common case.
+  zoneAccessNotes: Record<string, string>
 }
 
 export interface ServerProviderRef {
@@ -132,6 +137,7 @@ export interface StoredConfig {
   sudoUsers?: Record<string, { user: string; keychain?: boolean }>
   preferredGrantKeys?: string[]
   grantedKeys?: Record<string, string[]>
+  zoneAccessNotes?: Record<string, string>
 }
 
 export function configDir(): string {
@@ -220,6 +226,7 @@ export function loadConfig(): AppConfig {
     sudoUsers: stored.sudoUsers ?? {},
     preferredGrantKeys: stored.preferredGrantKeys ?? [],
     grantedKeys: stored.grantedKeys ?? {},
+    zoneAccessNotes: stored.zoneAccessNotes ?? {},
   }
 }
 
