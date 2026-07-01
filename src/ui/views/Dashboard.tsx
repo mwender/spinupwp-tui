@@ -27,7 +27,7 @@ function serverDiskFraction(s: Server): number {
 }
 
 export function Dashboard({ rows }: { rows: number }) {
-  const { servers, sites, events } = useStore()
+  const { servers, sites, events, isServerOsEol } = useStore()
 
   const agg = useMemo(() => {
     const connected = servers.filter((s) => s.connection_status === "connected").length
@@ -61,9 +61,10 @@ export function Dashboard({ rows }: { rows: number }) {
     for (const s of servers) {
       if (s.reboot_required) items.push({ text: `${s.name} — reboot required`, color: theme.warn })
       if (s.upgrade_required) items.push({ text: `${s.name} — SpinupWP upgrade required`, color: theme.warn })
+      if (isServerOsEol(s)) items.push({ text: `${s.name} — Ubuntu ${s.ubuntu_version} is EOL, clone to a newer server`, color: theme.bad })
     }
     return items
-  }, [servers])
+  }, [servers, isServerOsEol])
 
   const diskPct = agg.total > 0 ? (agg.used / agg.total) * 100 : 0
   const listRows = Math.max(3, rows - 9) // minus the stat-card band (5), status bar, and panel chrome

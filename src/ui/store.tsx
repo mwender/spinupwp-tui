@@ -43,6 +43,7 @@ import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAd
 import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
+import { resolveUbuntuEolDates, refreshUbuntuEolDates, isUbuntuEol as isUbuntuEolWith, type UbuntuEolDates } from "../lib/ubuntuEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
 import { planDbSync, runDbSync, type DbSyncProgress, type SyncPlanResult } from "../lib/dbSync.ts"
 import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
@@ -627,6 +628,8 @@ interface StoreValue extends DataState {
   isPhpEol: (version: string | null | undefined) => boolean
   // PHP versions to offer in the upgrade picker (dynamic; current always included).
   offeredPhpVersions: (current?: string | null) => string[]
+  // Whether a server's Ubuntu release is past end-of-life (real dates, refreshed).
+  isServerOsEol: (server: Server) => boolean
 }
 
 // Pure: from a connId→verified-zones map, find the editable account that SERVES a
@@ -833,6 +836,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // Ubuntu EOL dates: same embedded+cached-refresh approach as phpEolDates above.
+  const [ubuntuEolDates, setUbuntuEolDates] = useState<UbuntuEolDates>(() => resolveUbuntuEolDates())
+  useEffect(() => {
+    void refreshUbuntuEolDates().then((updated) => {
+      if (updated) setUbuntuEolDates(updated)
+    })
+  }, [])
+
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -937,6 +948,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     (current?: string | null) => offeredPhpVersionsWith(phpEolDates, current),
     [phpEolDates],
   )
+  const isServerOsEol = useCallback((server: Server) => isUbuntuEolWith(server.ubuntu_version, ubuntuEolDates), [ubuntuEolDates])
 
   const setUpgrade = (siteId: number, progress: PhpUpgradeProgress) =>
     setPhpUpgrades((prev) => new Map(prev).set(siteId, progress))
@@ -2999,6 +3011,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     clearTtlWrite,
     isPhpEol,
     offeredPhpVersions,
+    isServerOsEol,
   }
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>

@@ -11,6 +11,17 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Servers running an end-of-life Ubuntu release are flagged.** SpinupWP's own
+  web app warns when a site's Ubuntu version can no longer get new PHP installs —
+  Spinup now surfaces the same signal proactively, fleet-wide. A server whose
+  Ubuntu LTS release is past Canonical's published EOL date shows ` ⚠ os` in the
+  Servers list, a red-flagged "Ubuntu … EOL, clone to newer (C)" line in its detail
+  panel, and a "Needs attention" entry on the Dashboard pointing at the clone
+  wizard (`C`). EOL dates come from the same embedded-table-plus-endoflife.date-
+  refresh approach already used for PHP EOL, so it stays current without a
+  Spinup release (`src/lib/ubuntuEol.ts`).
+
 ## [0.9.1] - 2026-06-30
 
 ### Changed

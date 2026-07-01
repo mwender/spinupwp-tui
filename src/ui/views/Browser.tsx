@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -252,6 +252,7 @@ export function Browser({ rows }: { rows: number }) {
                     s.reboot_required && <text content=" ↻ rbt" fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />
                   )}
                   {s.upgrade_required && <text content=" ⬆ upg" fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />}
+                  {isServerOsEol(s) && <text content=" ⚠ os" fg={selected ? theme.text : theme.bad} style={{ flexShrink: 0 }} />}
                   {isSudoConnected(s.id) && <text content=" ● sudo" fg={selected ? theme.text : theme.good} style={{ flexShrink: 0 }} />}
                   {/* A server with no sites is a dead end (can't connect/SSH until it
                       has a site) — flag the 0 in amber so it's easy to spot. */}

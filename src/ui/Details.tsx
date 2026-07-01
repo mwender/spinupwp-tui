@@ -13,11 +13,12 @@ import { useStore, isUpgradeInFlight, isServerOpInFlight } from "./store.tsx"
 import type { Server, Site } from "../api/types.ts"
 
 export function ServerDetail({ server, siteCount, showControl = false }: { server: Server; siteCount: number; showControl?: boolean }) {
-  const { rebootInfo, serverOps } = useStore()
+  const { rebootInfo, serverOps, isServerOsEol } = useStore()
   const ds = server.disk_space
   const pct = diskUsedPct(ds?.used, ds?.total)
   const op = serverOps.get(server.id)
   const rb = rebootInfo.get(server.id)
+  const osEol = isServerOsEol(server)
   const rebootValue =
     op && isServerOpInFlight(op)
       ? `${op.label}…`
@@ -43,7 +44,11 @@ export function ServerDetail({ server, siteCount, showControl = false }: { serve
       <Field label="Provider" value={server.provider_name ?? "—"} />
       <Field label="Region" value={server.region ?? "—"} />
       <Field label="Size" value={server.size ?? "—"} />
-      <Field label="Ubuntu" value={server.ubuntu_version ?? "—"} />
+      <Field
+        label="Ubuntu"
+        value={osEol ? `${server.ubuntu_version} — EOL, clone to newer (C)` : (server.ubuntu_version ?? "—")}
+        valueColor={osEol ? theme.bad : undefined}
+      />
       <Field label="SSH" value={`${server.ip_address ?? "—"}:${server.ssh_port ?? 22}`} />
       <Field label="Database" value={server.database?.server ?? "—"} />
       <Field label="Sites" value={String(siteCount)} valueColor={theme.accent} />
