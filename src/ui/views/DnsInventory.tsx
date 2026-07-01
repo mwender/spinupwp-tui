@@ -14,7 +14,7 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { truncate, timeAgo } from "../../lib/format.ts"
 import { normalizeDomain, candidateHostnames } from "../../lib/dns.ts"
-import { apiProviderFor, consoleForHost, PROVIDER_REGISTRY, type AccessState } from "../../lib/providers.ts"
+import { apiProviderFor, consoleForHost, DEFAULT_WEB_ACCESS_NOTE, type AccessState } from "../../lib/providers.ts"
 import { openUrl, copyToClipboard } from "../../lib/open.ts"
 import { List, moveSelection } from "../List.tsx"
 import { StatusBar } from "../StatusBar.tsx"
@@ -206,15 +206,13 @@ export function DnsInventory() {
         const isPrimaryZone = g.apex === primaryApex
         const redirect = g.entries.find((e) => e.redirect?.enabled)?.redirect
         const redirectNote = !isPrimaryZone && redirect ? `→ redirects to ${redirect.destination}` : ""
-        // Fall back to the zone's access note (a user override, e.g. "Integracon",
-        // or the provider's assumed default, e.g. GoDaddy's "Delegate Access") when
-        // there's no redirect to show — an override is amber so it stands out.
-        const accessConnProvider = hostKey ? apiProviderFor(hostKey) : null
-        const accessDescriptor = accessConnProvider ? PROVIDER_REGISTRY[accessConnProvider] : undefined
-        const accessOverride = zoneAccessNotes.get(g.apex)
-        const note = redirectNote || (accessDescriptor?.defaultAccessNote ? accessOverride || accessDescriptor.defaultAccessNote : "")
-        const noteColor = redirectNote ? theme.textDim : accessOverride ? theme.warn : theme.textDim
         const access = accessForZone(g.apex, hostKey, liveNs)
+        // Fall back to the zone's access note (a user override, e.g. "Integracon",
+        // or the assumed default for any web-only host, "Delegate Access") when
+        // there's no redirect to show — an override is amber so it stands out.
+        const accessOverride = zoneAccessNotes.get(g.apex)
+        const note = redirectNote || (access === "web" ? accessOverride || DEFAULT_WEB_ACCESS_NOTE : "")
+        const noteColor = redirectNote ? theme.textDim : accessOverride ? theme.warn : theme.textDim
 
         // The site's hostnames in this zone (apex first).
         const hosts = candidateHostnames(g.entries.map((e) => e.domain)).sort((a, b) =>
@@ -364,7 +362,10 @@ export function DnsInventory() {
         return
       case "c":
         if (!r) return
-        if (apiProviderFor(r.hostKey)) setConnectZoneTarget({ apex: r.apex, hostKey: r.hostKey })
+        // Manage access/notes for any host with real API creds OR just a web
+        // handoff (GoDaddy, Namecheap, Network Solutions, ...); a host with
+        // neither (access "unknown") falls back to the plain web-open.
+        if (apiProviderFor(r.hostKey) || r.access === "web") setConnectZoneTarget({ apex: r.apex, hostKey: r.hostKey })
         else openWeb(r)
         return
       case "w":

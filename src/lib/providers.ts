@@ -63,11 +63,6 @@ export interface ProviderDescriptor {
   // Longer in-overlay note shown when `console` is set — explains the assumed
   // access model + the handoff flow.
   accessNote?: string
-  // The assumed-normal per-zone access note for this provider's web-only zones
-  // (e.g. "Delegate Access" for GoDaddy). Shown dim as the default for every zone;
-  // a user-entered override (a genuine exception, e.g. a third-party IT contact)
-  // shows instead, in amber, so it stands out. See store.zoneAccessNotes.
-  defaultAccessNote?: string
   verify: (creds: Record<string, string>) => Promise<VerifyResult>
 }
 
@@ -230,7 +225,6 @@ export const PROVIDER_REGISTRY: Record<ConnProvider, ProviderDescriptor> = {
     consoleLabel: "Clients hub",
     accessNote:
       "Spinup assumes you manage GoDaddy domains via Delegate Access from one main account. Press w to open your Clients hub (the domain is copied to your clipboard) → Login as the client → paste the domain → Exit access before checking the next.",
-    defaultAccessNote: "Delegate Access",
     verify: verifyGodaddy,
   },
 }
@@ -276,6 +270,15 @@ export function consoleForHost(hostKey: string): { url: string; label: string } 
 }
 
 export type AccessState = "editable" | "needs-key" | "web" | "unknown"
+
+// The assumed-normal access note for ANY `web`-state zone (GoDaddy, Namecheap,
+// Network Solutions, any host with a console fallback and no API connection) —
+// most registrars are managed the same way (delegate/reseller access from one
+// main account), so this is a single global default rather than a per-provider
+// one. A user-entered per-zone override (store.zoneAccessNotes) — a genuine
+// exception, e.g. one client's domain a third party actually manages — shows
+// instead, in amber, so it stands out.
+export const DEFAULT_WEB_ACCESS_NOTE = "Delegate Access"
 
 // NOTE: the access decision is computed in the store (accessForZone) — it has the
 // connection data — and is PROVIDER-SCOPED + NS-aware. See store.tsx.

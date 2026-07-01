@@ -21,7 +21,8 @@ import { List, moveSelection } from "../List.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
 import { openUrl, copyToClipboard } from "../../lib/open.ts"
-import { apiProviderFor, PROVIDER_REGISTRY, type Connection } from "../../lib/providers.ts"
+import { apiProviderFor, consoleForHost, DEFAULT_WEB_ACCESS_NOTE, PROVIDER_REGISTRY, type Connection } from "../../lib/providers.ts"
+import { normalizeDomain } from "../../lib/dns.ts"
 
 type Mode = "list" | "add" | "note"
 type Pane = "connections" | "zones"
@@ -47,6 +48,7 @@ export function ProviderConnect() {
     setZoneAccessNote,
     resolveAllFleetDomains,
     dnsResolving,
+    dnsZones,
   } = store
 
   const target = connectZoneTarget
@@ -54,23 +56,32 @@ export function ProviderConnect() {
   const descriptor = provider ? PROVIDER_REGISTRY[provider] : null
   const fields = descriptor?.fields ?? []
   const connections: Connection[] = provider ? connectionsFor(provider) : []
+  // The web handoff for this host — an API provider's console (GoDaddy's Clients
+  // hub) OR a pure web-only host with no API at all (Namecheap, Network
+  // Solutions, ...). Its presence is what makes this a "delegate access" host.
+  const consoleInfo = target ? consoleForHost(target.hostKey) : null
+  const isDelegateMode = !!consoleInfo
+  // Display name: the ConnProvider's proper name when there is one, else the
+  // human label already resolved for this zone (e.g. "Namecheap"), else the
+  // raw host key as a last resort.
+  const providerName =
+    descriptor?.name ?? (target ? dnsZones.get(normalizeDomain(target.apex))?.zone?.providerLabel : undefined) ?? target?.hostKey ?? ""
 
   // Jump straight to the add form when there are no connections — unless the
-  // provider has a console fallback (GoDaddy), where the list's `a`/`w` choice
-  // (add a key vs open the web console) should be visible first.
-  const [mode, setMode] = useState<Mode>(connections.length === 0 && !descriptor?.console ? "add" : "list")
+  // host has a web handoff (GoDaddy, or any pure web-only host), where the
+  // list's `a`/`w` choice (add a key vs open the web console) should be visible first.
+  const [mode, setMode] = useState<Mode>(connections.length === 0 && !isDelegateMode ? "add" : "list")
   const openConsole = () => {
-    if (!descriptor?.console) return
+    if (!consoleInfo) return
     if (target) copyToClipboard(target.apex)
-    openUrl(descriptor.console)
-    const label = descriptor.consoleLabel ?? "web console"
-    note(target ? `${label} opened · ${target.apex} copied — Login as the client, then paste.` : `${label} opened.`)
+    openUrl(consoleInfo.url)
+    note(target ? `${consoleInfo.label} opened · ${target.apex} copied — Login as the client, then paste.` : `${consoleInfo.label} opened.`)
   }
   const [sel, setSel] = useState(0)
-  // Delegate-access providers (GoDaddy) have no connections to select on the
-  // left — the Zones pane on the right is the whole point of this screen — so
-  // land there directly instead of hiding its `n`/`r` hints behind a → press.
-  const [pane, setPane] = useState<Pane>(() => (descriptor?.defaultAccessNote ? "zones" : "connections"))
+  // Delegate-access hosts have no connections to select on the left — the Zones
+  // pane on the right is the whole point of this screen — so land there
+  // directly instead of hiding its `n`/`r` hints behind a → press.
+  const [pane, setPane] = useState<Pane>(() => (isDelegateMode ? "zones" : "connections"))
   const [zoneIndex, setZoneIndex] = useState(0)
   const [field, setField] = useState(0) // 0 = label; 1..N = descriptor.fields
   const [label, setLabel] = useState("")
@@ -92,20 +103,19 @@ export function ProviderConnect() {
     [selectedVerified],
   )
 
-  // For a "Delegate Access"-style provider (no API, GoDaddy today), the API-verified
-  // zones list above is always empty. Instead, list every zone already known
-  // (fleet-wide, from prior DNS lookups) to be hosted here — this pane doubles as
-  // the edit surface for each zone's access note.
+  // Delegate-access hosts (no API, or API we're not connected to) have no
+  // API-verified zones list. Instead, list every zone already known (fleet-wide,
+  // from prior DNS lookups) to be hosted here — this pane doubles as the edit
+  // surface for each zone's access note.
   const delegateZones = useMemo(
-    () => (descriptor?.defaultAccessNote && target ? zonesForHostKey(target.hostKey) : []),
-    [descriptor, target, zonesForHostKey],
+    () => (isDelegateMode && target ? zonesForHostKey(target.hostKey) : []),
+    [isDelegateMode, target, zonesForHostKey],
   )
-  const isDelegateMode = !!descriptor?.defaultAccessNote
   // Apex-only view of whichever zone list is active, for navigation/selection.
   const zoneRows = isDelegateMode ? delegateZones : zones.map((z) => z.apex)
   const noteFor = (apex: string): { text: string; isOverride: boolean } => {
     const override = zoneAccessNotes.get(apex)
-    return override ? { text: override, isOverride: true } : { text: descriptor?.defaultAccessNote ?? "", isOverride: false }
+    return override ? { text: override, isOverride: true } : { text: DEFAULT_WEB_ACCESS_NOTE, isOverride: false }
   }
 
   // Stop the "resolving…" indicator once nothing's in flight anymore.
@@ -123,6 +133,16 @@ export function ProviderConnect() {
   useEffect(() => {
     setZoneIndex(0)
   }, [safeSel])
+
+  // Land the zones-pane cursor on the zone this screen was opened FROM (marked
+  // ●) rather than always the top of a list that can run 40+ deep — otherwise
+  // `n` right after opening silently edits the wrong (alphabetically-first) zone.
+  useEffect(() => {
+    if (!target) return
+    const idx = zoneRows.indexOf(target.apex)
+    if (idx >= 0) setZoneIndex(idx)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.apex])
 
   const close = () => {
     setInputMode(false)
@@ -155,7 +175,7 @@ export function ProviderConnect() {
       setMode("list")
     } else {
       const base = res.error || "Verification failed."
-      setError(descriptor?.console ? `${base} — Esc, then w for the ${descriptor.consoleLabel ?? "console"}.` : base)
+      setError(consoleInfo ? `${base} — Esc, then w for the ${consoleInfo.label}.` : base)
     }
   }
 
@@ -173,7 +193,7 @@ export function ProviderConnect() {
     if (busy) return // ignore input while verifying
 
     if (mode === "add") {
-      if (raw === "escape") return connections.length > 0 || descriptor?.console ? (resetForm(), setMode("list")) : close()
+      if (raw === "escape") return connections.length > 0 || isDelegateMode ? (resetForm(), setMode("list")) : close()
       if (raw === "up") return setField((f) => (f - 1 + fieldCount) % fieldCount)
       if (raw === "down") return setField((f) => (f + 1) % fieldCount)
       return
@@ -211,7 +231,8 @@ export function ProviderConnect() {
       case "left":
         return pane === "zones" ? setPane("connections") : undefined
       case "a":
-        if (pane !== "connections") return
+        // Adding a credential only makes sense for a real API provider.
+        if (pane !== "connections" || !provider) return
         resetForm()
         return setMode("add")
       case "n":
@@ -227,8 +248,9 @@ export function ProviderConnect() {
         note("Resolving fleet DNS…")
         return
       case "w":
-        // Web-console fallback (e.g. GoDaddy without API access).
-        if (descriptor?.console) openConsole()
+        // Web-console handoff (e.g. GoDaddy without API access, or any pure
+        // web-only host like Namecheap/Network Solutions).
+        if (consoleInfo) openConsole()
         return
       case "v": {
         if (pane !== "connections") return
@@ -253,13 +275,14 @@ export function ProviderConnect() {
     }
   })
 
-  if (!target || !provider || !descriptor) return null
-  const providerName = descriptor.name
+  // Render as long as there's something to manage: a real API provider, or at
+  // least a web handoff (any recognized delegate-access-style host).
+  if (!target || (!provider && !isDelegateMode)) return null
 
   return (
     <box style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.bg, zIndex: 230 }}>
       <box style={{ flexDirection: "row", height: 1, backgroundColor: theme.bgAlt, paddingLeft: 1, paddingRight: 1, alignItems: "center" }}>
-        <text content={`🔑 Connect ${providerName}  `} fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content={`${provider ? "🔑 Connect" : "📝"} ${providerName}  `} fg={theme.brand} wrapMode="none" style={{ flexShrink: 0 }} />
         <text content={`for ${truncate(target.apex, 40)}`} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
       </box>
 
@@ -280,24 +303,25 @@ export function ProviderConnect() {
     return (
       <box style={{ flexGrow: 1, flexDirection: "row", gap: 1 }}>
         {/* Left: the provider's connections (accounts) */}
-        <Panel title={` ${providerName} connections `} active={pane === "connections"} width={48}>
+        <Panel title={provider ? ` ${providerName} connections ` : ` ${providerName} `} active={pane === "connections"} width={48}>
           <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-            {descriptor!.accessNote ? (
+            {descriptor?.accessNote ? (
               <box style={{ flexDirection: "column", marginBottom: 1 }}>
-                <text content={descriptor!.accessNote} fg={theme.textDim} />
+                <text content={descriptor.accessNote} fg={theme.textDim} />
                 <box style={{ height: 1 }} />
               </box>
             ) : null}
-            {connections.length === 0 ? (
+            {provider && connections.length === 0 ? (
               <text
-                content={descriptor!.console ? `No API key — press a to add one, or w for the ${descriptor!.consoleLabel ?? "web console"}.` : "No connections yet — press a to add one."}
+                content={consoleInfo ? `No API key — press a to add one, or w for the ${consoleInfo.label}.` : "No connections yet — press a to add one."}
                 fg={theme.textFaint}
               />
             ) : null}
+            {!provider ? <text content={`No API access for ${providerName}.`} fg={theme.textFaint} /> : null}
             {isDelegateMode ? (
               <box style={{ flexDirection: "column", marginTop: 1 }}>
                 <text
-                  content={`Every zone on the right is a domain Spinup has already seen hosted here. Each shows an access note — "${descriptor!.defaultAccessNote}" by default, or your own note (e.g. a third-party IT contact) once you set one.`}
+                  content={`Every zone on the right is a domain Spinup has already seen hosted here. Each shows an access note — "${DEFAULT_WEB_ACCESS_NOTE}" by default, or your own note (e.g. a third-party IT contact) once you set one.`}
                   fg={theme.textFaint}
                 />
                 <box style={{ height: 1 }} />
@@ -325,7 +349,11 @@ export function ProviderConnect() {
               })
             )}
             <box style={{ flexGrow: 1 }} />
-            <text content={`a add · v re-verify · x remove · → zones${descriptor!.console ? ` · w ${descriptor!.consoleLabel ?? "console"}` : ""}`} fg={theme.textFaint} wrapMode="none" />
+            <text
+              content={`${provider ? "a add · v re-verify · x remove · " : ""}→ zones${consoleInfo ? ` · w ${consoleInfo.label}` : ""}`}
+              fg={theme.textFaint}
+              wrapMode="none"
+            />
           </box>
         </Panel>
 
@@ -418,11 +446,11 @@ export function ProviderConnect() {
         <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
           <text content={truncate(selectedZoneApex ?? "", 60)} fg={theme.text} wrapMode="none" />
           <box style={{ height: 1 }} />
-          <text content={`Who has access, if not the default (${descriptor?.defaultAccessNote})`} fg={theme.textDim} wrapMode="none" />
+          <text content={`Who has access, if not the default (${DEFAULT_WEB_ACCESS_NOTE})`} fg={theme.textDim} wrapMode="none" />
           <input
             focused
             value={noteDraft}
-            placeholder={descriptor?.defaultAccessNote}
+            placeholder={DEFAULT_WEB_ACCESS_NOTE}
             onInput={setNoteDraft}
             onSubmit={saveNote}
             style={inputStyle}
@@ -489,11 +517,10 @@ export function ProviderConnect() {
     return [
       { key: "↑↓", label: "account" },
       { key: "→", label: "its zones" },
-      { key: "a", label: "add" },
-      ...(descriptor?.console ? [{ key: "w", label: descriptor.consoleLabel ?? "console" }] : []),
+      ...(provider ? [{ key: "a", label: "add" }] : []),
+      ...(consoleInfo ? [{ key: "w", label: consoleInfo.label }] : []),
       ...(isDelegateMode ? [{ key: "r", label: "resolve all" }] : []),
-      { key: "v", label: "re-verify" },
-      { key: "x", label: "remove" },
+      ...(provider ? [{ key: "v", label: "re-verify" }, { key: "x", label: "remove" }] : []),
       { key: "esc", label: "close" },
     ]
   }

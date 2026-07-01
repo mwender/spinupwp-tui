@@ -21,16 +21,19 @@ versions; such changes are called out here.
   wizard (`C`). EOL dates come from the same embedded-table-plus-endoflife.date-
   refresh approach already used for PHP EOL, so it stays current without a
   Spinup release (`src/lib/ubuntuEol.ts`).
-- **Access notes for zones you can't reach via API — GoDaddy "Delegate Access" today.**
-  DNS providers with no API (GoDaddy's is gated to large/reseller accounts) used to
-  show as an undifferentiated `↗ web` in the DNS inventory, with no way to tell
-  "I have delegate access to this myself" from "a third party manages this domain."
-  The inventory's NOTE column now shows the provider's assumed default (dim
-  "Delegate Access" for GoDaddy) or, when set, a per-zone override in amber — e.g.
-  "Integracon" for a client whose IT vendor owns the DNS. Set/clear the override
-  from GoDaddy's "Manage Access" screen (`c` from an inventory row): the previously-
-  empty Zones pane now lists every GoDaddy zone already known fleet-wide (from
-  prior DNS lookups), press `n` on one to edit its note, or `r` to resolve every
+- **Access notes for zones you can't reach via API — any `↗ web`-only host, not
+  just GoDaddy.** DNS providers with no API (GoDaddy's is gated to large/reseller
+  accounts; Namecheap, Network Solutions, and others never had one) used to show
+  as an undifferentiated `↗ web` in the DNS inventory, with no way to tell "I have
+  delegate access to this myself" from "a third party manages this domain." The
+  inventory's NOTE column now shows a global assumed default ("Delegate Access" —
+  most registrars are managed the same way) or, when set, a per-zone override in
+  amber — e.g. "Email service@integracon.com" for the one client domain a
+  third-party IT vendor actually owns. Set/clear the override from `c` "Manage
+  Access" on any inventory row (widened from GoDaddy-only to any host with a web
+  handoff): the previously-empty Zones pane lists every zone already known
+  fleet-wide for that host (from prior DNS lookups), landing the cursor on the
+  zone you opened it from; press `n` to edit its note, or `r` to resolve every
   fleet domain and fill in any gaps. Only exceptions are ever stored — the common
   case costs zero config.
 
