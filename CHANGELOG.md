@@ -11,6 +11,16 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Cloudflare proxied records no longer block DNS cutover.** The clone
+  wizard's cutover step used to mark every Cloudflare *proxied* (orange-cloud)
+  record as "manual" — but a proxied record's TTL is what's actually
+  uneditable (forced to automatic); its origin IP was always safely PATCHable
+  through the same partial write already used for cutover. Proxied records now
+  flow through the automatic batch flip like any other editable record; the
+  TTL editor is unaffected and still correctly refuses to touch a proxied
+  record's TTL.
+
 ## [0.10.0] - 2026-07-01
 
 ### Added

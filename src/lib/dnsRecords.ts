@@ -10,10 +10,12 @@
 // holds host-agnostically: Route 53 scopes via StartRecordName/Type, Cloudflare via
 // the `?name=&type=` filter.
 //
-// We only ever touch the TTL (target/IP repointing is the next write), so a record
-// is "editable" only when changing its TTL is well-defined: not a Route 53 alias (no
-// TTL), not a routing-policy set (TTL edit would need the whole policy echoed back),
-// and not a Cloudflare proxied record (its TTL is forced to automatic). A
+// Two distinct writes, two distinct editability questions: `editable` gates the
+// TTL editor (well-defined only when the record HAS a real TTL — not a Route 53
+// alias, not a routing-policy set, not a Cloudflare proxied record, whose TTL is
+// forced to automatic); `valueEditable` gates the DNS-cutover origin-IP repoint
+// (defaults to `editable` when unset — Cloudflare sets it explicitly, since a
+// proxied record's VALUE stays freely PATCHable even though its TTL doesn't). A
 // non-editable record surfaces with a short reason.
 //
 // Two providers are wired: AWS Route 53 (hand-rolled SigV4; the write is an async
@@ -31,6 +33,10 @@ export interface DnsRecord {
   ttl: number | null // current TTL in seconds; null when the record carries no TTL
   values: string[] // record value(s) — shown, and echoed back on a Route 53 upsert
   editable: boolean // can we change THIS record's TTL?
+  // Can we repoint THIS record's value (the DNS-cutover write)? Defaults to
+  // `editable` when unset (see module comment) — only set explicitly when it
+  // differs, e.g. Cloudflare's proxied records.
+  valueEditable?: boolean
   reason?: string // when not editable, the short why (alias / proxied / policy)
 }
 
@@ -347,6 +353,10 @@ const cloudflare: RecordProvider = {
       ttl: r.ttl === 1 ? null : r.ttl, // 1 = Cloudflare "automatic"
       values: [r.content],
       editable: !proxied,
+      // The origin-IP PATCH (setValue) only ever touches `content`, leaving
+      // `proxied` untouched — so it works identically whether proxied or not,
+      // even though the TTL editor above stays blocked for a proxied record.
+      valueEditable: true,
       reason: proxied ? "proxied" : undefined,
     }
     // apexNs omitted — Cloudflare access is already NS-matched at connect time.

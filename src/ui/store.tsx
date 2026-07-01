@@ -2772,8 +2772,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }
             const cur = res.record.values[0] ?? ""
             const base = { name, currentValue: cur, targetValue: targetIp }
+            // Cutover repoints the VALUE, not the TTL — a Cloudflare proxied
+            // record can't have its TTL edited but its origin IS still
+            // PATCHable, so this checks valueEditable (falls back to editable
+            // for providers that don't set it explicitly), not editable alone.
+            const canRepoint = res.record.valueEditable ?? res.record.editable
             if (cur === targetIp) records.push({ ...base, status: "done" })
-            else if (!res.record.editable) records.push({ ...base, status: "manual", reason: res.record.reason ?? "not editable" })
+            else if (!canRepoint) records.push({ ...base, status: "manual", reason: res.record.reason ?? "not editable" })
             else records.push({ ...base, status: "ready" })
           } catch (err) {
             records.push({ name, status: "error", targetValue: targetIp, error: (err as Error).message })
