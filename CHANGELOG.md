@@ -16,7 +16,7 @@ versions; such changes are called out here.
   one-time overlay shows what changed — sourced straight from that version's
   GitHub release (the same API the update-check hint already polls), so
   there's no separate feed to maintain. Shows once per version, dismisses with
-  any key.
+  any key. Press `n` in `?` Help any time to replay the current version's notes.
 - **Update in place with `u`.** When the gold `✦ vX.Y.Z` hint shows a newer
   release, open `?` Help and press `u` to `git pull --ff-only` right there —
   no more leaving the app to update manually. Refuses on a dirty checkout

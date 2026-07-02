@@ -114,6 +114,10 @@ Once you're in, the dashboard looks like this:
 - **Completion toasts** — background writes that take a while (a PHP upgrade, a
   server reboot/restart, resolving your fleet's DNS) raise a non-focus-stealing
   toast when they finish, so you're not left guessing after you've moved on.
+- **Release notes** — after Spinup updates to a new version, a one-time overlay
+  shows what changed (sourced straight from that version's GitHub release —
+  no separate feed to maintain). Press `n` in `?` Help to see the current
+  version's notes again any time.
 
 > The tool is **read-only by default** and works great with a Read Only API
 > token. The write actions — creating a server, connecting it with a vanity site,

@@ -493,6 +493,9 @@ interface StoreValue extends DataState {
   setZoneAccessNote: (apex: string, note: string) => void
   // Dismiss the release-notes overlay and persist the running version as seen.
   dismissReleaseNotes: () => void
+  // Show the running version's release notes on demand (Help's `n`), regardless
+  // of whether they've already been seen/dismissed.
+  showReleaseNotes: () => void
   // Per-server sudo user (persisted, username only) for privileged writes.
   sudoUserFor: (serverId: number) => string | undefined
   // Sudo "connection" on a server: validate the sudo user + password against the
@@ -762,6 +765,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setReleaseNotesInfo(null)
     cfgRef.current.lastSeenVersion = APP_VERSION
     void saveConfig({ lastSeenVersion: APP_VERSION })
+  }, [])
+  // On-demand replay (Help overlay's `n`) — bypasses the "seen" gate entirely,
+  // since viewing the current version's notes again is always valid regardless
+  // of whether they've already been dismissed. Silently no-ops on failure (no
+  // release published for this tag yet, offline) — same best-effort philosophy
+  // as the rest of appUpdate.ts/releaseNotes.ts.
+  const showReleaseNotes = useCallback(() => {
+    void fetchReleaseNotes(APP_VERSION).then((notes) => {
+      if (notes) setReleaseNotesInfo(notes)
+    })
   }, [])
   const [route, setRoute] = useState<Route>("dashboard")
   const [inputMode, setInputMode] = useState(false)
@@ -3142,6 +3155,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     zoneAccessNotes,
     setZoneAccessNote,
     dismissReleaseNotes,
+    showReleaseNotes,
     sudoUserFor,
     sudoConnectServer,
     setSudoConnectServer,

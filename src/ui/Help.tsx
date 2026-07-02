@@ -157,6 +157,10 @@ function AboutColumn({
         <text content={`◆ ${APP_NAME}`} fg={theme.brand} attributes={1} />
         <text content={`  v${APP_VERSION}`} fg={theme.text} />
       </box>
+      <box style={{ flexDirection: "row" }}>
+        <text content="n " fg={theme.brand} />
+        <text content={`what's new in v${APP_VERSION}`} fg={theme.textFaint} wrapMode="none" />
+      </box>
       <box style={{ height: 1 }} />
       {line("A terminal control center for")}
       {line("your SpinupWP account.")}
@@ -200,14 +204,21 @@ function AboutColumn({
   )
 }
 
-export function HelpOverlay({ onClose: _onClose }: { onClose: () => void }) {
+export function HelpOverlay({ onClose }: { onClose: () => void }) {
   const { width } = useTerminalDimensions()
-  const { updateInfo } = useStore()
+  const { updateInfo, showReleaseNotes } = useStore()
   const aboutLeft = width >= 96
   const twoShortcutCols = width >= 118
 
   const [selfUpdate, setSelfUpdate] = useState<SelfUpdateState>("idle")
   useKeyboard((key) => {
+    if (key.name === "n") {
+      // Close Help first — ReleaseNotes owns its own keyboard once open, and
+      // leaving Help mounted underneath would double-handle every keypress.
+      onClose()
+      showReleaseNotes()
+      return
+    }
     if (key.name !== "u") return
     if (!updateInfo?.updateAvailable || selfUpdate === "running") return
     setSelfUpdate("running")
