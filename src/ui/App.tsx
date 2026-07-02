@@ -17,6 +17,7 @@ import { Events } from "./views/Events.tsx"
 import { Health } from "./views/Health.tsx"
 import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
 import { HttpsToggle } from "./views/HttpsToggle.tsx"
+import { PurgeCache } from "./views/PurgeCache.tsx"
 import { ReleaseNotes } from "./views/ReleaseNotes.tsx"
 import { GrantKey } from "./views/GrantKey.tsx"
 import { SudoConnect } from "./views/SudoConnect.tsx"
@@ -58,6 +59,7 @@ export function App() {
     store.healthServer !== null ||
     store.phpUpgradeSite !== null ||
     store.httpsToggleSite !== null ||
+    store.purgeCacheSite !== null ||
     store.grantKeySite !== null ||
     store.sudoConnectServer !== null ||
     store.dbBackupSite !== null ||
@@ -104,6 +106,9 @@ export function App() {
 
     // The HTTPS-toggle overlay owns the keyboard while open.
     if (store.httpsToggleSite) return
+
+    // The purge-cache overlay owns the keyboard while open.
+    if (store.purgeCacheSite) return
 
     // The grant-SSH-key overlay owns the keyboard while open.
     if (store.grantKeySite) return
@@ -219,6 +224,7 @@ export function App() {
       {store.healthServer && <Health />}
       {store.phpUpgradeSite && <PhpUpgrade />}
       {store.httpsToggleSite && <HttpsToggle />}
+      {store.purgeCacheSite && <PurgeCache />}
       {store.grantKeySite && <GrantKey />}
       {store.sudoConnectServer && <SudoConnect />}
       {store.dbBackupSite && <DbBackup />}

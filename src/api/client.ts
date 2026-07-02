@@ -220,6 +220,17 @@ export class SpinupWPClient {
     return this.mutate<{ event_id: number } | undefined>(`/sites/${siteId}/https`, "DELETE")
   }
 
+  // Purge a site's page cache / WordPress object cache. There's no enable/disable
+  // for either on an existing site (only at site-creation time) — purge is the
+  // only available write. Async → returns an event_id to poll. Needs a Read/Write
+  // token.
+  purgePageCache(siteId: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/page-cache/purge`, "POST")
+  }
+  purgeObjectCache(siteId: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/object-cache/purge`, "POST")
+  }
+
   // ---- Events -----------------------------------------------------------
 
   // Events can be numerous; cap to the most recent few pages for the feed.

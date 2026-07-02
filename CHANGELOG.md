@@ -28,6 +28,11 @@ versions; such changes are called out here.
   from the site's current state — press `H`, confirm, and it's done, tracked
   in the background the same way a PHP upgrade is. Disabling explicitly warns
   that https:// visitors will see errors until it's re-enabled.
+- **Purge page + object cache (`P`).** SpinupWP has no enable/disable for
+  either cache on an existing site (only at creation time) — purge is the one
+  available write, so `P` fires both together under a single confirm and
+  tracks them to completion. Low-risk and fully reversible by nature (both
+  caches just rebuild on the next page load).
 
 ### Fixed
 - **Cloudflare proxied records no longer block DNS cutover.** The clone
@@ -38,6 +43,10 @@ versions; such changes are called out here.
   flow through the automatic batch flip like any other editable record; the
   TTL editor is unaffected and still correctly refuses to touch a proxied
   record's TTL.
+- **Release notes overlay: text no longer overlaps on wrapped bullets.** The
+  box's height was computed from logical line count, undercounting bullets
+  that word-wrap into several visual rows — the box now sizes to whatever
+  content actually renders instead.
 
 ## [0.10.0] - 2026-07-01
 

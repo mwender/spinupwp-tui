@@ -9,7 +9,7 @@ import { probeKindColor } from "../lib/probe.ts"
 import { resolveLocalLink } from "../lib/local.ts"
 import { normalizeDomain } from "../lib/dns.ts"
 import type { Drift } from "../lib/gitStatus.ts"
-import { useStore, isUpgradeInFlight, isServerOpInFlight, isHttpsToggleInFlight } from "./store.tsx"
+import { useStore, isUpgradeInFlight, isServerOpInFlight, isHttpsToggleInFlight, isPurgeCacheInFlight, purgeCacheFailed } from "./store.tsx"
 import type { Server, Site } from "../api/types.ts"
 
 export function ServerDetail({ server, siteCount, showControl = false }: { server: Server; siteCount: number; showControl?: boolean }) {
@@ -103,8 +103,9 @@ export const SERVER_CONTROL: ActionGroup[] = [
 ]
 
 export function SiteDetail({ site, serverName }: { site: Site; serverName: string }) {
-  const { probes, probingIds, isProbeStale, phpUpgrades, httpsToggles, localLinks, grantedKeyKinds } = useStore()
+  const { probes, probingIds, isProbeStale, phpUpgrades, httpsToggles, purgeCacheProgress, localLinks, grantedKeyKinds } = useStore()
   const httpsProgress = httpsToggles.get(site.id)
+  const purgeProgress = purgeCacheProgress.get(site.id)
   const updates = (site.wp_plugin_updates || 0) + (site.wp_theme_updates || 0) + (site.wp_core_update ? 1 : 0)
   const stack = classifyStack(site)
   const probe = probes.get(site.id)
@@ -182,8 +183,22 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       />
       <Field
         label="Page cache"
-        value={site.page_cache?.enabled ? "enabled" : "disabled"}
-        valueColor={site.page_cache?.enabled ? theme.good : theme.textDim}
+        value={
+          purgeProgress && isPurgeCacheInFlight(purgeProgress)
+            ? "purging…"
+            : purgeProgress && purgeCacheFailed(purgeProgress)
+              ? `${site.page_cache?.enabled ? "enabled" : "disabled"} (purge failed)`
+              : `${site.page_cache?.enabled ? "enabled" : "disabled"} · P purge`
+        }
+        valueColor={
+          purgeProgress && isPurgeCacheInFlight(purgeProgress)
+            ? theme.warn
+            : purgeProgress && purgeCacheFailed(purgeProgress)
+              ? theme.bad
+              : site.page_cache?.enabled
+                ? theme.good
+                : theme.textDim
+        }
       />
       <box style={{ height: 1 }} />
 

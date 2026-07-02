@@ -82,6 +82,29 @@ export function isHttpsToggleInFlight(p: HttpsToggleProgress | undefined): boole
   return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
 }
 
+// Progress of a cache purge — two independent sub-purges (page cache + WordPress
+// object cache) fired together under one confirm, since there's no way to
+// enable/disable either on an existing site, only purge. Both must settle (and
+// neither fail) before the whole action reads as "done".
+interface PurgeSub {
+  status: string
+  error?: string
+}
+export interface PurgeCacheProgress {
+  page: PurgeSub
+  object: PurgeSub
+}
+
+function purgeSubSettled(s: PurgeSub): boolean {
+  return s.status === UPGRADE_DONE || s.status === UPGRADE_FAIL
+}
+export function isPurgeCacheInFlight(p: PurgeCacheProgress | undefined): boolean {
+  return p != null && !(purgeSubSettled(p.page) && purgeSubSettled(p.object))
+}
+export function purgeCacheFailed(p: PurgeCacheProgress | undefined): boolean {
+  return !!p && (p.page.status === UPGRADE_FAIL || p.object.status === UPGRADE_FAIL)
+}
+
 // A server-level operation (reboot or a service restart), tracked in the store
 // so progress survives closing the Server-actions overlay (same model as
 // PhpUpgradeProgress, keyed by server id). `label` is a short display verb.
@@ -385,6 +408,15 @@ interface StoreValue extends DataState {
   // poll it to completion in the background.
   startHttpsToggle: (site: Site) => void
   clearHttpsToggle: (siteId: number) => void
+  // The site whose purge-cache overlay is open, or null.
+  purgeCacheSite: Site | null
+  setPurgeCacheSite: (s: Site | null) => void
+  // In-flight (and just-settled) cache purges, keyed by site id.
+  purgeCacheProgress: Map<number, PurgeCacheProgress>
+  // Fire both purge-page-cache and purge-object-cache and poll each to
+  // completion in the background.
+  startPurgeCache: (site: Site) => void
+  clearPurgeCache: (siteId: number) => void
   // The server whose actions overlay (reboot / service restart) is open, or null.
   serverActionsServer: Server | null
   setServerActionsServer: (s: Server | null) => void
@@ -784,6 +816,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [phpUpgrades, setPhpUpgrades] = useState<Map<number, PhpUpgradeProgress>>(new Map())
   const [httpsToggleSite, setHttpsToggleSite] = useState<Site | null>(null)
   const [httpsToggles, setHttpsToggles] = useState<Map<number, HttpsToggleProgress>>(new Map())
+  const [purgeCacheSite, setPurgeCacheSite] = useState<Site | null>(null)
+  const [purgeCacheProgress, setPurgeCacheProgress] = useState<Map<number, PurgeCacheProgress>>(new Map())
   const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
   const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
   const [newServerOpen, setNewServerOpen] = useState(false)
@@ -1195,6 +1229,89 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void run()
     },
     [client, trackHttpsToggleEvent, httpsToggles, refresh, clearHttpsToggle],
+  )
+
+  // ---- Purge cache (page + object) ---------------------------------------
+
+  // Merge one sub-purge's status into the site's combined progress, returning
+  // the merged result synchronously so callers (trackPurgeEvent) can check
+  // whether BOTH sub-purges have now settled without a second render round-trip.
+  const setPurgeSub = useCallback((siteId: number, kind: "page" | "object", sub: PurgeSub): PurgeCacheProgress => {
+    let result!: PurgeCacheProgress
+    setPurgeCacheProgress((prev) => {
+      const next = new Map(prev)
+      const cur = next.get(siteId) ?? { page: { status: "queued" }, object: { status: "queued" } }
+      const merged = { ...cur, [kind]: sub }
+      next.set(siteId, merged)
+      result = merged
+      return next
+    })
+    return result
+  }, [])
+
+  const clearPurgeCache = useCallback((siteId: number) => {
+    setPurgeCacheProgress((prev) => {
+      if (!prev.has(siteId)) return prev
+      const next = new Map(prev)
+      next.delete(siteId)
+      return next
+    })
+  }, [])
+
+  // Poll one sub-purge's event to completion. Fires the completion toast only
+  // once BOTH sub-purges have settled successfully — one summary, not two.
+  const trackPurgeEvent = useCallback(
+    (siteId: number, kind: "page" | "object", eventId: number, domain: string) => {
+      const poll = async () => {
+        try {
+          const ev = await client.getEvent(eventId)
+          if (ev.status === UPGRADE_DONE) {
+            const merged = setPurgeSub(siteId, kind, { status: UPGRADE_DONE })
+            if (!isPurgeCacheInFlight(merged) && !purgeCacheFailed(merged)) {
+              toast.success(`Cache purged for ${domain}`)
+            }
+          } else if (ev.status === UPGRADE_FAIL) {
+            setPurgeSub(siteId, kind, { status: UPGRADE_FAIL, error: ev.output?.trim() || "The event failed on SpinupWP." })
+          } else {
+            setPurgeSub(siteId, kind, { status: ev.status })
+            setTimeout(() => void poll(), UPGRADE_POLL_MS)
+          }
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setPurgeSub(siteId, kind, { status: UPGRADE_FAIL, error: msg })
+        }
+      }
+      setTimeout(() => void poll(), UPGRADE_POLL_MS)
+    },
+    [client, setPurgeSub],
+  )
+
+  // Fires both page-cache and object-cache purges independently under one
+  // confirm — no job-persistence (unlike PHP upgrade/HTTPS toggle): a purge
+  // settles in seconds and is trivially safe to just re-fire if interrupted.
+  const startPurgeCache = useCallback(
+    (site: Site) => {
+      const existing = purgeCacheProgress.get(site.id)
+      if (existing && isPurgeCacheInFlight(existing)) return
+
+      const runOne = async (kind: "page" | "object") => {
+        setPurgeSub(site.id, kind, { status: "queued" })
+        let eventId: number
+        try {
+          const res = kind === "page" ? await client.purgePageCache(site.id) : await client.purgeObjectCache(site.id)
+          eventId = res.event_id
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setPurgeSub(site.id, kind, { status: UPGRADE_FAIL, error: msg })
+          return
+        }
+        setPurgeSub(site.id, kind, { status: "running" })
+        trackPurgeEvent(site.id, kind, eventId, site.domain)
+      }
+      void runOne("page")
+      void runOne("object")
+    },
+    [client, trackPurgeEvent, purgeCacheProgress, setPurgeSub],
   )
 
   // ---- Server operations (reboot / service restart) ---------------------
@@ -3088,6 +3205,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     httpsToggles,
     startHttpsToggle,
     clearHttpsToggle,
+    purgeCacheSite,
+    setPurgeCacheSite,
+    purgeCacheProgress,
+    startPurgeCache,
+    clearPurgeCache,
     serverActionsServer,
     setServerActionsServer,
     serverOps,

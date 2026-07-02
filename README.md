@@ -87,6 +87,10 @@ Once you're in, the dashboard looks like this:
   the server); disabling removes it — the confirm screen warns plainly that
   https:// visitors will see errors until it's re-enabled. Same background
   event-tracking as the PHP upgrade.
+- **Purge cache** — press `P` on a site to clear its page cache and WordPress
+  object cache together (SpinupWP has no enable/disable for either on an
+  existing site, only purge). Low-risk and fully reversible — both rebuild on
+  the next page load.
 - **Server actions** — press `a` on a server to reboot it or restart a service
   (Nginx / PHP-FPM / MySQL / Redis). Servers needing a reboot show a `↻rbt`
   badge, and the overlay reads the box over SSH to show *why* (the pending
@@ -257,6 +261,7 @@ These can be set in `config.json` or via an environment variable:
 | `f` | Report sites with no usable local copy (Stacks tab) |
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `H` | Enable / disable HTTPS on a site (Servers / Stacks / Search; needs a Read/Write token) |
+| `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
 | `V` | Connect a 0-site server with a vanity site — DNS + site + HTTPS + SSH-key handoff (Servers tab; needs a Read/Write token) |

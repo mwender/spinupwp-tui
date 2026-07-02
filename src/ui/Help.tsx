@@ -42,6 +42,7 @@ const NAV: Section = {
     ["S", "Connect sudo on the server"],
     ["u", "Change PHP version"],
     ["H", "Enable/disable HTTPS"],
+    ["P", "Purge page + object cache"],
     ["K", "Grant Spinup's SSH key (sudo)"],
     ["d", "Identify a site's app (SSH)"],
   ],
