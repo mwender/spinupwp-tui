@@ -34,9 +34,32 @@ export interface ClientOptions {
   baseUrl: string
 }
 
+// The public surface the store (and Onboarding) actually calls. Extracted so a fake
+// implementation (see src/dev/mockClient.ts, used by SPINUP_DEV_MODE) can stand in for
+// SpinupWPClient wherever it's consumed, without either side depending on the other.
+export interface SpinupWPClientLike {
+  validateToken(): Promise<{ ok: true } | { ok: false; reason: string }>
+  listServers(): Promise<Server[]>
+  getServer(id: number): Promise<Server>
+  providerMetadata(provider: string): Promise<ProviderMetadata>
+  createServer(payload: CreateServerPayload): Promise<{ event_id: number }>
+  listSites(serverId?: number): Promise<Site[]>
+  getSite(id: number): Promise<Site>
+  createSite(payload: CreateSitePayload): Promise<{ event_id: number }>
+  enableHttps(siteId: number): Promise<{ event_id: number }>
+  disableHttps(siteId: number): Promise<{ event_id: number } | undefined>
+  purgePageCache(siteId: number): Promise<{ event_id: number }>
+  purgeObjectCache(siteId: number): Promise<{ event_id: number }>
+  listEvents(maxPages?: number): Promise<Event[]>
+  getEvent(id: number): Promise<Event>
+  upgradeSitePhp(siteId: number, phpVersion: string): Promise<{ event_id: number }>
+  rebootServer(serverId: number): Promise<{ event_id: number }>
+  restartService(serverId: number, service: ServerService): Promise<{ event_id: number }>
+}
+
 const MAX_PAGES = 100 // hard safety cap when auto-paginating
 
-export class SpinupWPClient {
+export class SpinupWPClient implements SpinupWPClientLike {
   private token: string
   private baseUrl: string
 

@@ -644,6 +644,25 @@ bun run dev          # run from source
 bun run typecheck    # tsc --noEmit
 ```
 
+### Dev Mode (demos with fake data)
+
+```sh
+SPINUP_DEV_MODE=1 bun run dev
+```
+
+Boots straight into the dashboard against a small in-memory example fleet
+(`web1.example.com` … `web9.example.org`, a mix of Standard WP, Bedrock, and
+non-WP sites) — no API token, no network calls, nothing that can touch a real
+account. A purple **`DEV MODE`** badge in the header makes it unmistakable. Every
+write action (PHP upgrade, HTTPS toggle, purge cache, reboot, create a server/site)
+works against the fake data and shows the same in-progress/toast behavior as the
+real thing, so it's useful for screenshots, walkthroughs, and UI work without a
+live account on hand. The clone wizard's SSH-based file/DB pull is out of scope —
+it always talks to real servers over SSH, independent of the API client.
+
+The fixture fleet lives in `src/dev/fixtures.ts`; the fake client it's served
+through is `src/dev/mockClient.ts`.
+
 ### Project layout
 
 ```
@@ -653,6 +672,7 @@ src/
   api/
     client.ts        typed fetch client (reads + writes, errors, validation)
     types.ts         Server / Site / Event types
+  dev/               Dev Mode: fake fleet + client (SPINUP_DEV_MODE, see above)
   lib/               formatting, theme, open-in-browser, SSH helpers
     stack.ts         Tier-1 stack classification + effective (probe-aware) bucket
     probe.ts         Tier-2 SSH stack probe (WHMCS / Bedrock / Laravel / WP / …)

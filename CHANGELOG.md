@@ -11,6 +11,15 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Dev Mode (`SPINUP_DEV_MODE=1`).** Boots straight into the dashboard against
+  a small in-memory example fleet — no API token, no network calls, nothing
+  that can touch a real account. Every write action (PHP upgrade, HTTPS
+  toggle, purge cache, reboot, create a server/site) behaves the same way it
+  would against a real account — spinners, toasts, in-progress states — so
+  it's useful for demos, screenshots, and UI work without a live account on
+  hand. A purple `DEV MODE` badge in the header makes it unmistakable.
+
 ## [0.11.0] - 2026-07-01
 
 ### Added

@@ -11,6 +11,7 @@ import { hasToken, configPath, loadConfig } from "./config.ts"
 import { StoreProvider } from "./ui/store.tsx"
 import { App } from "./ui/App.tsx"
 import { Onboarding } from "./ui/Onboarding.tsx"
+import { isDevMode } from "./dev/devMode.ts"
 
 const args = process.argv.slice(2)
 const command = args.find((a) => !a.startsWith("-"))
@@ -51,7 +52,7 @@ if (command === "where") {
 const forceLogin = command === "login"
 
 function Root() {
-  const [configured, setConfigured] = useState(forceLogin ? false : hasToken())
+  const [configured, setConfigured] = useState(isDevMode() ? true : forceLogin ? false : hasToken())
   if (!configured) {
     return <Onboarding onComplete={() => setConfigured(true)} />
   }
