@@ -11,6 +11,36 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **The clone wizard now detects each site's real webroot instead of assuming
+  it.** The first clone of a long-lived production server failed every site:
+  they all used a `/public/` public folder while the pull chain hardcoded
+  `files/` as the webroot. And the `public_folder` *setting* alone can't be
+  trusted either — SpinupWP never moves files when you configure one (its UI
+  tells you to move them yourself). The Standard-WP pull now finds where
+  WordPress actually lives on the source, and when a site is mid-move (core
+  still at the files root, setting pointing deeper) the clone completes the
+  move on the destination — placing `wp-config.php` one directory **above**
+  the webroot, the long-standing config-outside-the-docroot hardening Spinup
+  is deliberately opinionated about. Root-webroot sites keep the stock layout
+  untouched; subdirectory installs clone as-is; anything unrecognizable
+  refuses with a clear message instead of a mystery failure.
+- **Sites SpinupWP marks as not-WordPress (redirect shells, static
+  placeholders) are excluded from the clone plan up front** — tagged "not WP"
+  instead of failing mid-pull with a cryptic error.
+- **Cloned databases keep the source's table prefix** — the destination DB
+  was previously always created with `wp_`, breaking sites with custom
+  prefixes.
+
+### Added
+- **Every clone job now writes a full log** to `~/.config/spinupwp-tui/logs/`
+  (one JSONL file per job: every remote script, exit code, and complete
+  output, with passwords redacted). Previously errors were truncated to the
+  roster's width and lost when the app closed.
+- **Press `⏎` on a failed site in the clone roster** to see the full
+  untruncated error, the failing step, and the log path — and `r` there
+  retries just that site.
+
 ## [0.11.0] - 2026-07-01
 
 ### Added
