@@ -25,9 +25,13 @@ versions; such changes are called out here.
   is deliberately opinionated about. Root-webroot sites keep the stock layout
   untouched; subdirectory installs clone as-is; anything unrecognizable
   refuses with a clear message instead of a mystery failure.
-- **Sites SpinupWP marks as not-WordPress (redirect shells, static
-  placeholders) are excluded from the clone plan up front** — tagged "not WP"
-  instead of failing mid-pull with a cryptic error.
+- **Sites SpinupWP marks as not-WordPress (redirect shells, static/PHP
+  sites) now clone as "files only"** — opt-in in the Plan step (tagged, default
+  off). The destination is created with no database, the whole files tree
+  transfers verbatim over the same hardened transport (with byte progress),
+  and verification compares file count, total size, and HTTP response instead
+  of WordPress facts. Previously these sites failed mid-pull with a cryptic
+  error; an interim fix merely excluded them.
 - **Cloned databases keep the source's table prefix** — the destination DB
   was previously always created with `wp_`, breaking sites with custom
   prefixes.

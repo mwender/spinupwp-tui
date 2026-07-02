@@ -88,9 +88,15 @@ proven (HTTP 200, clean source-key revoke); `blank`+`database` create; Plan sizi
   `/public/` site — `pub.spinuptui.com` on web1 was created for exactly this (WP at
   files root + `/public/` setting = the mid-SOP state; a correct clone comes out
   *healed* and serving).
-- **`is_wordpress: false` non-git sites can't be cloned** (redirect shells, static
-  placeholders — no wp-config, often no DB). Plan now excludes them up front
-  (`cloneSiteSupported`); the toggle refuses to select them.
+- **`is_wordpress: false` non-git sites clone as FILES-ONLY** (stack `"files"`:
+  redirect shells, static/PHP sites — no DB, no wp-cli). Opt-in in Plan (default
+  deselected, tagged "files only"); dest is created blank with NO database block;
+  `runFilesOnlyPull` reuses the hardened tar transport (per-site key, tolerant
+  tar, 60-min budget, byte meter) minus all WP stages; `verifyFilesClone` compares
+  file count + total bytes (1% tolerance) + HTTP. Validated live web1→web2 with
+  `static.spinuptui.com` (fixture left in place; PHP executes on the clone).
+  Additional-domain carry-over applies as usual — that's the main event for
+  redirect shells.
 - **Dest DB `table_prefix` must match the source** (production uses `wzl_`, `s81_`,
   etc.) — the create payload now copies `database.table_prefix`.
 - **Additional domains must be re-created on the dest** — a fresh site's nginx

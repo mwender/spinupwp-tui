@@ -567,6 +567,112 @@ export async function runBedrockPull(
   }
 }
 
+// ---- Files-only pull chain (non-WP sites: redirect shells, static/PHP sites) --
+//
+// The same hardened transport as the Standard-WP files stage (per-site key,
+// tolerant tar, 60-min budget, sidecar byte meter) with everything WordPress
+// removed: no detect, no wp-config re-stamp, no database. The dest site is
+// created blank with NO database block (the caller's job). Verification is
+// file-count/size + HTTP, not wp-cli — see verifyFilesClone.
+
+export interface FilesOnlyPullSpec {
+  domain: string
+  sourceSiteUser: string
+  destSiteUser: string
+  approxFilesBytes?: number // Plan's uncompressed size — soft ceiling for the meter
+}
+
+export async function runFilesOnlyPull(
+  source: SudoCtx,
+  dest: SudoCtx,
+  spec: FilesOnlyPullSpec,
+  onProgress: CloneProgress = () => {},
+  onExec?: CloneExecLog,
+  onTransfer?: CloneTransfer,
+): Promise<{ ok: boolean; error?: string }> {
+  const srcIp = source.server.ip_address ?? ""
+  const root = `/sites/${spec.domain}/files`
+  const home = `/sites/${spec.domain}`
+  const su = spec.sourceSiteUser
+  const du = spec.destSiteUser
+  const KEY = cloneKeyFor(spec.domain)
+  const MARKER = keyMarkerFor(spec.domain)
+  const sshk = `ssh -i ${KEY} -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10`
+  const fail = (stage: CloneStage, msg: string) => {
+    onProgress(stage, "fail", msg)
+    return { ok: false as const, error: `${stage}: ${msg}` }
+  }
+  const run = async (stage: CloneStage, ctx: SudoCtx, script: string, timeoutMs?: number) => {
+    const t0 = Date.now()
+    const r = await exec(ctx, script, timeoutMs)
+    onExec?.({ domain: spec.domain, stage, host: ctx.server.name, ok: r.ok, code: r.code, ms: Date.now() - t0, script, stdout: r.stdout, stderr: r.stderr })
+    return r
+  }
+
+  try {
+    // 1. auth — ephemeral per-site key on dest, granted onto the source site user.
+    onProgress("auth", "start")
+    const gen = await run("auth", dest, `rm -f ${KEY} ${KEY}.pub; ssh-keygen -t ed25519 -f ${KEY} -N "" -C ${MARKER} >/dev/null 2>&1 && cat ${KEY}.pub`, 30_000)
+    const pub = gen.stdout.trim()
+    if (!gen.ok || !pub.startsWith("ssh-")) return fail("auth", gen.stderr.trim() || "couldn't generate pull key")
+    const grant = await run(
+      "auth",
+      source,
+      `set -e; SSHDIR=${shq(home)}/.ssh; AK=$SSHDIR/authorized_keys; install -d -m 700 -o ${shq(su)} -g ${shq(su)} "$SSHDIR"; touch "$AK"; chown ${shq(su)}:${shq(su)} "$AK"; chmod 600 "$AK"; grep -qxF ${shq(pub)} "$AK" || echo ${shq(pub)} >> "$AK"`,
+      30_000,
+    )
+    if (!grant.ok) return fail("auth", grant.stderr.trim() || "couldn't grant pull key on source")
+    onProgress("auth", "ok")
+
+    // 2. files — the whole files/ tree, verbatim (whatever layout the site uses).
+    onProgress("files", "start")
+    const stopPoll = pollTransferSize(dest, `/tmp/clone_${spec.domain}.tgz`, (b) => onTransfer?.("files", b, spec.approxFilesBytes, false))
+    const files = await run(
+      "files",
+      dest,
+      `set -e; rc=0; timeout -k 5 3600 ${sshk} ${shq(su)}@${srcIp} "tar -C ${shq(root)} -czf - ." </dev/null > /tmp/clone_${spec.domain}.tgz || rc=$?; [ "$rc" -ne 124 ] || { echo "file transfer timed out after 60 minutes" >&2; exit 124; }; [ "$rc" -le 1 ] || { echo "tar-over-ssh failed with exit $rc" >&2; exit "$rc"; }; tar -C ${shq(root)} -xzf /tmp/clone_${spec.domain}.tgz; rm -f /tmp/clone_${spec.domain}.tgz; chown -R ${shq(du)}:${shq(du)} ${shq(root)}; [ -n "$(ls -A ${shq(root)} 2>/dev/null)" ] || { echo "files/ is empty after pull" >&2; exit 65; }`,
+      3_660_000, // outer must exceed the in-script `timeout 3600`
+    )
+    stopPoll()
+    if (!files.ok) return fail("files", files.stderr.trim() || "file pull failed")
+    onProgress("files", "ok")
+
+    return { ok: true }
+  } finally {
+    onProgress("revoke", "start")
+    await run("revoke", source, `AK=${shq(home)}/.ssh/authorized_keys; [ -f "$AK" ] && sed -i ${shq(`/${MARKER}/d`)} "$AK" && chown ${shq(su)}:${shq(su)} "$AK"`, 30_000).catch(() => {})
+    await run("revoke", dest, `rm -f ${KEY} ${KEY}.pub /tmp/clone_${spec.domain}.tgz`, 30_000).catch(() => {})
+    onProgress("revoke", "ok")
+  }
+}
+
+// Verify a files-only clone: file count + total bytes on each side, plus the HTTP
+// check via the dest IP. Counts must match exactly; bytes get a small tolerance
+// (a growing log on the live source shouldn't flunk the clone).
+export async function verifyFilesClone(source: SudoCtx, dest: SudoCtx, spec: { domain: string; destIp: string }): Promise<VerifyResult> {
+  const root = `/sites/${spec.domain}/files`
+  const script = `echo "files=$(find ${shq(root)} -type f 2>/dev/null | wc -l)"; echo "bytes=$(du -sb ${shq(root)} 2>/dev/null | cut -f1)"`
+  const parse = (out: string): Record<string, string> => {
+    const o: Record<string, string> = {}
+    for (const line of out.split("\n")) {
+      const m = line.match(/^(\w+)=(.*)$/)
+      if (m) o[m[1]!] = (m[2] ?? "").trim()
+    }
+    return o
+  }
+  const [sr, dr, http] = await Promise.all([exec(source, script, 60_000), exec(dest, script, 60_000), curlStatus(spec.domain, spec.destIp)])
+  const sf = parse(sr.stdout)
+  const cf = parse(dr.stdout)
+  const checks: VerifyCheck[] = []
+  checks.push({ key: "http", label: "Clone serves (HTTP)", source: "—", clone: http, ok: /^[23]\d\d$/.test(http) })
+  checks.push({ key: "files", label: "Files", source: sf.files ?? "—", clone: cf.files ?? "—", ok: !!sf.files && sf.files === cf.files })
+  const sb = Number(sf.bytes)
+  const cb = Number(cf.bytes)
+  const bytesOk = Number.isFinite(sb) && Number.isFinite(cb) && sb > 0 && Math.abs(sb - cb) <= Math.max(4096, sb * 0.01)
+  checks.push({ key: "bytes", label: "Total size", source: sf.bytes ?? "—", clone: cf.bytes ?? "—", ok: bytesOk })
+  return { ok: checks.every((c) => c.ok), checks }
+}
+
 // ---- Verify a cloned site (slice 5) ---------------------------------------
 //
 // Read-only confirmation that the clone matches the source: compare a handful of

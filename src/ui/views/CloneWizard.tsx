@@ -17,7 +17,7 @@ import { StatusBar } from "../StatusBar.tsx"
 import { openUrl, copyToClipboard } from "../../lib/open.ts"
 import { consoleForHost } from "../../lib/providers.ts"
 import { serverWebUrl } from "../../lib/spinupweb.ts"
-import { useStore, cloneNeedsGitAccess, cloneSiteSupported, type CloneStep, type CloneSiteStep, type RepoKeyState } from "../store.tsx"
+import { useStore, cloneNeedsGitAccess, type CloneStep, type CloneSiteStep, type RepoKeyState } from "../store.tsx"
 import type { VerifyCheck } from "../../lib/serverClone.ts"
 
 // Choosing an existing server as the dest is a first-class feature now (the `d` picker
@@ -598,9 +598,8 @@ export function CloneWizard() {
             const mark = s.selected ? "◉" : "◯"
             const markColor = s.selected ? theme.good : theme.textFaint
             const size = s.sizeBytes != null ? formatBytes(s.sizeBytes) : "—"
-            const supported = cloneSiteSupported(s)
-            const tag = s.stack === "bedrock" ? "bedrock" : !supported ? "not WP" : ""
-            const note = !supported ? " (nothing to clone)" : !s.selected ? " (skipped)" : s.excludeUploads ? " (no uploads)" : ""
+            const tag = s.stack === "bedrock" ? "bedrock" : s.stack === "files" ? "files only" : ""
+            const note = !s.selected ? " (skipped)" : s.excludeUploads ? " (no uploads)" : ""
             return (
               <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1, backgroundColor: sel ? theme.bgAlt : undefined }}>
                 <text content={` ${mark} `} fg={markColor} style={{ flexShrink: 0 }} />
