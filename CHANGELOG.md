@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-01
+
 ### Added
 - **"What's new" release notes.** After Spinup updates to a new version, a
   one-time overlay shows what changed — sourced straight from that version's
@@ -510,7 +512,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/mwender/spinupwp-tui/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/mwender/spinupwp-tui/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/mwender/spinupwp-tui/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/mwender/spinupwp-tui/compare/v0.8.0...v0.9.0
