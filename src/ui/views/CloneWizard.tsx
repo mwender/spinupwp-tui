@@ -16,7 +16,7 @@ import { Panel, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl } from "../../lib/spinupweb.ts"
-import { useStore, cloneNeedsGitAccess, type CloneStep, type CloneSiteStep, type RepoKeyState } from "../store.tsx"
+import { useStore, cloneNeedsGitAccess, cloneSiteSupported, type CloneStep, type CloneSiteStep, type RepoKeyState } from "../store.tsx"
 import type { VerifyCheck } from "../../lib/serverClone.ts"
 
 // Choosing an existing server as the dest is a first-class feature now (the `d` picker
@@ -258,9 +258,15 @@ export function CloneWizard() {
 
     if (job.step === "clone" || job.step === "done") {
       const sel = job.sites.filter((s) => s.selected)
-      // While drilled into a verify view, only re-run (v) and ←/Esc(handled above) apply.
+      // While drilled into a verify/failure view: v re-runs verify (done sites),
+      // r retries the drilled FAILED site, ←/Esc(handled above) goes back.
       if (verifyOpen != null) {
-        if (name === "v") return verifyCloneSite(verifyOpen)
+        const drilled = job.sites.find((s) => s.sourceSiteId === verifyOpen)
+        if (name === "r" && drilled?.step === "error") {
+          setVerifyOpen(null)
+          return cloneRetrySite(verifyOpen)
+        }
+        if (name === "v" && drilled?.step === "done") return verifyCloneSite(verifyOpen)
         if (name === "left" || name === "h") return setVerifyOpen(null)
         return
       }
@@ -272,6 +278,11 @@ export function CloneWizard() {
       if ((name === "v" || name === "return") && cur && cur.step === "done") {
         setVerifyOpen(cur.sourceSiteId)
         verifyCloneSite(cur.sourceSiteId)
+        return
+      }
+      // Enter on a FAILED site — drill into the full (untruncated) error.
+      if (name === "return" && cur && cur.step === "error") {
+        setVerifyOpen(cur.sourceSiteId)
         return
       }
       // r — retry every failed site.
@@ -352,7 +363,10 @@ export function CloneWizard() {
     if (job!.step === "server") return serverPane()
     if (job!.step === "trust") return trustPane()
     if (job!.step === "gitaccess") return gitAccessPane()
-    if ((job!.step === "clone" || job!.step === "done") && verifyOpen != null) return verifyPane(verifyOpen)
+    if ((job!.step === "clone" || job!.step === "done") && verifyOpen != null) {
+      const drilled = job!.sites.find((s) => s.sourceSiteId === verifyOpen)
+      return drilled?.step === "error" ? failurePane(verifyOpen) : verifyPane(verifyOpen)
+    }
     if (job!.step === "clone" || job!.step === "done") return clonePane()
     if (job!.step === "cutover") return cutoverPane()
     // error — scaffolding for now.
@@ -543,8 +557,9 @@ export function CloneWizard() {
             const mark = s.selected ? "◉" : "◯"
             const markColor = s.selected ? theme.good : theme.textFaint
             const size = s.sizeBytes != null ? formatBytes(s.sizeBytes) : "—"
-            const tag = s.stack === "bedrock" ? "bedrock" : ""
-            const note = !s.selected ? " (skipped)" : s.excludeUploads ? " (no uploads)" : ""
+            const supported = cloneSiteSupported(s)
+            const tag = s.stack === "bedrock" ? "bedrock" : !supported ? "not WP" : ""
+            const note = !supported ? " (nothing to clone)" : !s.selected ? " (skipped)" : s.excludeUploads ? " (no uploads)" : ""
             return (
               <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1, backgroundColor: sel ? theme.bgAlt : undefined }}>
                 <text content={` ${mark} `} fg={markColor} style={{ flexShrink: 0 }} />
@@ -657,6 +672,7 @@ export function CloneWizard() {
           <box style={{ flexGrow: 1 }} />
           <text content={`✓ ${done} done · ⠹ ${running} running · ${queued} queued${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
           {done > 0 ? <text content="↑↓ select · v verify a done site" fg={theme.textFaint} wrapMode="none" /> : null}
+          {errored > 0 ? <text content={`⏎ on a failed site — full error${job!.logPath ? ` · log: ${job!.logPath}` : ""}`} fg={theme.textFaint} wrapMode="none" /> : null}
           {job!.step === "clone" ? (
             <text content={errored > 0 ? "r retry failed · esc — clone keeps running in the background" : "esc — clone keeps running in the background (reopen with C)"} fg={theme.textFaint} wrapMode="none" />
           ) : (
@@ -713,6 +729,28 @@ export function CloneWizard() {
     )
   }
 
+  // Failure drill-down — the FULL error for one failed site (the roster truncates it),
+  // plus where the complete stage-by-stage log lives on disk.
+  function failurePane(siteId: number) {
+    const site = job!.sites.find((s) => s.sourceSiteId === siteId)
+    if (!site) return null
+    return (
+      <Panel title={` Failed · ${site.domain} `} active>
+        <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
+          <box style={{ flexDirection: "row", height: 1 }}>
+            <text content="✕ failed at: " fg={theme.bad} style={{ flexShrink: 0 }} />
+            <text content={site.failedStep ?? "?"} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+          </box>
+          <box style={{ height: 1 }} />
+          <text content={site.error ?? "no error captured"} fg={theme.text} />
+          <box style={{ flexGrow: 1 }} />
+          {job!.logPath ? <text content={`Full stage-by-stage output: ${job!.logPath}`} fg={theme.textFaint} /> : null}
+          <text content="r retry this site · ← back to roster" fg={theme.textFaint} wrapMode="none" />
+        </box>
+      </Panel>
+    )
+  }
+
   function hints() {
     if (job!.step === "plan") {
       return [
@@ -740,7 +778,11 @@ export function CloneWizard() {
       ]
     }
     if (job!.step === "clone" || job!.step === "done") {
-      if (verifyOpen != null) return [{ key: "v", label: "re-run" }, { key: "←", label: "back" }, { key: "esc", label: "close" }]
+      if (verifyOpen != null) {
+        const drilled = job!.sites.find((s) => s.sourceSiteId === verifyOpen)
+        if (drilled?.step === "error") return [{ key: "r", label: "retry site" }, { key: "←", label: "back" }, { key: "esc", label: "close" }]
+        return [{ key: "v", label: "re-run" }, { key: "←", label: "back" }, { key: "esc", label: "close" }]
+      }
       const done = selected.filter((s) => s.step === "done").length
       const errored = selected.filter((s) => s.step === "error").length
       return [

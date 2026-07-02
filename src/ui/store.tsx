@@ -39,7 +39,8 @@ import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dns
 import { deriveSiteUser, seedVanityIndex, aRecordResolves } from "../lib/vanitySite.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
-import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, verifyClone, type SudoCtx, type CloneStage, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
+import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, verifyClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
+import { CloneLogger } from "../lib/cloneLog.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, type RepoHost } from "../lib/gitDeployKey.ts"
 import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
@@ -196,6 +197,7 @@ export interface CloneSiteState {
   domain: string
   siteUser: string // source site_user — reused on the dest + for the source-side pull
   selected: boolean // unchecked in Plan → skipped entirely
+  isWordPress: boolean // API is_wordpress — false (non-git) = redirect/static site the WP chain can't clone
   sizeBytes?: number // webroot + DB estimate (sizing + progress); undefined until sized
   stack: "wp" | "bedrock" // from source git.repo → drives blank-vs-git create
   gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
@@ -203,7 +205,10 @@ export interface CloneSiteState {
   additionalDomains?: string[] // extra domains served by the site → extra cutover records
   excludeUploads: boolean // per-site opt-out (default false = sync uploads/)
   phpVersion?: string // matched from source for the dest create
-  publicFolder?: string // matched from source for the dest create
+  publicFolder?: string // matched from source for the dest create + where WP lives under files/
+  tablePrefix?: string // source DB table_prefix — the dest DB is created to match
+  sourceWebrootRel?: string // DETECTED source WP dir rel to files/ ("" = files root), from the pull
+  destWebrootRel?: string // the clone's WP dir rel to files/ (post-normalization), from the pull
   destSiteId?: number
   destDbName?: string // dest DB creds (generated at create; reused on retry)
   destDbPassword?: string
@@ -262,6 +267,13 @@ export interface CloneJob {
   repoKeys?: RepoKeyState[] // deploy-key onboarding (Bedrock dests; gitaccess step)
   fanoutStarted?: boolean // startClone ran — survives the wizard being backgrounded/reopened
   startedAt: number
+  logPath?: string // per-job JSONL log (full stage output; the roster only shows truncated errors)
+}
+// A site the WP pull chain can work on: WordPress, or a git site (is_wordpress is
+// unreliable for git sites — see the API findings doc). is_wordpress:false non-git
+// sites (redirect shells, static placeholders) have no wp-config/DB to clone.
+export function cloneSiteSupported(s: CloneSiteState): boolean {
+  return s.isWordPress || s.stack === "bedrock"
 }
 // The gitaccess step is only needed when a selected site is Bedrock (a git repo whose
 // dest the new server must be authorized to clone).
@@ -831,6 +843,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Plan draft (and, in later slices, the running fan-out).
   const [cloneServer, setCloneServer] = useState<Server | null>(null)
   const [cloneJob, setCloneJob] = useState<CloneJob | null>(null)
+  // Per-job clone log (survives backgrounding/retries; a new job gets a new file).
+  const cloneLogRef = useRef<CloneLogger | null>(null)
   const [providerMetadata, setProviderMetadata] = useState<Map<string, ProviderMetadata>>(new Map())
   const [providerMetadataLoading, setProviderMetadataLoading] = useState<Set<string>>(new Set())
   const [providerMetadataError, setProviderMetadataError] = useState<Map<string, string>>(new Map())
@@ -2647,20 +2661,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return
       }
       const srcSites = sitesForServer(server.id)
-      const sites: CloneSiteState[] = srcSites.map((s) => ({
-        sourceSiteId: s.id,
-        domain: s.domain,
-        siteUser: s.site_user ?? "",
-        selected: true,
-        stack: cloneStackFor(s),
-        gitRepo: s.git?.repo ?? undefined,
-        gitBranch: s.git?.branch ?? undefined,
-        additionalDomains: (s.additional_domains ?? []).map((d) => d.domain),
-        excludeUploads: false,
-        phpVersion: s.php_version ?? undefined,
-        publicFolder: s.public_folder ?? undefined,
-        step: "queued",
-      }))
+      const sites: CloneSiteState[] = srcSites.map((s) => {
+        const stack = cloneStackFor(s)
+        const isWordPress = s.is_wordpress
+        return {
+          sourceSiteId: s.id,
+          domain: s.domain,
+          siteUser: s.site_user ?? "",
+          // Non-WP, non-git sites (redirect shells, placeholders) can't be cloned by
+          // the WP chain — excluded up front rather than failing mid-pull.
+          selected: isWordPress || stack === "bedrock",
+          isWordPress,
+          stack,
+          gitRepo: s.git?.repo ?? undefined,
+          gitBranch: s.git?.branch ?? undefined,
+          additionalDomains: (s.additional_domains ?? []).map((d) => d.domain),
+          excludeUploads: false,
+          phpVersion: s.php_version ?? undefined,
+          publicFolder: s.public_folder ?? undefined,
+          tablePrefix: s.database?.table_prefix ?? undefined,
+          step: "queued" as CloneSiteStep,
+        }
+      })
       const draft: CloneJob = {
         sourceServerId: server.id,
         sourceServerName: server.name,
@@ -2688,7 +2710,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const toggleCloneSite = useCallback(
-    (id: number) => mutateCloneSite(id, (s) => ({ ...s, selected: !s.selected })),
+    // Unsupported sites (not WordPress, no git repo) stay deselected — selecting one
+    // would only re-run the 2026-07-02 failure mode.
+    (id: number) => mutateCloneSite(id, (s) => (cloneSiteSupported(s) ? { ...s, selected: !s.selected } : s)),
     [mutateCloneSite],
   )
   const toggleCloneSiteUploads = useCallback(
@@ -2804,7 +2828,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const sudoUser = srv ? sudoUsers.get(srv.id) : undefined
     const pw = srv ? sudoPwRef.current.get(srv.id) : undefined
     if (!srv || !sudoUser || pw == null) return
-    const inputs = j.sites.map((s) => ({ siteId: s.sourceSiteId, domain: s.domain, siteUser: s.siteUser }))
+    // publicFolder only for Standard WP: Bedrock's wp-cli runs from the project root
+    // (files/, via wp-cli.yml), not from its /web/ public folder.
+    const inputs = j.sites.map((s) => ({ siteId: s.sourceSiteId, domain: s.domain, siteUser: s.siteUser, publicFolder: s.stack === "wp" ? s.publicFolder : undefined }))
     const sizes = await estimateSourceSiteSizes(srv, sudoUser, pw, inputs)
     if (sizes.size === 0) return
     setCloneJob((cur) =>
@@ -2836,13 +2862,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const driveCloneSite = useCallback(
     async (site: CloneSiteState, source: SudoCtx, dest: SudoCtx, destServerId: number) => {
       const set = (fn: (s: CloneSiteState) => CloneSiteState) => setCloneSite(site.sourceSiteId, fn)
-      const fail = (failedStep: CloneSiteStep, error: string) => set((s) => ({ ...s, step: "error", failedStep, error, detail: undefined }))
+      const logger = cloneLogRef.current
+      const fail = (failedStep: CloneSiteStep, error: string) => {
+        logger?.log({ event: "site-failed", domain: site.domain, failedStep, error })
+        set((s) => ({ ...s, step: "error", failedStep, error, detail: undefined }))
+      }
       try {
         if (site.stack === "bedrock" && !site.gitRepo) return fail("create", "the source Bedrock site has no git repo to clone from.")
         // create — Bedrock → `git` site (SpinupWP clones the repo); Standard WP → blank.
         set((s) => ({ ...s, step: "create", error: undefined, failedStep: undefined, detail: undefined }))
         const dbName = site.destDbName ?? site.siteUser
         const dbPw = site.destDbPassword ?? randomToken(28)
+        logger?.redact(dbPw)
+        logger?.log({ event: "site-start", domain: site.domain, stack: site.stack, publicFolder: site.publicFolder, tablePrefix: site.tablePrefix, reusedDestSiteId: site.destSiteId })
         set((s) => ({ ...s, destDbName: dbName, destDbPassword: dbPw }))
         // Reuse only within THIS job (destSiteId already captured = retry/resume).
         // We deliberately do NOT adopt a pre-existing dest site found by domain: its
@@ -2861,7 +2893,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                     installation_method: "git",
                     php_version: site.phpVersion,
                     public_folder: site.publicFolder ?? "/web/",
-                    database: { name: dbName, username: dbName, password: dbPw, table_prefix: "wp_" },
+                    database: { name: dbName, username: dbName, password: dbPw, table_prefix: site.tablePrefix || "wp_" },
                     // deploy_script is TOP-LEVEL; we send the corrected canonical (the
                     // source's stored value has a known typo) for future push-to-deploy —
                     // we composer install over SSH regardless (git/deploy won't run it).
@@ -2875,9 +2907,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                     installation_method: "blank",
                     php_version: site.phpVersion,
                     public_folder: site.publicFolder,
-                    database: { name: dbName, username: dbName, password: dbPw, table_prefix: "wp_" },
+                    database: { name: dbName, username: dbName, password: dbPw, table_prefix: site.tablePrefix || "wp_" },
                   }
             ev = await client.createSite(payload)
+            logger?.log({ event: "create-requested", domain: site.domain, eventId: ev?.event_id })
           } catch (err) {
             return fail("create", err instanceof ApiError ? err.message : (err as Error).message)
           }
@@ -2911,15 +2944,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (status !== "start") return
           set((s) => ({ ...s, step: stageToStep(stage), detail: stage }))
         }
+        const onExec = logger ? (e: CloneExecRecord) => logger.log({ event: "exec", ...e }) : undefined
         const res =
           site.stack === "bedrock"
-            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads }, onProgress)
-            : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw }, onProgress)
+            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads }, onProgress, onExec)
+            : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder }, onProgress, onExec)
         if (!res.ok) {
           const stage = (res.error?.split(":")[0] ?? "pull") as CloneStage
           return fail(stageToStep(stage), res.error ?? "pull failed")
         }
-        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined }))
+        const { sourceWebrootRel, destWebrootRel } = res as { sourceWebrootRel?: string; destWebrootRel?: string }
+        logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel })
+        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel }))
       } catch (err) {
         fail(site.step, (err as Error).message)
       }
@@ -2937,7 +2973,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const dest = sudoCtxFor(j.destServerId)
     if (!source || !dest) return // both ends must be sudo-connected (trust step ensured)
     const destServerId = j.destServerId
-    setCloneJob((cur) => (cur ? { ...cur, step: "clone", fanoutStarted: true, sites: cur.sites.map((s) => (s.selected ? { ...s, step: "queued" as CloneSiteStep, error: undefined, failedStep: undefined } : s)) } : cur))
+    // One log file per job; sudo passwords registered for redaction up front.
+    const logger = new CloneLogger(`${j.sourceServerName}-to-${j.destServerName || String(destServerId)}`)
+    logger.redact(source.sudoPassword, dest.sudoPassword)
+    logger.log({ event: "job-start", source: j.sourceServerName, dest: j.destServerName, destServerId, sites: j.sites.filter((s) => s.selected).map((s) => s.domain), concurrency: j.concurrency })
+    cloneLogRef.current = logger
+    setCloneJob((cur) => (cur ? { ...cur, step: "clone", fanoutStarted: true, logPath: logger.path, sites: cur.sites.map((s) => (s.selected ? { ...s, step: "queued" as CloneSiteStep, error: undefined, failedStep: undefined } : s)) } : cur))
     const queue = j.sites.filter((s) => s.selected)
     let cursor = 0
     const worker = async () => {
@@ -2958,6 +2999,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const source = sudoCtxFor(j.sourceServerId)
       const dest = sudoCtxFor(j.destServerId)
       if (!site || !source || !dest) return
+      cloneLogRef.current?.log({ event: "site-retry", domain: site.domain })
       void driveCloneSite(site, source, dest, j.destServerId)
     },
     [cloneJob, sudoCtxFor, driveCloneSite],
@@ -2977,7 +3019,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setCloneSite(siteId, (s) => ({ ...s, verifying: true, verifyError: undefined }))
       void (async () => {
         try {
-          const res = await verifyClone(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destIp })
+          const res = await verifyClone(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destIp, publicFolder: site.stack === "wp" ? site.publicFolder : undefined, sourceWebrootRel: site.stack === "wp" ? site.sourceWebrootRel : undefined, destWebrootRel: site.stack === "wp" ? site.destWebrootRel : undefined })
           setCloneSite(siteId, (s) => ({ ...s, verifying: false, verify: res }))
         } catch (err) {
           setCloneSite(siteId, (s) => ({ ...s, verifying: false, verifyError: (err as Error).message }))

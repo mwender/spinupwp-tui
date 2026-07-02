@@ -9,6 +9,28 @@ terminal app for the SpinupWP API.
 - `bun run typecheck` — `tsc --noEmit`. Keep this green.
 - Must run under **Bun**, not Node — OpenTUI loads native code via Bun's FFI.
 
+## WordPress layout rules (deliberate product stance)
+
+These are NOT one user's personal habits — they encode well-known WordPress
+conventions that Spinup is deliberately opinionated about, to the point of helping
+establish best practice for everyone who uses the app. **Every feature that
+creates, moves, or reasons about WP site files must honor them** (clone wizard,
+future site-creation, maintenance tooling, …):
+
+- **`public_folder` is a *setting*, not a fact.** SpinupWP never moves files when a
+  public folder is configured — its UI warns users to move them by hand, so setting
+  and reality legitimately diverge. Code must **detect** the real WP dir
+  (`detectWpDirScript`/`planWebroot` in `src/lib/serverClone.ts`), never assume
+  `files/` or trust the setting alone.
+- **`public/`-style webroot ⇒ `wp-config.php` ONE directory above it** — the
+  long-standing WordPress hardening pattern (config outside the docroot), which is
+  the main reason to run a `public/` layout at all. Copying an existing tree
+  verbatim preserves whatever the site owner arranged; anything that *builds or
+  normalizes* a layout must place wp-config above the webroot itself (see
+  `normalizeWebrootScript`).
+- **Root webroot (`/`) ⇒ standard WP layout**: `wp-config.php` sits alongside core
+  in `files/`, exactly as a stock install ships. Never relocate it in that case.
+
 ## Testing the clone wizard
 
 Re-driving the server-clone wizard (`C`) against the dedicated test boxes
