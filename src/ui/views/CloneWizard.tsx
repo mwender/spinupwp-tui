@@ -694,8 +694,10 @@ export function CloneWizard() {
     const running = selected.filter((s) => !["queued", "done", "error"].includes(s.step)).length
     const errored = selected.filter((s) => s.step === "error").length
     const queued = selected.filter((s) => s.step === "queued").length
+    // "· 3 at a time" only earns its place when there's actually a queue.
+    const title = selected.length === 1 ? " Clone site " : selected.length > job!.concurrency ? ` Clone sites · up to ${job!.concurrency} at a time ` : " Clone sites "
     return (
-      <Panel title={` Clone sites · ${job!.concurrency} at a time `} active>
+      <Panel title={title} active>
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
           {selected.map((s, i) => {
             const active = !["queued", "done", "error"].includes(s.step)
