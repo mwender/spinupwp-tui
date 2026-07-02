@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -100,6 +100,10 @@ export function Browser({ rows }: { rows: number }) {
       case "u":
         // Upgrade the selected site's PHP version (first write action).
         if (focus === "sites" && sites[siteIndex]) setPhpUpgradeSite(sites[siteIndex])
+        return
+      case "H":
+        // Enable/disable HTTPS on the selected site (direction auto-derived).
+        if (focus === "sites" && sites[siteIndex]) setHttpsToggleSite(sites[siteIndex])
         return
       case "K":
         // Grant Spinup's machine key to the selected site over SSH (privileged

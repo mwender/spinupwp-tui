@@ -24,6 +24,10 @@ versions; such changes are called out here.
   rebases); since the running process can't hot-reload, it always tells you
   plainly to restart afterward, with a `bun install` nudge when dependencies
   changed. Manual `git pull` still works exactly as before.
+- **Enable / disable HTTPS on a site (`H`).** The direction is auto-derived
+  from the site's current state — press `H`, confirm, and it's done, tracked
+  in the background the same way a PHP upgrade is. Disabling explicitly warns
+  that https:// visitors will see errors until it's re-enabled.
 
 ### Fixed
 - **Cloudflare proxied records no longer block DNS cutover.** The clone

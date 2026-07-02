@@ -213,6 +213,13 @@ export class SpinupWPClient {
     return this.mutate<{ event_id: number }>(`/sites/${siteId}/https`, "POST", { type: "webroot" })
   }
 
+  // Disable HTTPS on a site (removes the certificate). May return an event_id to
+  // poll, or settle synchronously (204 → undefined) — the store handles both.
+  // Needs a Read/Write token.
+  disableHttps(siteId: number): Promise<{ event_id: number } | undefined> {
+    return this.mutate<{ event_id: number } | undefined>(`/sites/${siteId}/https`, "DELETE")
+  }
+
   // ---- Events -----------------------------------------------------------
 
   // Events can be numerous; cap to the most recent few pages for the feed.

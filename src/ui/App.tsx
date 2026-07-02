@@ -16,6 +16,7 @@ import { Search } from "./views/Search.tsx"
 import { Events } from "./views/Events.tsx"
 import { Health } from "./views/Health.tsx"
 import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
+import { HttpsToggle } from "./views/HttpsToggle.tsx"
 import { ReleaseNotes } from "./views/ReleaseNotes.tsx"
 import { GrantKey } from "./views/GrantKey.tsx"
 import { SudoConnect } from "./views/SudoConnect.tsx"
@@ -56,6 +57,7 @@ export function App() {
     store.releaseNotesInfo !== null ||
     store.healthServer !== null ||
     store.phpUpgradeSite !== null ||
+    store.httpsToggleSite !== null ||
     store.grantKeySite !== null ||
     store.sudoConnectServer !== null ||
     store.dbBackupSite !== null ||
@@ -99,6 +101,9 @@ export function App() {
 
     // The PHP-upgrade overlay owns the keyboard while open.
     if (store.phpUpgradeSite) return
+
+    // The HTTPS-toggle overlay owns the keyboard while open.
+    if (store.httpsToggleSite) return
 
     // The grant-SSH-key overlay owns the keyboard while open.
     if (store.grantKeySite) return
@@ -213,6 +218,7 @@ export function App() {
       {store.releaseNotesInfo && <ReleaseNotes />}
       {store.healthServer && <Health />}
       {store.phpUpgradeSite && <PhpUpgrade />}
+      {store.httpsToggleSite && <HttpsToggle />}
       {store.grantKeySite && <GrantKey />}
       {store.sudoConnectServer && <SudoConnect />}
       {store.dbBackupSite && <DbBackup />}

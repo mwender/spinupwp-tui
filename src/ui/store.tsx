@@ -69,6 +69,19 @@ export function isUpgradeInFlight(p: PhpUpgradeProgress | undefined): boolean {
   return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
 }
 
+// Progress of an HTTPS enable/disable, tracked the same way as PhpUpgradeProgress.
+// A DELETE may settle synchronously (no event) — callers set status straight to
+// UPGRADE_DONE in that case, so isHttpsToggleInFlight reads the same as above.
+export interface HttpsToggleProgress {
+  action: "enable" | "disable"
+  status: string
+  error?: string
+}
+
+export function isHttpsToggleInFlight(p: HttpsToggleProgress | undefined): boolean {
+  return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
+}
+
 // A server-level operation (reboot or a service restart), tracked in the store
 // so progress survives closing the Server-actions overlay (same model as
 // PhpUpgradeProgress, keyed by server id). `label` is a short display verb.
@@ -257,6 +270,7 @@ const VANITY_POLL_MS = 2500
 // matching count-down (and, after keep-waiting, the count-up from this baseline).
 export const VANITY_PROPAGATE_TIMEOUT_MS = 120_000
 const phpJobId = (siteId: number) => `phpUpgrade:${siteId}`
+const httpsJobId = (siteId: number) => `httpsToggle:${siteId}`
 const dbSyncJobId = (siteId: number) => `dbSync:${siteId}`
 const dbBackupJobId = (siteId: number) => `dbBackup:${siteId}`
 
@@ -361,6 +375,16 @@ interface StoreValue extends DataState {
   startPhpUpgrade: (site: Site, version: string) => void
   // Drop a terminal (deployed/failed) entry — e.g. when the modal is dismissed.
   clearPhpUpgrade: (siteId: number) => void
+  // The site whose HTTPS enable/disable overlay is open, or null.
+  httpsToggleSite: Site | null
+  setHttpsToggleSite: (s: Site | null) => void
+  // In-flight (and just-settled) HTTPS toggles, keyed by site id — same
+  // background-progress model as phpUpgrades.
+  httpsToggles: Map<number, HttpsToggleProgress>
+  // Fire an enable/disable (derived from the site's current https.enabled) and
+  // poll it to completion in the background.
+  startHttpsToggle: (site: Site) => void
+  clearHttpsToggle: (siteId: number) => void
   // The server whose actions overlay (reboot / service restart) is open, or null.
   serverActionsServer: Server | null
   setServerActionsServer: (s: Server | null) => void
@@ -745,6 +769,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [healthServer, setHealthServer] = useState<Server | null>(null)
   const [phpUpgradeSite, setPhpUpgradeSite] = useState<Site | null>(null)
   const [phpUpgrades, setPhpUpgrades] = useState<Map<number, PhpUpgradeProgress>>(new Map())
+  const [httpsToggleSite, setHttpsToggleSite] = useState<Site | null>(null)
+  const [httpsToggles, setHttpsToggles] = useState<Map<number, HttpsToggleProgress>>(new Map())
   const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
   const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
   const [newServerOpen, setNewServerOpen] = useState(false)
@@ -1069,6 +1095,93 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void run()
     },
     [client, trackPhpUpgradeEvent, phpUpgrades],
+  )
+
+  // ---- HTTPS enable/disable -----------------------------------------------
+
+  const setHttpsProgress = (siteId: number, progress: HttpsToggleProgress) =>
+    setHttpsToggles((prev) => new Map(prev).set(siteId, progress))
+
+  const clearHttpsToggle = useCallback((siteId: number) => {
+    void removeJob(httpsJobId(siteId))
+    setHttpsToggles((prev) => {
+      if (!prev.has(siteId)) return prev
+      const next = new Map(prev)
+      next.delete(siteId)
+      return next
+    })
+  }, [])
+
+  // Poll an HTTPS-toggle event to completion, mirroring status into the
+  // per-site marker. Shared by a fresh toggle and resume-on-startup.
+  const trackHttpsToggleEvent = useCallback(
+    (siteId: number, action: "enable" | "disable", eventId: number, domain: string) => {
+      const poll = async () => {
+        try {
+          const ev = await client.getEvent(eventId)
+          if (ev.status === UPGRADE_DONE) {
+            await refresh()
+            clearHttpsToggle(siteId)
+            toast.success(`HTTPS ${action === "enable" ? "enabled" : "disabled"} on ${domain}`)
+          } else if (ev.status === UPGRADE_FAIL) {
+            setHttpsProgress(siteId, { action, status: UPGRADE_FAIL, error: ev.output?.trim() || "The event failed on SpinupWP." })
+            void removeJob(httpsJobId(siteId))
+          } else {
+            setHttpsProgress(siteId, { action, status: ev.status })
+            setTimeout(() => void poll(), UPGRADE_POLL_MS)
+          }
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setHttpsProgress(siteId, { action, status: UPGRADE_FAIL, error: msg })
+          void removeJob(httpsJobId(siteId))
+        }
+      }
+      setTimeout(() => void poll(), UPGRADE_POLL_MS)
+    },
+    [client, refresh, clearHttpsToggle],
+  )
+
+  const startHttpsToggle = useCallback(
+    (site: Site) => {
+      // Ignore a duplicate request while one is already running for this site.
+      const existing = httpsToggles.get(site.id)
+      if (existing && existing.status !== UPGRADE_DONE && existing.status !== UPGRADE_FAIL) return
+
+      // The direction is fully determined by current state — nothing to pick.
+      const action: "enable" | "disable" = site.https?.enabled ? "disable" : "enable"
+      const startedAt = Date.now()
+      const run = async () => {
+        setHttpsProgress(site.id, { action, status: "queued" })
+        let res: { event_id: number } | undefined
+        try {
+          res = action === "enable" ? await client.enableHttps(site.id) : await client.disableHttps(site.id)
+        } catch (err) {
+          const msg = err instanceof ApiError ? err.message : (err as Error).message
+          setHttpsProgress(site.id, { action, status: UPGRADE_FAIL, error: msg })
+          return
+        }
+        if (!res?.event_id) {
+          // Settled synchronously (e.g. a 204 on disable) — nothing to poll.
+          await refresh()
+          clearHttpsToggle(site.id)
+          toast.success(`HTTPS ${action === "enable" ? "enabled" : "disabled"} on ${site.domain}`)
+          return
+        }
+        // Persist so a restart resumes tracking this site's toggle, then poll.
+        setHttpsProgress(site.id, { action, status: "running" })
+        void saveJob({
+          id: httpsJobId(site.id),
+          kind: "httpsToggle",
+          status: "running",
+          startedAt,
+          eventId: res.event_id,
+          inputs: { siteId: site.id, action, domain: site.domain },
+        })
+        trackHttpsToggleEvent(site.id, action, res.event_id, site.domain)
+      }
+      void run()
+    },
+    [client, trackHttpsToggleEvent, httpsToggles, refresh, clearHttpsToggle],
   )
 
   // ---- Server operations (reboot / service restart) ---------------------
@@ -2877,7 +2990,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     resumedRef.current = true
     for (const job of Object.values(cfgRef.current.jobs ?? {})) {
       if (job.status === "done" || job.status === "failed") continue
-      const inp = (job.inputs ?? {}) as { hostname?: string; siteId?: number; version?: string; domain?: string }
+      const inp = (job.inputs ?? {}) as { hostname?: string; siteId?: number; version?: string; domain?: string; action?: "enable" | "disable" }
       switch (job.kind) {
         case "newServer":
           if (job.eventId == null) {
@@ -2897,6 +3010,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           setUpgrade(inp.siteId, { target: inp.version, status: job.status })
           trackPhpUpgradeEvent(inp.siteId, inp.version, job.eventId, inp.domain ?? "Your site")
+          break
+        case "httpsToggle":
+          if (job.eventId == null || inp.siteId == null || !inp.action) {
+            void removeJob(job.id)
+            break
+          }
+          setHttpsProgress(inp.siteId, { action: inp.action, status: job.status })
+          trackHttpsToggleEvent(inp.siteId, inp.action, job.eventId, inp.domain ?? "Your site")
           break
         case "vanity": {
           const vj = job.inputs as VanityJob | undefined
@@ -2922,7 +3043,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           void removeJob(job.id) // unknown/unresumable kind — clear it
       }
     }
-  }, [trackServerEvent, trackPhpUpgradeEvent, driveVanity])
+  }, [trackServerEvent, trackPhpUpgradeEvent, trackHttpsToggleEvent, driveVanity])
 
   const value: StoreValue = {
     servers,
@@ -2949,6 +3070,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     phpUpgrades,
     startPhpUpgrade,
     clearPhpUpgrade,
+    httpsToggleSite,
+    setHttpsToggleSite,
+    httpsToggles,
+    startHttpsToggle,
+    clearHttpsToggle,
     serverActionsServer,
     setServerActionsServer,
     serverOps,

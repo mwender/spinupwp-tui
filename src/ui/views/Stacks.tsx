@@ -49,7 +49,7 @@ const NONWP_SUBS: { kind: ProbeKind | null; label: string }[] = [
 
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite } =
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
@@ -169,6 +169,10 @@ export function Stacks({ rows }: { rows: number }) {
       case "u":
         // Upgrade the selected site's PHP version (sites pane only).
         if (focus === "sites" && groupSites[siteIndex]) setPhpUpgradeSite(groupSites[siteIndex])
+        return
+      case "H":
+        // Enable/disable HTTPS on the selected site (sites pane only).
+        if (focus === "sites" && groupSites[siteIndex]) setHttpsToggleSite(groupSites[siteIndex])
         return
       case "t":
         // Open the selected site's local working copy in a terminal (inline; no
