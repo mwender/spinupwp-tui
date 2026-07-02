@@ -306,8 +306,8 @@ export async function runStandardWpPull(
     const files = await run(
       "files",
       dest,
-      `set -e; rc=0; timeout -k 5 900 ${sshk} ${shq(su)}@${srcIp} "tar -C ${shq(root)} -czf - --exclude=wp-content/cache ." </dev/null > /tmp/clone_${spec.domain}.tgz || rc=$?; [ "$rc" -le 1 ] || { echo "tar-over-ssh failed with exit $rc" >&2; exit "$rc"; }; tar -C ${shq(root)} -xzf /tmp/clone_${spec.domain}.tgz; rm -f /tmp/clone_${spec.domain}.tgz; ${normalize}chown -R ${shq(du)}:${shq(du)} ${shq(root)}; test -f ${shq(destWpDir)}/wp-settings.php || { echo "no WordPress core at ${destWpDir} after pull" >&2; exit 65; }; ${cfgAssert} || { echo "no wp-config.php in the webroot or one level above it (under ${root})" >&2; exit 65; }`,
-      900_000,
+      `set -e; rc=0; timeout -k 5 3600 ${sshk} ${shq(su)}@${srcIp} "tar -C ${shq(root)} -czf - --exclude=wp-content/cache ." </dev/null > /tmp/clone_${spec.domain}.tgz || rc=$?; [ "$rc" -ne 124 ] || { echo "file transfer timed out after 60 minutes" >&2; exit 124; }; [ "$rc" -le 1 ] || { echo "tar-over-ssh failed with exit $rc" >&2; exit "$rc"; }; tar -C ${shq(root)} -xzf /tmp/clone_${spec.domain}.tgz; rm -f /tmp/clone_${spec.domain}.tgz; ${normalize}chown -R ${shq(du)}:${shq(du)} ${shq(root)}; test -f ${shq(destWpDir)}/wp-settings.php || { echo "no WordPress core at ${destWpDir} after pull" >&2; exit 65; }; ${cfgAssert} || { echo "no wp-config.php in the webroot or one level above it (under ${root})" >&2; exit 65; }`,
+      3_660_000, // outer must exceed the in-script `timeout 3600` so the inner reports a clean 124
     )
     if (!files.ok) return fail("files", files.stderr.trim() || "file pull failed")
     onProgress("files", "ok")
@@ -331,14 +331,14 @@ export async function runStandardWpPull(
       "db",
       source,
       `sudo -u ${shq(su)} -H bash -c "cd ${shq(srcWpDir)} && wp --skip-plugins --skip-themes db export ${shq(home)}/.clone_db.sql 2>/dev/null && gzip -f ${shq(home)}/.clone_db.sql"`,
-      300_000,
+      900_000,
     )
     if (!dump.ok) return fail("db", dump.stderr.trim() || "source db export failed")
     const imp = await run(
       "db",
       dest,
       `set -e; timeout -k 5 300 ${sshk} ${shq(su)}@${srcIp} "cat ${shq(home)}/.clone_db.sql.gz" </dev/null > /tmp/clone_${spec.domain}.sql.gz; gunzip -f /tmp/clone_${spec.domain}.sql.gz; chmod 644 /tmp/clone_${spec.domain}.sql; cd ${shq(destWpDir)}; sudo -u ${shq(du)} -H wp db import /tmp/clone_${spec.domain}.sql >/dev/null; rm -f /tmp/clone_${spec.domain}.sql`,
-      300_000,
+      360_000, // outer must exceed the in-script `timeout 300`
     )
     if (!imp.ok) return fail("db", imp.stderr.trim() || "db pull/import failed")
     onProgress("db", "ok")
@@ -453,8 +453,8 @@ export async function runBedrockPull(
       const up = await run(
         "files",
         dest,
-        `set -e; timeout -k 5 900 ${remote(`[ -d ${shq(`${root}/web/app/uploads`)} ] && tar -C ${shq(root)} --warning=no-file-changed -czf - web/app/uploads || true`)} > ${tmp}_up.tgz; if [ -s ${tmp}_up.tgz ]; then tar -C ${shq(root)} -xzf ${tmp}_up.tgz && chown -R ${shq(du)}:${shq(du)} ${shq(`${root}/web/app/uploads`)}; fi; rm -f ${tmp}_up.tgz`,
-        900_000,
+        `set -e; timeout -k 5 3600 ${remote(`[ -d ${shq(`${root}/web/app/uploads`)} ] && tar -C ${shq(root)} --warning=no-file-changed -czf - web/app/uploads || true`)} > ${tmp}_up.tgz; if [ -s ${tmp}_up.tgz ]; then tar -C ${shq(root)} -xzf ${tmp}_up.tgz && chown -R ${shq(du)}:${shq(du)} ${shq(`${root}/web/app/uploads`)}; fi; rm -f ${tmp}_up.tgz`,
+        3_660_000, // outer must exceed the in-script `timeout 3600` so the inner reports a clean 124
       )
       if (!up.ok) return fail("files", up.stderr.trim() || "uploads pull failed")
     }
@@ -488,14 +488,14 @@ export async function runBedrockPull(
       "db",
       source,
       `sudo -u ${shq(su)} -H bash -c "cd ${shq(root)} && wp --skip-plugins --skip-themes db export ${shq(home)}/.clone_db.sql 2>/dev/null && gzip -f ${shq(home)}/.clone_db.sql"`,
-      300_000,
+      900_000,
     )
     if (!dump.ok) return fail("db", dump.stderr.trim() || "source db export failed")
     const imp = await run(
       "db",
       dest,
       `set -e; timeout -k 5 300 ${remote(`cat ${shq(`${home}/.clone_db.sql.gz`)}`)} > ${tmp}.sql.gz; gunzip -f ${tmp}.sql.gz; chmod 644 ${tmp}.sql; cd ${shq(root)}; sudo -u ${shq(du)} -H wp db import ${tmp}.sql >/dev/null; rm -f ${tmp}.sql`,
-      300_000,
+      360_000, // outer must exceed the in-script `timeout 300`
     )
     if (!imp.ok) return fail("db", imp.stderr.trim() || "db pull/import failed")
     onProgress("db", "ok")

@@ -50,7 +50,27 @@ versions; such changes are called out here.
   the message that would have explained it. Warnings are now tolerated (real
   transfer errors still fail) and logged with the exact file named.
 
+- **Large file transfers no longer get killed by the wizard's own timeout.**
+  A ~15-minute production pull was cut off at exactly 900s by two stacked
+  timeouts — and the error surfaced a harmless tar warning instead of the
+  real cause. The file-transfer budget is now 60 minutes, the outer session
+  timeout strictly exceeds the in-script one, and an actual timeout says
+  "file transfer timed out after 60 minutes" in so many words.
+- **Manual DNS records in the cutover now show your access note** ("Delegate
+  Access" by default, or whatever you've written for that zone) instead of
+  wrongly telling you to connect an account for registrars that are managed
+  by hand on purpose. API-connectable hosts (Cloudflare, Route 53) keep the
+  actionable "connect an account" message.
+
 ### Changed
+- **The DNS cutover screen grew real controls.** ↑↓ moves a cursor over the
+  records; space includes/excludes any ready record from the batch flip
+  (◉/◯, same as the Plan step); ⏎ on a record opens its zone's registrar
+  web console with the zone name copied to the clipboard (the
+  delegate-access flow); `c` cuts over exactly the included records; finish
+  moved to `f`.
+- **In-flight clone stages show a live elapsed timer** in the roster, so a
+  long file pull reads as working rather than frozen.
 - **The clone wizard no longer jumps to DNS cutover on its own.** When the
   clone roster settles, the wizard now stays put so you can eyeball every
   site's final state — press `c` to continue to the cutover step (which moves

@@ -14,7 +14,8 @@ import { useKeyboard } from "@opentui/react"
 import { theme } from "../../lib/theme.ts"
 import { Panel, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
-import { openUrl } from "../../lib/open.ts"
+import { openUrl, copyToClipboard } from "../../lib/open.ts"
+import { consoleForHost } from "../../lib/providers.ts"
 import { serverWebUrl } from "../../lib/spinupweb.ts"
 import { useStore, cloneNeedsGitAccess, cloneSiteSupported, type CloneStep, type CloneSiteStep, type RepoKeyState } from "../store.tsx"
 import type { VerifyCheck } from "../../lib/serverClone.ts"
@@ -60,6 +61,7 @@ export function CloneWizard() {
     startClone,
     cloneRetrySite,
     cloneContinueToCutover,
+    toggleCutoverExclude,
     verifyCloneSite,
     cutoverCheck,
     startCutover,
@@ -102,6 +104,21 @@ export function CloneWizard() {
       void cloneDetectRepoKeys()
     }
   }, [job?.step, cloneDetectRepoKeys])
+
+  // The cutover roster gets its own cursor run — reset it when we land there.
+  useEffect(() => {
+    if (job?.step === "cutover") setIdx(0)
+  }, [job?.step])
+
+  // Tick once a second while any selected site is mid-stage so the roster's
+  // elapsed readout counts up (long file pulls otherwise look frozen).
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (job?.step !== "clone") return
+    if (!job.sites.some((s) => s.selected && !["queued", "done", "error"].includes(s.step))) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [job?.step, job?.sites])
 
   // Read + classify each site's DNS record when we land on the cutover step — but
   // only if it hasn't been checked yet (so reopening a backgrounded wizard doesn't
@@ -300,10 +317,27 @@ export function CloneWizard() {
     }
 
     if (job.step === "cutover") {
-      // c — flip every "ready" record to the new server (the live-traffic write).
+      const recs = job.sites.filter((s) => s.selected && s.step === "done").flatMap((s) => (s.cutover?.records ?? []).map((r) => ({ r, siteId: s.sourceSiteId })))
+      const n = recs.length
+      if (n > 0 && (name === "up" || name === "k")) return setIdx((i) => (i - 1 + n) % n)
+      if (n > 0 && (name === "down" || name === "j")) return setIdx((i) => (i + 1) % n)
+      const cur = recs[Math.min(idx, Math.max(0, n - 1))]
+      // space — include/exclude a ready record from the batch flip.
+      if (name === "space" && cur && cur.r.status === "ready") return toggleCutoverExclude(cur.siteId, cur.r.name)
+      // ⏎ — open the zone's registrar/web console (zone copied for the
+      // delegate-access paste), for the manual rows the API can't flip.
+      if (name === "return" && cur) {
+        const con = cur.r.hostKey ? consoleForHost(cur.r.hostKey) : null
+        if (con) {
+          copyToClipboard(cur.r.apex ?? cur.r.name)
+          openUrl(con.url)
+        }
+        return
+      }
+      // c — flip every included "ready" record to the new server (the live-traffic write).
       if (name === "c") return startCutover()
       if (name === "r") return void cutoverCheck()
-      if (name === "return") return cloneCutoverFinish()
+      if (name === "f") return cloneCutoverFinish()
     }
   })
 
@@ -601,28 +635,32 @@ export function CloneWizard() {
     const cloned = selected.filter((s) => s.step === "done")
     const recs = cloned.flatMap((s) => (s.cutover?.records ?? []).map((r) => ({ r, siteId: s.sourceSiteId })))
     const count = (st: string) => recs.filter((x) => x.r.status === st).length
-    const ready = count("ready")
+    const ready = recs.filter((x) => x.r.status === "ready" && !x.r.excluded).length
+    const skipped = recs.filter((x) => x.r.status === "ready" && x.r.excluded).length
     const working = count("checking") + count("flipping")
     const cutDone = count("done")
     const manual = count("manual")
     const errored = count("error")
     const targetIp = job!.destServerIp || (job!.destServerId != null ? servers.find((s) => s.id === job!.destServerId)?.ip_address ?? "" : "") || "the new server"
-    const rowFor = ({ r, siteId }: (typeof recs)[number]) => {
+    const rowFor = ({ r, siteId }: (typeof recs)[number], i: number) => {
       const st = r.status
+      const cur = i === idx
       const busy = st === "checking" || st === "flipping"
-      const glyph = st === "done" ? "✓" : st === "manual" ? "!" : st === "error" ? "✕" : st === "ready" ? "○" : "·"
-      const gcolor = st === "done" ? theme.good : st === "manual" ? theme.warn : st === "error" ? theme.bad : st === "ready" ? theme.brand : theme.textFaint
+      // Ready rows read as include/exclude toggles (◉/◯, like Plan); the rest keep
+      // their status glyphs.
+      const glyph = st === "done" ? "✓" : st === "manual" ? "!" : st === "error" ? "✕" : st === "ready" ? (r.excluded ? "◯" : "◉") : "·"
+      const gcolor = st === "done" ? theme.good : st === "manual" ? theme.warn : st === "error" ? theme.bad : st === "ready" ? (r.excluded ? theme.textFaint : theme.brand) : theme.textFaint
       const detail =
         st === "checking" ? "reading DNS…"
         : st === "flipping" ? "updating…"
         : st === "done" ? `now → ${r.targetValue ?? targetIp}`
-        : st === "ready" ? `${r.currentValue ?? "?"} → ${r.targetValue ?? targetIp}`
+        : st === "ready" ? `${r.currentValue ?? "?"} → ${r.targetValue ?? targetIp}${r.excluded ? "  (skipped)" : ""}`
         : st === "manual" ? `manual: ${r.reason ?? "edit by hand"}`
         : st === "error" ? truncate(r.error ?? "failed", 28)
         : "pending"
-      const dcolor = st === "error" ? theme.bad : st === "done" ? theme.good : st === "manual" ? theme.warn : theme.textFaint
+      const dcolor = st === "error" ? theme.bad : st === "done" ? theme.good : st === "manual" ? theme.warn : cur ? theme.text : theme.textFaint
       return (
-        <box key={`${siteId}|${r.name}`} style={{ flexDirection: "row", height: 1 }}>
+        <box key={`${siteId}|${r.name}`} style={{ flexDirection: "row", height: 1, backgroundColor: cur ? theme.bgAlt : undefined }}>
           {busy ? <Spinner color={theme.brand} /> : <text content={glyph} fg={gcolor} style={{ flexShrink: 0 }} />}
           <text content={` ${r.name}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
           <box style={{ flexGrow: 1 }} />
@@ -637,12 +675,12 @@ export function CloneWizard() {
           <box style={{ height: 1 }} />
           {recs.length === 0 ? <text content="Reading DNS…" fg={theme.textDim} wrapMode="none" /> : recs.map(rowFor)}
           <box style={{ flexGrow: 1 }} />
-          <text content={`✓ ${cutDone} cut over · ○ ${ready} ready · ⠹ ${working} working${manual ? ` · ! ${manual} manual` : ""}${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
-          {manual > 0 ? <text content="Manual records can't be API-edited — repoint them in your DNS host." fg={theme.textFaint} wrapMode="none" /> : null}
+          <text content={`✓ ${cutDone} cut over · ◉ ${ready} ready${skipped ? ` · ◯ ${skipped} skipped` : ""} · ⠹ ${working} working${manual ? ` · ! ${manual} manual` : ""}${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
+          {manual > 0 ? <text content="Manual records can't be API-edited — ⏎ opens that zone's registrar (zone name copied for the delegate-access paste)." fg={theme.textFaint} wrapMode="none" /> : null}
           {ready > 0 ? (
             <text content={`❯ c — cut over ${ready} record${ready === 1 ? "" : "s"} to the new server (live traffic)`} fg={theme.brand} wrapMode="none" />
           ) : (
-            <text content="⏎ — finish" fg={theme.textFaint} wrapMode="none" />
+            <text content="f — finish" fg={theme.textFaint} wrapMode="none" />
           )}
         </box>
       </Panel>
@@ -669,7 +707,7 @@ export function CloneWizard() {
                 <text content={` ${s.domain}`} fg={cur || s.step === "error" || s.step === "done" ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
                 <box style={{ flexGrow: 1 }} />
                 <text
-                  content={(s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? "done" : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}`) + vmark}
+                  content={(s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? "done" : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}${s.stageStartedAt ? " · " + fmtElapsed(now - s.stageStartedAt) : ""}`) + vmark}
                   fg={s.step === "error" || (s.verify && !s.verify.ok) ? theme.bad : s.verify?.ok ? theme.good : s.step === "done" ? theme.good : theme.textFaint}
                   wrapMode="none"
                   style={{ flexShrink: 0 }}
@@ -805,11 +843,16 @@ export function CloneWizard() {
       ]
     }
     if (job!.step === "cutover") {
-      const ready = selected.filter((s) => s.step === "done").flatMap((s) => s.cutover?.records ?? []).filter((r) => r.status === "ready").length
+      const recs = selected.filter((s) => s.step === "done").flatMap((s) => s.cutover?.records ?? [])
+      const ready = recs.filter((r) => r.status === "ready" && !r.excluded).length
+      const anyConsole = recs.some((r) => r.hostKey && consoleForHost(r.hostKey))
       return [
+        { key: "↑↓", label: "select" },
+        ...(recs.some((r) => r.status === "ready") ? [{ key: "space", label: "skip/include" }] : []),
+        ...(anyConsole ? [{ key: "⏎", label: "registrar" }] : []),
         ...(ready > 0 ? [{ key: "c", label: "cut over" }] : []),
         { key: "r", label: "re-check" },
-        { key: "⏎", label: "finish" },
+        { key: "f", label: "finish" },
         { key: "esc", label: "background" },
       ]
     }
@@ -846,6 +889,10 @@ export function CloneWizard() {
   }
 }
 
+function fmtElapsed(ms: number): string {
+  const sec = Math.max(0, Math.floor(ms / 1000))
+  return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, "0")}s`
+}
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, Math.max(0, n - 1)) + "…"
 }

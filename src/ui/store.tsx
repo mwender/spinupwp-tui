@@ -28,6 +28,8 @@ import {
   nameserversMatch,
   PROVIDER_CONSOLE,
   PROVIDER_REGISTRY,
+  consoleForHost,
+  DEFAULT_WEB_ACCESS_NOTE,
   ALL_PROVIDERS,
   type Connection,
   type ConnProvider,
@@ -216,6 +218,7 @@ export interface CloneSiteState {
   destDbPassword?: string
   step: CloneSiteStep
   detail?: string // current sub-activity (the pull stage), for the roster
+  stageStartedAt?: number // when the current step/stage began — drives the roster's elapsed timer
   failedStep?: CloneSiteStep
   error?: string
   verifying?: boolean // slice 5: verify drill-down in flight
@@ -236,6 +239,9 @@ export interface CutoverRecord {
   targetValue?: string // the new server IP
   reason?: string // when manual: why it can't be auto-flipped
   error?: string
+  apex?: string // the zone apex (for the registrar web handoff + note lookup)
+  hostKey?: string // the DNS host key (drives consoleForHost)
+  excluded?: boolean // ready record the user deselected (space) — c skips it
 }
 export interface CloneCutoverState {
   status: CloneCutoverStatus // aggregate over records (rail badge + summary)
@@ -486,6 +492,7 @@ interface StoreValue extends DataState {
   startClone: () => void // run the fan-out (worker pool, cap = concurrency) over selected sites
   cloneRetrySite: (siteId: number) => void // re-run one failed site
   cloneContinueToCutover: () => void // explicit user continue: settled roster → DNS cutover
+  toggleCutoverExclude: (siteId: number, name: string) => void // space: include/exclude a ready cutover record
   verifyCloneSite: (siteId: number) => void // slice 5: verify one cloned site (source-vs-clone)
   cutoverCheck: () => Promise<void> // slice 6: read + classify each site's DNS record
   startCutover: () => void // slice 6: flip every "ready" record to the new IP (batched)
@@ -2276,7 +2283,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // checked just now)" — re-verify can't cure a zone that genuinely isn't live yet; the
   // user must finish NS delegation. See memory dns-zone-resolution-staleness.
   const resolveZoneConn = useCallback(
-    async (hostname: string): Promise<{ zone: ZoneHost; conn: Connection } | { error: string }> => {
+    async (hostname: string): Promise<{ zone: ZoneHost; conn: Connection } | { error: string; zone?: ZoneHost }> => {
       const zone = await resolveZone(hostname)
       if (!zone) return { error: `Couldn't find the DNS zone for ${hostname}.` }
       // Match against the cache ref (not the providerZones state) so a re-verify
@@ -2290,14 +2297,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const prov = apiProviderFor(zone.providerKey)
         const accounts = prov ? allConnections.filter((c) => c.provider === prov) : []
         if (accounts.length === 0) {
-          return { error: `No ${zone.providerLabel} account is connected for ${zone.apex} — add one in the DNS view (N) first.` }
+          return { error: `No ${zone.providerLabel} account is connected for ${zone.apex} — add one in the DNS view (N) first.`, zone }
         }
         // An account is connected but its cached zones don't list this zone — most
         // likely a stale cache (zone added since the last verify). Re-verify + retry.
         await Promise.all(accounts.map((c) => verifyAndCache(c)))
         conn = find()
         if (!conn) {
-          return { error: `Your ${zone.providerLabel} account doesn't serve ${zone.apex} (re-checked just now) — confirm the zone exists in that account.` }
+          return { error: `Your ${zone.providerLabel} account doesn't serve ${zone.apex} (re-checked just now) — confirm the zone exists in that account.`, zone }
         }
       }
       return { zone, conn }
@@ -2874,7 +2881,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       try {
         if (site.stack === "bedrock" && !site.gitRepo) return fail("create", "the source Bedrock site has no git repo to clone from.")
         // create — Bedrock → `git` site (SpinupWP clones the repo); Standard WP → blank.
-        set((s) => ({ ...s, step: "create", error: undefined, failedStep: undefined, detail: undefined }))
+        set((s) => ({ ...s, step: "create", error: undefined, failedStep: undefined, detail: undefined, stageStartedAt: Date.now() }))
         const dbName = site.destDbName ?? site.siteUser
         const dbPw = site.destDbPassword ?? randomToken(28)
         logger?.redact(dbPw)
@@ -2963,7 +2970,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           stage === "build" ? "deploy" : stage === "config" ? "config" : stage === "verify" ? "verify" : "pull"
         const onProgress = (stage: CloneStage, status: "start" | "ok" | "fail") => {
           if (status !== "start") return
-          set((s) => ({ ...s, step: stageToStep(stage), detail: stage }))
+          set((s) => ({ ...s, step: stageToStep(stage), detail: stage, stageStartedAt: Date.now() }))
         }
         const onExec = logger ? (e: CloneExecRecord) => logger.log({ event: "exec", ...e }) : undefined
         const res =
@@ -3063,6 +3070,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [cloneJob])
 
+  // Space on a ready cutover row: include/exclude it from the batch flip.
+  const toggleCutoverExclude = useCallback((siteId: number, name: string) => {
+    setCloneJob((j) => {
+      if (!j) return j
+      return {
+        ...j,
+        sites: j.sites.map((s) =>
+          s.sourceSiteId === siteId && s.cutover
+            ? { ...s, cutover: { ...s.cutover, records: s.cutover.records.map((r) => (r.name === name && r.status === "ready" ? { ...r, excluded: !r.excluded } : r)) } }
+            : s,
+        ),
+      }
+    })
+  }, [])
+
   // The explicit continue: only valid once every selected site has settled and at
   // least one clone succeeded.
   const cloneContinueToCutover = useCallback(() => {
@@ -3111,18 +3133,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           try {
             const rc = await resolveZoneConn(name)
             if ("error" in rc) {
-              records.push({ name, status: "manual", targetValue: targetIp, reason: rc.error })
+              // A web-handoff host (GoDaddy delegate access, Namecheap, …) is a
+              // deliberate way of working, not a misconfiguration — its manual
+              // reason is the user's access note (per-zone override, else the
+              // global default), not a "connect an account" scold. API-connectable
+              // hosts (Cloudflare/Route 53) keep the actionable error.
+              const zi = rc.zone
+              const web = zi ? consoleForHost(zi.providerKey) : null
+              const reason = web ? zoneAccessNotes.get(zi!.apex) || DEFAULT_WEB_ACCESS_NOTE : rc.error
+              records.push({ name, status: "manual", targetValue: targetIp, reason, apex: zi?.apex, hostKey: zi?.providerKey })
               continue
             }
             const res = await getZoneRecord(rc.conn.id, rc.zone.apex, name, "A")
             if (!res.ok || !res.record) {
               // No A record here — typically a www CNAME that follows the apex, or
               // absent. Skip silently; only flag a missing PRIMARY domain A.
-              if (name === site.domain) records.push({ name, status: "manual", targetValue: targetIp, reason: res.error ?? "no A record" })
+              if (name === site.domain) records.push({ name, status: "manual", targetValue: targetIp, reason: res.error ?? "no A record", apex: rc.zone.apex, hostKey: rc.zone.providerKey })
               continue
             }
             const cur = res.record.values[0] ?? ""
-            const base = { name, currentValue: cur, targetValue: targetIp }
+            const base = { name, currentValue: cur, targetValue: targetIp, apex: rc.zone.apex, hostKey: rc.zone.providerKey }
             // Cutover repoints the VALUE, not the TTL — a Cloudflare proxied
             // record can't have its TTL edited but its origin IS still
             // PATCHable, so this checks valueEditable (falls back to editable
@@ -3138,7 +3168,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setCloneSite(site.sourceSiteId, (s) => ({ ...s, cutover: { status: aggregateCutover(records), records } }))
       }),
     )
-  }, [cloneJob, destIpOf, resolveZoneConn, getZoneRecord, setCloneSite])
+  }, [cloneJob, destIpOf, resolveZoneConn, getZoneRecord, setCloneSite, zoneAccessNotes])
 
   // Flip every "ready" A record to the new IP, together (batched, across all sites).
   // Re-resolves zone+record at flip time (no creds held in state), repoints via
@@ -3149,7 +3179,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const targetIp = destIpOf(j)
     if (!targetIp) return
     for (const site of j.sites.filter((s) => s.selected && s.cutover)) {
-      for (const rec of site.cutover!.records.filter((r) => r.status === "ready")) {
+      for (const rec of site.cutover!.records.filter((r) => r.status === "ready" && !r.excluded)) {
         const name = rec.name
         const upd = (fn: (r: CutoverRecord) => CutoverRecord) => setCutoverRecord(site.sourceSiteId, name, fn)
         upd((r) => ({ ...r, status: "flipping", error: undefined }))
@@ -3327,6 +3357,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     startClone,
     cloneRetrySite,
     cloneContinueToCutover,
+    toggleCutoverExclude,
     verifyCloneSite,
     cutoverCheck,
     startCutover,
