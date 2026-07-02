@@ -219,6 +219,8 @@ export interface CloneSiteState {
   step: CloneSiteStep
   detail?: string // current sub-activity (the pull stage), for the roster
   stageStartedAt?: number // when the current step/stage began — drives the roster's elapsed timer
+  transferBytes?: number // bytes received so far in the current transfer (sidecar stat poll)
+  transferRate?: number // smoothed bytes/sec derived from successive polls
   failedStep?: CloneSiteStep
   error?: string
   verifying?: boolean // slice 5: verify drill-down in flight
@@ -2970,13 +2972,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           stage === "build" ? "deploy" : stage === "config" ? "config" : stage === "verify" ? "verify" : "pull"
         const onProgress = (stage: CloneStage, status: "start" | "ok" | "fail") => {
           if (status !== "start") return
-          set((s) => ({ ...s, step: stageToStep(stage), detail: stage, stageStartedAt: Date.now() }))
+          set((s) => ({ ...s, step: stageToStep(stage), detail: stage, stageStartedAt: Date.now(), transferBytes: undefined, transferRate: undefined }))
+        }
+        // Sidecar byte progress: rate from successive samples (poll cadence ~5s).
+        const transferAtRef = { at: 0 }
+        const onTransfer = (_stage: CloneStage, bytes: number) => {
+          const at = Date.now()
+          set((s) => {
+            const rate = s.transferBytes != null && bytes > s.transferBytes && transferAtRef.at > 0 ? ((bytes - s.transferBytes) / (at - transferAtRef.at)) * 1000 : s.transferRate
+            return { ...s, transferBytes: bytes, transferRate: rate }
+          })
+          transferAtRef.at = at
         }
         const onExec = logger ? (e: CloneExecRecord) => logger.log({ event: "exec", ...e }) : undefined
         const res =
           site.stack === "bedrock"
-            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads }, onProgress, onExec)
-            : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder }, onProgress, onExec)
+            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads }, onProgress, onExec, onTransfer)
+            : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder }, onProgress, onExec, onTransfer)
         if (!res.ok) {
           const stage = (res.error?.split(":")[0] ?? "pull") as CloneStage
           return fail(stageToStep(stage), res.error ?? "pull failed")

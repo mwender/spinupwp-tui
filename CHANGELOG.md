@@ -71,6 +71,12 @@ versions; such changes are called out here.
   moved to `f`.
 - **In-flight clone stages show a live elapsed timer** in the roster, so a
   long file pull reads as working rather than frozen.
+- **File and database transfers show live byte progress** — the roster reads
+  `pull · files · 1.2 GB · 18 MB/s · 4m32s` while a transfer runs. Measured
+  by a read-only sidecar that stats the growing archive over its own SSH
+  session every few seconds, so the progress display can never interfere
+  with the transfer itself. Bytes and rate are exact (no estimated percent —
+  the archive is compressed on the fly, so a percent would lie).
 - **The clone wizard no longer jumps to DNS cutover on its own.** When the
   clone roster settles, the wizard now stays put so you can eyeball every
   site's final state — press `c` to continue to the cutover step (which moves

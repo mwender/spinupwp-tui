@@ -136,6 +136,33 @@ export interface CloneExecRecord {
 }
 export type CloneExecLog = (e: CloneExecRecord) => void
 
+// Byte-level transfer progress: the pull materializes a growing file (the tarball
+// or DB dump being received), so a SIDECAR poll — an independent, read-only `stat`
+// over its own SSH session every few seconds — reads exact bytes-so-far without
+// touching the transfer pipeline (progress display must never be able to break a
+// transfer). Best-effort: a failed poll is silently skipped.
+export type CloneTransfer = (stage: CloneStage, bytes: number) => void
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// Poll `path` on `ctx` until stopped; report each growing size. Returns a stop().
+export function pollTransferSize(ctx: SudoCtx, path: string, onBytes: (bytes: number) => void): () => void {
+  let live = true
+  void (async () => {
+    await sleep(4000) // let the transfer begin
+    while (live) {
+      const r = await exec(ctx, `stat -c %s ${shq(path)} 2>/dev/null || true`, 15_000)
+      if (!live) break
+      const n = Number(r.stdout.trim())
+      if (r.ok && Number.isFinite(n) && n > 0) onBytes(n)
+      await sleep(5000)
+    }
+  })()
+  return () => {
+    live = false
+  }
+}
+
 // ---- Webroot: configured vs REAL ------------------------------------------
 //
 // SpinupWP's public_folder is a *setting* (nginx root = files<public_folder>) — the
@@ -240,6 +267,7 @@ export async function runStandardWpPull(
   spec: StandardWpPullSpec,
   onProgress: CloneProgress = () => {},
   onExec?: CloneExecLog,
+  onTransfer?: CloneTransfer,
 ): Promise<{ ok: boolean; error?: string; sourceWebrootRel?: string; destWebrootRel?: string }> {
   const srcIp = source.server.ip_address ?? ""
   const root = `/sites/${spec.domain}/files`
@@ -295,6 +323,7 @@ export async function runStandardWpPull(
     // may sit in the webroot OR one level above it, so the assertion accepts either.
     onProgress("files", "start")
     const normalize = plan.normalize ? `${normalizeWebrootScript(root, destWpDir)}; ` : ""
+    const stopFilesPoll = pollTransferSize(dest, `/tmp/clone_${spec.domain}.tgz`, (b) => onTransfer?.("files", b))
     // wp-config.php may live in the webroot or one level above it (the
     // config-above-webroot convention — see CLAUDE.md); never above files/.
     const cfgDirs = [...new Set([destWpDir, destWpDir.slice(0, destWpDir.lastIndexOf("/")), root])].filter((d) => d.length >= root.length)
@@ -309,6 +338,7 @@ export async function runStandardWpPull(
       `set -e; rc=0; timeout -k 5 3600 ${sshk} ${shq(su)}@${srcIp} "tar -C ${shq(root)} -czf - --exclude=wp-content/cache ." </dev/null > /tmp/clone_${spec.domain}.tgz || rc=$?; [ "$rc" -ne 124 ] || { echo "file transfer timed out after 60 minutes" >&2; exit 124; }; [ "$rc" -le 1 ] || { echo "tar-over-ssh failed with exit $rc" >&2; exit "$rc"; }; tar -C ${shq(root)} -xzf /tmp/clone_${spec.domain}.tgz; rm -f /tmp/clone_${spec.domain}.tgz; ${normalize}chown -R ${shq(du)}:${shq(du)} ${shq(root)}; test -f ${shq(destWpDir)}/wp-settings.php || { echo "no WordPress core at ${destWpDir} after pull" >&2; exit 65; }; ${cfgAssert} || { echo "no wp-config.php in the webroot or one level above it (under ${root})" >&2; exit 65; }`,
       3_660_000, // outer must exceed the in-script `timeout 3600` so the inner reports a clean 124
     )
+    stopFilesPoll()
     if (!files.ok) return fail("files", files.stderr.trim() || "file pull failed")
     onProgress("files", "ok")
 
@@ -334,12 +364,14 @@ export async function runStandardWpPull(
       900_000,
     )
     if (!dump.ok) return fail("db", dump.stderr.trim() || "source db export failed")
+    const stopDbPoll = pollTransferSize(dest, `/tmp/clone_${spec.domain}.sql.gz`, (b) => onTransfer?.("db", b))
     const imp = await run(
       "db",
       dest,
       `set -e; timeout -k 5 300 ${sshk} ${shq(su)}@${srcIp} "cat ${shq(home)}/.clone_db.sql.gz" </dev/null > /tmp/clone_${spec.domain}.sql.gz; gunzip -f /tmp/clone_${spec.domain}.sql.gz; chmod 644 /tmp/clone_${spec.domain}.sql; cd ${shq(destWpDir)}; sudo -u ${shq(du)} -H wp db import /tmp/clone_${spec.domain}.sql >/dev/null; rm -f /tmp/clone_${spec.domain}.sql`,
       360_000, // outer must exceed the in-script `timeout 300`
     )
+    stopDbPoll()
     if (!imp.ok) return fail("db", imp.stderr.trim() || "db pull/import failed")
     onProgress("db", "ok")
 
@@ -390,6 +422,7 @@ export async function runBedrockPull(
   spec: BedrockPullSpec,
   onProgress: CloneProgress = () => {},
   onExec?: CloneExecLog,
+  onTransfer?: CloneTransfer,
 ): Promise<{ ok: boolean; error?: string }> {
   const srcIp = source.server.ip_address ?? ""
   const root = `/sites/${spec.domain}/files` // Bedrock project root (composer.json, web/, .env)
@@ -450,12 +483,14 @@ export async function runBedrockPull(
     //    uploads dir yields an empty stream we simply skip.
     onProgress("files", "start")
     if (!spec.excludeUploads) {
+      const stopUpPoll = pollTransferSize(dest, `${tmp}_up.tgz`, (b) => onTransfer?.("files", b))
       const up = await run(
         "files",
         dest,
         `set -e; timeout -k 5 3600 ${remote(`[ -d ${shq(`${root}/web/app/uploads`)} ] && tar -C ${shq(root)} --warning=no-file-changed -czf - web/app/uploads || true`)} > ${tmp}_up.tgz; if [ -s ${tmp}_up.tgz ]; then tar -C ${shq(root)} -xzf ${tmp}_up.tgz && chown -R ${shq(du)}:${shq(du)} ${shq(`${root}/web/app/uploads`)}; fi; rm -f ${tmp}_up.tgz`,
         3_660_000, // outer must exceed the in-script `timeout 3600` so the inner reports a clean 124
       )
+      stopUpPoll()
       if (!up.ok) return fail("files", up.stderr.trim() || "uploads pull failed")
     }
     onProgress("files", "ok")
@@ -491,12 +526,14 @@ export async function runBedrockPull(
       900_000,
     )
     if (!dump.ok) return fail("db", dump.stderr.trim() || "source db export failed")
+    const stopDbPoll = pollTransferSize(dest, `${tmp}.sql.gz`, (b) => onTransfer?.("db", b))
     const imp = await run(
       "db",
       dest,
       `set -e; timeout -k 5 300 ${remote(`cat ${shq(`${home}/.clone_db.sql.gz`)}`)} > ${tmp}.sql.gz; gunzip -f ${tmp}.sql.gz; chmod 644 ${tmp}.sql; cd ${shq(root)}; sudo -u ${shq(du)} -H wp db import ${tmp}.sql >/dev/null; rm -f ${tmp}.sql`,
       360_000, // outer must exceed the in-script `timeout 300`
     )
+    stopDbPoll()
     if (!imp.ok) return fail("db", imp.stderr.trim() || "db pull/import failed")
     onProgress("db", "ok")
 

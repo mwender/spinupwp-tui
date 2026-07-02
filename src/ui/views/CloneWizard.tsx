@@ -707,7 +707,7 @@ export function CloneWizard() {
                 <text content={` ${s.domain}`} fg={cur || s.step === "error" || s.step === "done" ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
                 <box style={{ flexGrow: 1 }} />
                 <text
-                  content={(s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? "done" : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}${s.stageStartedAt ? " · " + fmtElapsed(now - s.stageStartedAt) : ""}`) + vmark}
+                  content={(s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? "done" : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}${s.transferBytes != null ? ` · ${formatBytes(s.transferBytes)}${s.transferRate ? ` · ${formatBytes(s.transferRate)}/s` : ""}` : ""}${s.stageStartedAt ? " · " + fmtElapsed(now - s.stageStartedAt) : ""}`) + vmark}
                   fg={s.step === "error" || (s.verify && !s.verify.ok) ? theme.bad : s.verify?.ok ? theme.good : s.step === "done" ? theme.good : theme.textFaint}
                   wrapMode="none"
                   style={{ flexShrink: 0 }}
