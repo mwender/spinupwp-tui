@@ -68,6 +68,11 @@ export interface SiteSizeInput {
   siteUser: string
   publicFolder?: string // wp-cli runs from files<public_folder> (files/ when "/")
 }
+export interface SiteSizeEstimate {
+  web: number // webroot bytes (uncompressed du) — the files-transfer soft ceiling
+  db: number
+  total: number
+}
 
 // Estimate each source site's payload (webroot bytes + DB bytes) in ONE round trip.
 // Webroot via `du -sb /sites/<domain>/files`; DB via `wp db size --size_format=b`
@@ -78,7 +83,7 @@ export async function estimateSourceSiteSizes(
   sudoUser: string,
   sudoPassword: string,
   sites: SiteSizeInput[],
-): Promise<Map<number, number>> {
+): Promise<Map<number, SiteSizeEstimate>> {
   if (sites.length === 0) return new Map()
   const lines = sites.map((s) => {
     const root = `/sites/${s.domain}/files`
@@ -90,14 +95,15 @@ export async function estimateSourceSiteSizes(
     ].join("; ")
   })
   const res = await sudoExec(server, sudoUser, sudoPassword, lines.join("\n"), 120_000)
-  const out = new Map<number, number>()
+  const out = new Map<number, SiteSizeEstimate>()
   if (!res.ok) return out
   for (const line of res.stdout.split("\n")) {
     const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)$/)
     if (!m) continue
     const id = Number(m[1])
-    const total = Number(m[2]) + Number(m[3])
-    if (total > 0) out.set(id, total)
+    const web = Number(m[2])
+    const db = Number(m[3])
+    if (web + db > 0) out.set(id, { web, db, total: web + db })
   }
   return out
 }
@@ -141,7 +147,11 @@ export type CloneExecLog = (e: CloneExecRecord) => void
 // over its own SSH session every few seconds — reads exact bytes-so-far without
 // touching the transfer pipeline (progress display must never be able to break a
 // transfer). Best-effort: a failed poll is silently skipped.
-export type CloneTransfer = (stage: CloneStage, bytes: number) => void
+// `target` is the expected final size when known; `exact` distinguishes a true
+// percent (the DB dump is staged+gzipped BEFORE the pull, so its size is a fact)
+// from a soft ceiling (files stream gzip-compressed, so the uncompressed du size
+// only bounds the transfer — a percent against it would lie).
+export type CloneTransfer = (stage: CloneStage, bytes: number, target?: number, exact?: boolean) => void
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -233,6 +243,7 @@ export interface StandardWpPullSpec {
   destDbUser: string
   destDbPassword: string
   publicFolder?: string // source site's public_folder (dest is created with the same)
+  approxFilesBytes?: number // Plan's uncompressed webroot size — soft ceiling for the files meter
 }
 
 // The ephemeral pull key and its authorized_keys marker are PER SITE. They were
@@ -323,7 +334,7 @@ export async function runStandardWpPull(
     // may sit in the webroot OR one level above it, so the assertion accepts either.
     onProgress("files", "start")
     const normalize = plan.normalize ? `${normalizeWebrootScript(root, destWpDir)}; ` : ""
-    const stopFilesPoll = pollTransferSize(dest, `/tmp/clone_${spec.domain}.tgz`, (b) => onTransfer?.("files", b))
+    const stopFilesPoll = pollTransferSize(dest, `/tmp/clone_${spec.domain}.tgz`, (b) => onTransfer?.("files", b, spec.approxFilesBytes, false))
     // wp-config.php may live in the webroot or one level above it (the
     // config-above-webroot convention — see CLAUDE.md); never above files/.
     const cfgDirs = [...new Set([destWpDir, destWpDir.slice(0, destWpDir.lastIndexOf("/")), root])].filter((d) => d.length >= root.length)
@@ -360,11 +371,13 @@ export async function runStandardWpPull(
     const dump = await run(
       "db",
       source,
-      `sudo -u ${shq(su)} -H bash -c "cd ${shq(srcWpDir)} && wp --skip-plugins --skip-themes db export ${shq(home)}/.clone_db.sql 2>/dev/null && gzip -f ${shq(home)}/.clone_db.sql"`,
+      `sudo -u ${shq(su)} -H bash -c "cd ${shq(srcWpDir)} && wp --skip-plugins --skip-themes db export ${shq(home)}/.clone_db.sql 2>/dev/null && gzip -f ${shq(home)}/.clone_db.sql && stat -c %s ${shq(home)}/.clone_db.sql.gz"`,
       900_000,
     )
     if (!dump.ok) return fail("db", dump.stderr.trim() || "source db export failed")
-    const stopDbPoll = pollTransferSize(dest, `/tmp/clone_${spec.domain}.sql.gz`, (b) => onTransfer?.("db", b))
+    // The staged dump's size is exact — the db meter gets a true percent.
+    const dbTarget = Number(dump.stdout.trim().match(/(\d+)\s*$/)?.[1]) || undefined
+    const stopDbPoll = pollTransferSize(dest, `/tmp/clone_${spec.domain}.sql.gz`, (b) => onTransfer?.("db", b, dbTarget, true))
     const imp = await run(
       "db",
       dest,
@@ -522,11 +535,12 @@ export async function runBedrockPull(
     const dump = await run(
       "db",
       source,
-      `sudo -u ${shq(su)} -H bash -c "cd ${shq(root)} && wp --skip-plugins --skip-themes db export ${shq(home)}/.clone_db.sql 2>/dev/null && gzip -f ${shq(home)}/.clone_db.sql"`,
+      `sudo -u ${shq(su)} -H bash -c "cd ${shq(root)} && wp --skip-plugins --skip-themes db export ${shq(home)}/.clone_db.sql 2>/dev/null && gzip -f ${shq(home)}/.clone_db.sql && stat -c %s ${shq(home)}/.clone_db.sql.gz"`,
       900_000,
     )
     if (!dump.ok) return fail("db", dump.stderr.trim() || "source db export failed")
-    const stopDbPoll = pollTransferSize(dest, `${tmp}.sql.gz`, (b) => onTransfer?.("db", b))
+    const dbTarget = Number(dump.stdout.trim().match(/(\d+)\s*$/)?.[1]) || undefined
+    const stopDbPoll = pollTransferSize(dest, `${tmp}.sql.gz`, (b) => onTransfer?.("db", b, dbTarget, true))
     const imp = await run(
       "db",
       dest,

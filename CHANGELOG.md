@@ -75,8 +75,10 @@ versions; such changes are called out here.
   `pull · files · 1.2 GB · 18 MB/s · 4m32s` while a transfer runs. Measured
   by a read-only sidecar that stats the growing archive over its own SSH
   session every few seconds, so the progress display can never interfere
-  with the transfer itself. Bytes and rate are exact (no estimated percent —
-  the archive is compressed on the fly, so a percent would lie).
+  with the transfer itself. File transfers show the Plan-measured size as a
+  soft ceiling (`1.2 GB of ~2.9 GB` — approximate because the archive
+  compresses in flight), and database pulls show a true percent (the dump
+  is staged and gzipped on the source first, so its final size is a fact).
 - **The clone wizard no longer jumps to DNS cutover on its own.** When the
   clone roster settles, the wizard now stays put so you can eyeball every
   site's final state — press `c` to continue to the cutover step (which moves

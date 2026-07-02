@@ -202,6 +202,7 @@ export interface CloneSiteState {
   selected: boolean // unchecked in Plan → skipped entirely
   isWordPress: boolean // API is_wordpress — false (non-git) = redirect/static site the WP chain can't clone
   sizeBytes?: number // webroot + DB estimate (sizing + progress); undefined until sized
+  sizeWebBytes?: number // webroot-only bytes (uncompressed) — the files-transfer soft ceiling
   stack: "wp" | "bedrock" // from source git.repo → drives blank-vs-git create
   gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
   gitBranch?: string // source git.branch
@@ -221,6 +222,8 @@ export interface CloneSiteState {
   stageStartedAt?: number // when the current step/stage began — drives the roster's elapsed timer
   transferBytes?: number // bytes received so far in the current transfer (sidecar stat poll)
   transferRate?: number // smoothed bytes/sec derived from successive polls
+  transferTarget?: number // expected final size when known
+  transferExact?: boolean // true = target is a fact (staged DB dump) → real percent; false = soft ceiling
   failedStep?: CloneSiteStep
   error?: string
   verifying?: boolean // slice 5: verify drill-down in flight
@@ -2847,7 +2850,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const sizes = await estimateSourceSiteSizes(srv, sudoUser, pw, inputs)
     if (sizes.size === 0) return
     setCloneJob((cur) =>
-      cur ? { ...cur, sites: cur.sites.map((s) => (sizes.has(s.sourceSiteId) ? { ...s, sizeBytes: sizes.get(s.sourceSiteId) } : s)) } : cur,
+      cur ? { ...cur, sites: cur.sites.map((s) => { const e = sizes.get(s.sourceSiteId); return e ? { ...s, sizeBytes: e.total, sizeWebBytes: e.web } : s }) } : cur,
     )
   }, [cloneJob, servers, sudoUsers])
 
@@ -2972,15 +2975,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           stage === "build" ? "deploy" : stage === "config" ? "config" : stage === "verify" ? "verify" : "pull"
         const onProgress = (stage: CloneStage, status: "start" | "ok" | "fail") => {
           if (status !== "start") return
-          set((s) => ({ ...s, step: stageToStep(stage), detail: stage, stageStartedAt: Date.now(), transferBytes: undefined, transferRate: undefined }))
+          set((s) => ({ ...s, step: stageToStep(stage), detail: stage, stageStartedAt: Date.now(), transferBytes: undefined, transferRate: undefined, transferTarget: undefined, transferExact: undefined }))
         }
         // Sidecar byte progress: rate from successive samples (poll cadence ~5s).
         const transferAtRef = { at: 0 }
-        const onTransfer = (_stage: CloneStage, bytes: number) => {
+        const onTransfer = (_stage: CloneStage, bytes: number, target?: number, exact?: boolean) => {
           const at = Date.now()
           set((s) => {
             const rate = s.transferBytes != null && bytes > s.transferBytes && transferAtRef.at > 0 ? ((bytes - s.transferBytes) / (at - transferAtRef.at)) * 1000 : s.transferRate
-            return { ...s, transferBytes: bytes, transferRate: rate }
+            return { ...s, transferBytes: bytes, transferRate: rate, transferTarget: target, transferExact: exact }
           })
           transferAtRef.at = at
         }
@@ -2988,7 +2991,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const res =
           site.stack === "bedrock"
             ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads }, onProgress, onExec, onTransfer)
-            : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder }, onProgress, onExec, onTransfer)
+            : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder, approxFilesBytes: site.sizeWebBytes }, onProgress, onExec, onTransfer)
         if (!res.ok) {
           const stage = (res.error?.split(":")[0] ?? "pull") as CloneStage
           return fail(stageToStep(stage), res.error ?? "pull failed")
