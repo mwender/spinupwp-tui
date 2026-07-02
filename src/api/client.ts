@@ -13,6 +13,8 @@ import type {
   ProviderMetadata,
   CreateServerPayload,
   CreateSitePayload,
+  AdditionalDomain,
+  AddDomainPayload,
 } from "./types.ts"
 
 // The restartable services SpinupWP exposes (POST /servers/{id}/services/{svc}/restart).
@@ -203,6 +205,19 @@ export class SpinupWPClient {
   // enableHttps().
   createSite(payload: CreateSitePayload): Promise<{ event_id: number }> {
     return this.mutate<{ event_id: number }>("/sites", "POST", payload)
+  }
+
+  // Additional domains on a site (the extra hostnames nginx answers for). The
+  // clone wizard re-creates the source's set on the dest — a fresh site only
+  // serves its primary domain otherwise.
+  async listSiteDomains(siteId: number): Promise<AdditionalDomain[]> {
+    return this.listAll<AdditionalDomain>(`/sites/${siteId}/domains`)
+  }
+
+  // Add an additional domain to a site. Async (nginx reconfig) → returns an
+  // event_id to poll. Needs a Read/Write token.
+  addSiteDomain(siteId: number, payload: AddDomainPayload): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/domains`, "POST", payload)
   }
 
   // Enable HTTPS on a site. `type: "webroot"` requests a Let's Encrypt cert (the

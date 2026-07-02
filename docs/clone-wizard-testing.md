@@ -93,6 +93,22 @@ proven (HTTP 200, clean source-key revoke); `blank`+`database` create; Plan sizi
   (`cloneSiteSupported`); the toggle refuses to select them.
 - **Dest DB `table_prefix` must match the source** (production uses `wzl_`, `s81_`,
   etc.) — the create payload now copies `database.table_prefix`.
+- **Additional domains must be re-created on the dest** — a fresh site's nginx
+  `server_name` holds ONLY the primary domain (verified on the test boxes), so
+  `www.` + extra hostnames would 404/default-vhost after cutover.
+  `syncAdditionalDomains` (`src/lib/cloneDomains.ts`) copies the source's set —
+  redirect settings included — right after the dest create; idempotent (skips
+  domains already present), so per-site retries are safe. Proof of success =
+  the dest's nginx `server_name` line; a `www` request answering 301 (WordPress
+  canonical redirect) means it's working.
+- **`DELETE /sites/{id}` orphans the SpinupWP database RECORD unless you pass
+  `delete_database=true`** (also `delete_backups=true`). An orphaned record —
+  even with the actual MySQL DB dropped by hand — makes any later create that
+  reuses the db name fail with a 422 ("already exists on this server"), and
+  orphaned records can only be removed in the SpinupWP web UI. When deleting
+  clone leftovers, always delete the database with the site. (web2 currently
+  has an orphaned `pubsite` DB record from learning this; the live fixture
+  clone uses `pubsite2`.)
 - **Every clone job writes a JSONL log** to `<configDir>/logs/clone-<ts>-<src>-to-<dst>.jsonl`
   (every sudo script + full stdout/stderr, passwords redacted). The roster truncates
   errors; `⏎` on a failed site shows the full error + the log path. Read the log

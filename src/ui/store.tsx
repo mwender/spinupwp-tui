@@ -8,7 +8,7 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "@opentui-ui/toast"
 import { SpinupWPClient, ApiError, type ServerService } from "../api/client.ts"
-import type { Server, Site, Event, ProviderMetadata, CreateServerPayload, CreateSitePayload } from "../api/types.ts"
+import type { Server, Site, Event, ProviderMetadata, CreateServerPayload, CreateSitePayload, AdditionalDomain } from "../api/types.ts"
 import { loadConfig, saveConfig, type ServerProviderRef } from "../config.ts"
 import { saveJob, removeJob } from "../lib/jobs.ts"
 import { APP_VERSION } from "../version.ts"
@@ -41,6 +41,7 @@ import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, verifyClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
+import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, type RepoHost } from "../lib/gitDeployKey.ts"
 import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
@@ -203,6 +204,7 @@ export interface CloneSiteState {
   gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
   gitBranch?: string // source git.branch
   additionalDomains?: string[] // extra domains served by the site → extra cutover records
+  additionalDomainConfigs?: AdditionalDomain[] // full source configs (redirects) — re-created on the dest
   excludeUploads: boolean // per-site opt-out (default false = sync uploads/)
   phpVersion?: string // matched from source for the dest create
   publicFolder?: string // matched from source for the dest create + where WP lives under files/
@@ -2676,6 +2678,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           gitRepo: s.git?.repo ?? undefined,
           gitBranch: s.git?.branch ?? undefined,
           additionalDomains: (s.additional_domains ?? []).map((d) => d.domain),
+          additionalDomainConfigs: s.additional_domains ?? [],
           excludeUploads: false,
           phpVersion: s.php_version ?? undefined,
           publicFolder: s.public_folder ?? undefined,
@@ -2936,6 +2939,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         }
         set((s) => ({ ...s, destSiteId }))
+        // additional domains — a fresh dest site answers ONLY its primary domain;
+        // re-create the source's set (with redirect settings) or the later DNS
+        // cutover would repoint hostnames the dest doesn't serve. Idempotent on retry.
+        const extraDomains = site.additionalDomainConfigs ?? []
+        if (destSiteId != null && extraDomains.length > 0) {
+          set((s) => ({ ...s, detail: "domains" }))
+          const dres = await syncAdditionalDomains(client, destSiteId, extraDomains, logger ? (e) => logger.log(e) : undefined)
+          if (dres.failed.length > 0) {
+            const f = dres.failed[0]!
+            return fail("create", `couldn't add ${dres.failed.length === 1 ? `domain ${f.domain}` : `${dres.failed.length} domains (${dres.failed.map((x) => x.domain).join(", ")})`}: ${f.error}`)
+          }
+        }
         // pull chain — stack-appropriate runner. Map its stage → roster step.
         set((s) => ({ ...s, step: "pull", detail: "starting" }))
         const stageToStep = (stage: CloneStage): CloneSiteStep =>

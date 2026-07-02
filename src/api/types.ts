@@ -156,6 +156,14 @@ export interface CreateServerPayload {
 // POST /sites. HTTPS is NOT a creation field — it's enabled afterward via
 // POST /sites/{id}/https (see SpinupWPClient.enableHttps). For a vanity/placeholder
 // site we use installation_method "blank" (empty docroot we drop an index.php into).
+// POST /sites/{id}/domains — add an additional domain (async, returns event_id).
+// redirect.type: 301/302/307/308 (defaults 301); redirect.destination defaults to
+// the site's primary domain.
+export interface AddDomainPayload {
+  domain: string
+  redirect?: { enabled?: boolean; type?: number; destination?: string }
+}
+
 export interface CreateSitePayload {
   server_id: number
   domain: string

@@ -31,6 +31,12 @@ versions; such changes are called out here.
 - **Cloned databases keep the source's table prefix** — the destination DB
   was previously always created with `wp_`, breaking sites with custom
   prefixes.
+- **Cloned sites now carry over the source's additional domains** (with their
+  redirect settings). A freshly created site only answers for its primary
+  domain, so `www.` and every extra hostname would have pointed at a server
+  that didn't serve them after DNS cutover. The wizard now re-creates the
+  full set on the destination right after the site is created — verified by
+  the destination's nginx `server_name` picking up every hostname.
 
 ### Added
 - **Every clone job now writes a full log** to `~/.config/spinupwp-tui/logs/`
