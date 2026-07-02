@@ -473,8 +473,10 @@ over SSH). The steps:
    one).
 6. **DNS cutover** — when you're satisfied, repoint **every** `A` record across each
    site's domains (apex + additional) to the new server, in one batched, partial-aware
-   pass; `www`-style records that follow the apex are skipped, not clobbered. Records
-   in zones you can't edit are listed for hand-editing.
+   pass; `www`-style records that follow the apex are skipped, not clobbered. Cloudflare
+   **proxied** records repoint automatically too (their origin IP is always PATCHable
+   even though their TTL stays fixed to automatic). Records in zones you can't edit are
+   listed for hand-editing.
 
 The clone runs in the **background** — pressing `Esc` doesn't abandon it; a header
 badge (`⠹ Cloning … — press C`) surfaces the in-flight job and `C` reopens the live
@@ -607,8 +609,10 @@ never shown or changed. Moving a site can't take down its email.
   check re-reads the live nameservers and **blocks** the change if the connected
   account's zone isn't the one actually serving the domain. Route 53 changes are
   followed to completion; the record shows an "updating" status that keeps ticking
-  even if you leave the view. Only the **TTL** is editable for now (repointing a
-  record's target comes later), and Cloudflare **proxied** records are read-only.
+  even if you leave the view. Only the **TTL** is editable here — a record's target
+  is repointed separately, during the clone wizard's DNS cutover (see "Cloning a
+  server" below). Cloudflare **proxied** records keep their TTL fixed to automatic
+  (so it's not editable here), but their origin IP still repoints fine at cutover.
 - **Connect a provider (`c`).** Manage credentials for the selected zone's
   provider — **AWS Route 53** (an IAM access key), **Cloudflare** (a scoped token),
   or **GoDaddy** (a Production API key). Multiple accounts per provider are
