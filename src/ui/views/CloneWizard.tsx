@@ -59,6 +59,7 @@ export function CloneWizard() {
     cloneSizeSites,
     startClone,
     cloneRetrySite,
+    cloneContinueToCutover,
     verifyCloneSite,
     cutoverCheck,
     startCutover,
@@ -289,6 +290,12 @@ export function CloneWizard() {
       if (name === "r") {
         for (const s of job.sites) if (s.selected && s.step === "error") cloneRetrySite(s.sourceSiteId)
         return
+      }
+      // c — the explicit continue to DNS cutover (only once the roster settled
+      // with at least one success; cutover moves live traffic).
+      if (name === "c" && job.step === "clone") {
+        const settled = sel.length > 0 && sel.every((s) => s.step === "done" || s.step === "error")
+        if (settled && sel.some((s) => s.step === "done")) return cloneContinueToCutover()
       }
     }
 
@@ -645,6 +652,7 @@ export function CloneWizard() {
   // Live clone roster — one row per selected site, sub-step + spinner/✓/✕.
   function clonePane() {
     const done = selected.filter((s) => s.step === "done").length
+    const settled = selected.length > 0 && selected.every((s) => s.step === "done" || s.step === "error")
     const running = selected.filter((s) => !["queued", "done", "error"].includes(s.step)).length
     const errored = selected.filter((s) => s.step === "error").length
     const queued = selected.filter((s) => s.step === "queued").length
@@ -673,6 +681,9 @@ export function CloneWizard() {
           <text content={`✓ ${done} done · ⠹ ${running} running · ${queued} queued${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
           {done > 0 ? <text content="↑↓ select · v verify a done site" fg={theme.textFaint} wrapMode="none" /> : null}
           {errored > 0 ? <text content={`⏎ on a failed site — full error${job!.logPath ? ` · log: ${job!.logPath}` : ""}`} fg={theme.textFaint} wrapMode="none" /> : null}
+          {settled && done > 0 && job!.step === "clone" ? (
+            <text content={`❯ c — continue to DNS cutover (${done} of ${selected.length} cloned; cutover moves LIVE traffic)`} fg={theme.brand} wrapMode="none" />
+          ) : null}
           {job!.step === "clone" ? (
             <text content={errored > 0 ? "r retry failed · esc — clone keeps running in the background" : "esc — clone keeps running in the background (reopen with C)"} fg={theme.textFaint} wrapMode="none" />
           ) : (
@@ -785,7 +796,9 @@ export function CloneWizard() {
       }
       const done = selected.filter((s) => s.step === "done").length
       const errored = selected.filter((s) => s.step === "error").length
+      const settled = selected.length > 0 && selected.every((s) => s.step === "done" || s.step === "error")
       return [
+        ...(settled && done > 0 && job!.step === "clone" ? [{ key: "c", label: "DNS cutover" }] : []),
         ...(done > 0 ? [{ key: "↑↓", label: "select" }, { key: "v", label: "verify" }] : []),
         ...(errored > 0 ? [{ key: "r", label: "retry failed" }] : []),
         { key: "esc", label: job!.step === "clone" ? "background" : "close" },

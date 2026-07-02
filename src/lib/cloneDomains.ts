@@ -11,16 +11,20 @@ import type { AdditionalDomain } from "../api/types.ts"
 const EVENT_DONE = new Set(["deployed", "completed", "provisioned", "finished", "success"])
 const EVENT_FAIL = new Set(["failed", "errored", "error"])
 
-async function pollEvent(client: SpinupWPClient, eventId: number, timeoutMs = 120_000): Promise<boolean> {
+// 5s cadence; a transient failure to READ the event is not the event failing —
+// tolerate a few consecutive API errors (the client already absorbs 429 bursts).
+async function pollEvent(client: SpinupWPClient, eventId: number, timeoutMs = 180_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
+  let apiErrs = 0
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3000))
+    await new Promise((r) => setTimeout(r, 5000))
     try {
       const e = await client.getEvent(eventId)
+      apiErrs = 0
       if (EVENT_FAIL.has(e.status)) return false
       if (EVENT_DONE.has(e.status) || e.finished_at) return true
     } catch {
-      return false
+      if (++apiErrs >= 3) return false
     }
   }
   return false
@@ -59,9 +63,21 @@ export async function syncAdditionalDomains(
         redirect: d.redirect ? { enabled: d.redirect.enabled, type: d.redirect.type, destination: d.redirect.destination } : undefined,
       })
       const ok = await pollEvent(client, ev.event_id)
-      if (ok) result.added.push(d.domain)
-      else result.failed.push({ domain: d.domain, error: "the add-domain event failed on SpinupWP" })
-      log?.({ event: "domain-add", destSiteId, domain: d.domain, ok })
+      if (ok) {
+        result.added.push(d.domain)
+        log?.({ event: "domain-add", destSiteId, domain: d.domain, eventId: ev.event_id, ok })
+      } else {
+        // Pull the event's own output so the roster/log say WHY, not just "failed".
+        let out = ""
+        try {
+          out = ((await client.getEvent(ev.event_id)).output ?? "").trim()
+        } catch {
+          /* best-effort */
+        }
+        const error = `add-domain event ${ev.event_id} failed${out ? `: …${out.slice(-200)}` : " on SpinupWP"}`
+        result.failed.push({ domain: d.domain, error })
+        log?.({ event: "domain-add", destSiteId, domain: d.domain, eventId: ev.event_id, ok, output: out })
+      }
     } catch (err) {
       const error = (err as Error).message
       result.failed.push({ domain: d.domain, error })

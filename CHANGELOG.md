@@ -38,7 +38,21 @@ versions; such changes are called out here.
   full set on the destination right after the site is created — verified by
   the destination's nginx `server_name` picking up every hostname.
 
+### Changed
+- **The clone wizard no longer jumps to DNS cutover on its own.** When the
+  clone roster settles, the wizard now stays put so you can eyeball every
+  site's final state — press `c` to continue to the cutover step (which moves
+  live traffic) when you're ready.
+
 ### Added
+- **The API client is now rate-limit aware.** It watches
+  `X-RateLimit-Remaining` on every response and paces itself as the window
+  runs low, and a 429 is absorbed with a Retry-After backoff instead of
+  surfacing as a failure. This matters: during a real migration, rate-limited
+  polling made three *successful* operations report as failures. Event
+  polling is also slower-cadence and tolerates transient API errors, and a
+  genuinely failed domain-add now includes SpinupWP's own event output in the
+  error.
 - **Every clone job now writes a full log** to `~/.config/spinupwp-tui/logs/`
   (one JSONL file per job: every remote script, exit code, and complete
   output, with passwords redacted). Previously errors were truncated to the

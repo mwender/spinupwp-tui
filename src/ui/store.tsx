@@ -485,6 +485,7 @@ interface StoreValue extends DataState {
   cloneSizeSites: () => Promise<void> // measure source sites' webroot+DB over source sudo → sizeBytes
   startClone: () => void // run the fan-out (worker pool, cap = concurrency) over selected sites
   cloneRetrySite: (siteId: number) => void // re-run one failed site
+  cloneContinueToCutover: () => void // explicit user continue: settled roster → DNS cutover
   verifyCloneSite: (siteId: number) => void // slice 5: verify one cloned site (source-vs-clone)
   cutoverCheck: () => Promise<void> // slice 6: read + classify each site's DNS record
   startCutover: () => void // slice 6: flip every "ready" record to the new IP (batched)
@@ -2917,19 +2918,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           } catch (err) {
             return fail("create", err instanceof ApiError ? err.message : (err as Error).message)
           }
-          // poll the create event
+          // poll the create event. 5s cadence (3 workers share the API window) and
+          // up to 3 consecutive API errors tolerated — a transient failure to READ
+          // the event is not the event failing (the 2026-07-02 run misreported a
+          // successful create as failed off one rate-limited poll).
           const ok = await new Promise<boolean>((resolve) => {
+            let apiErrs = 0
             const poll = async () => {
               try {
                 const e = await client.getEvent(ev!.event_id)
+                apiErrs = 0
                 if (SERVER_FAIL.has(e.status)) return resolve(false)
                 if (SERVER_DONE.has(e.status) || e.finished_at) return resolve(true)
-                setTimeout(() => void poll(), 3000)
               } catch {
-                resolve(false)
+                if (++apiErrs >= 3) return resolve(false)
               }
+              setTimeout(() => void poll(), 5000)
             }
-            setTimeout(() => void poll(), 3000)
+            setTimeout(() => void poll(), 5000)
           })
           if (!ok) return fail("create", "The dest site create failed on SpinupWP.")
           try {
@@ -3044,16 +3050,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [cloneJob, sudoCtxFor, setCloneSite],
   )
 
-  // When every selected site has settled, advance: any successful clone → DNS cutover
-  // (the next journey step); all-failed → straight to the done summary.
+  // When every selected site has settled: all-failed → the done summary. With ANY
+  // success the wizard STAYS on the roster — DNS cutover moves live traffic, so
+  // advancing requires the user's explicit continue (c → cloneContinueToCutover);
+  // the user always gets to eyeball the roster's final state first (2026-07-02).
   useEffect(() => {
     if (!cloneJob || cloneJob.step !== "clone") return
     const sel = cloneJob.sites.filter((s) => s.selected)
     if (sel.length > 0 && sel.every((s) => s.step === "done" || s.step === "error")) {
       const anyDone = sel.some((s) => s.step === "done")
-      setCloneJob((j) => (j && j.step === "clone" ? { ...j, step: anyDone ? "cutover" : "done" } : j))
+      if (!anyDone) setCloneJob((j) => (j && j.step === "clone" ? { ...j, step: "done" } : j))
     }
   }, [cloneJob])
+
+  // The explicit continue: only valid once every selected site has settled and at
+  // least one clone succeeded.
+  const cloneContinueToCutover = useCallback(() => {
+    setCloneJob((j) => {
+      if (!j || j.step !== "clone") return j
+      const sel = j.sites.filter((s) => s.selected)
+      const settled = sel.length > 0 && sel.every((s) => s.step === "done" || s.step === "error")
+      const anyDone = sel.some((s) => s.step === "done")
+      return settled && anyDone ? { ...j, step: "cutover" } : j
+    })
+  }, [])
 
   // ---- DNS cutover (slice 6) ------------------------------------------------
   const destIpOf = useCallback(
@@ -3306,6 +3326,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneSizeSites,
     startClone,
     cloneRetrySite,
+    cloneContinueToCutover,
     verifyCloneSite,
     cutoverCheck,
     startCutover,
