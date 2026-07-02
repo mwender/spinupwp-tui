@@ -208,8 +208,17 @@ export interface StandardWpPullSpec {
   publicFolder?: string // source site's public_folder (dest is created with the same)
 }
 
-const CLONE_KEY = "/root/.clone_pull"
-const KEY_MARKER = "spinup-clone-pull"
+// The ephemeral pull key and its authorized_keys marker are PER SITE. They were
+// once a single shared /root/.clone_pull — with concurrent sites each auth stage
+// regenerated it and each revoke deleted it, breaking every other in-flight site's
+// SSH mid-chain (proven live 2026-07-02: one site's db pull got Permission denied
+// seconds after another site's auth replaced the key).
+function cloneKeyFor(domain: string): string {
+  return `/root/.clone_pull_${domain}`
+}
+function keyMarkerFor(domain: string): string {
+  return `spinup-clone-pull-${domain}`
+}
 
 function exec(ctx: SudoCtx, script: string, timeoutMs = 600_000) {
   return sudoExec(ctx.server, ctx.sudoUser, ctx.sudoPassword, script, timeoutMs)
@@ -238,7 +247,9 @@ export async function runStandardWpPull(
   const expRel = publicFolderRel(spec.publicFolder) // configured layout — nginx's root on both ends
   const su = spec.sourceSiteUser
   const du = spec.destSiteUser
-  const sshk = `ssh -i ${CLONE_KEY} -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10`
+  const KEY = cloneKeyFor(spec.domain)
+  const MARKER = keyMarkerFor(spec.domain)
+  const sshk = `ssh -i ${KEY} -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10`
   const fail = (stage: CloneStage, msg: string) => {
     onProgress(stage, "fail", msg)
     return { ok: false as const, error: `${stage}: ${msg}` }
@@ -265,7 +276,7 @@ export async function runStandardWpPull(
   try {
     // 1. auth — ephemeral key on dest, granted onto the source site user.
     onProgress("auth", "start")
-    const gen = await run("auth", dest, `rm -f ${CLONE_KEY} ${CLONE_KEY}.pub; ssh-keygen -t ed25519 -f ${CLONE_KEY} -N "" -C ${KEY_MARKER} >/dev/null 2>&1 && cat ${CLONE_KEY}.pub`, 30_000)
+    const gen = await run("auth", dest, `rm -f ${KEY} ${KEY}.pub; ssh-keygen -t ed25519 -f ${KEY} -N "" -C ${MARKER} >/dev/null 2>&1 && cat ${KEY}.pub`, 30_000)
     const pub = gen.stdout.trim()
     if (!gen.ok || !pub.startsWith("ssh-")) return fail("auth", gen.stderr.trim() || "couldn't generate pull key")
     const grant = await run(
@@ -288,10 +299,14 @@ export async function runStandardWpPull(
     // config-above-webroot convention — see CLAUDE.md); never above files/.
     const cfgDirs = [...new Set([destWpDir, destWpDir.slice(0, destWpDir.lastIndexOf("/")), root])].filter((d) => d.length >= root.length)
     const cfgAssert = cfgDirs.map((d) => `test -f ${shq(`${d}/wp-config.php`)}`).join(" || ")
+    // tar exit 1 = "some files differ" (a live site touched a file mid-read —
+    // every-minute WP cron + bot traffic make this routine); tolerate it but fail
+    // on >=2 (real tar errors), 124 (timeout), 255 (ssh). No --warning suppression:
+    // the which-file-changed diagnostics belong in the clone log.
     const files = await run(
       "files",
       dest,
-      `set -e; timeout -k 5 900 ${sshk} ${shq(su)}@${srcIp} "tar -C ${shq(root)} --warning=no-file-changed -czf - --exclude=wp-content/cache ." </dev/null > /tmp/clone_${spec.domain}.tgz; tar -C ${shq(root)} -xzf /tmp/clone_${spec.domain}.tgz; rm -f /tmp/clone_${spec.domain}.tgz; ${normalize}chown -R ${shq(du)}:${shq(du)} ${shq(root)}; test -f ${shq(destWpDir)}/wp-settings.php || { echo "no WordPress core at ${destWpDir} after pull" >&2; exit 65; }; ${cfgAssert} || { echo "no wp-config.php in the webroot or one level above it (under ${root})" >&2; exit 65; }`,
+      `set -e; rc=0; timeout -k 5 900 ${sshk} ${shq(su)}@${srcIp} "tar -C ${shq(root)} -czf - --exclude=wp-content/cache ." </dev/null > /tmp/clone_${spec.domain}.tgz || rc=$?; [ "$rc" -le 1 ] || { echo "tar-over-ssh failed with exit $rc" >&2; exit "$rc"; }; tar -C ${shq(root)} -xzf /tmp/clone_${spec.domain}.tgz; rm -f /tmp/clone_${spec.domain}.tgz; ${normalize}chown -R ${shq(du)}:${shq(du)} ${shq(root)}; test -f ${shq(destWpDir)}/wp-settings.php || { echo "no WordPress core at ${destWpDir} after pull" >&2; exit 65; }; ${cfgAssert} || { echo "no wp-config.php in the webroot or one level above it (under ${root})" >&2; exit 65; }`,
       900_000,
     )
     if (!files.ok) return fail("files", files.stderr.trim() || "file pull failed")
@@ -342,8 +357,8 @@ export async function runStandardWpPull(
     // sed (not grep -v): grep returns exit 1 when it filters out the only line, which
     // would skip the rewrite and leave the key behind — exactly the case where the
     // source site user has no other keys.
-    await run("revoke", source, `AK=${shq(home)}/.ssh/authorized_keys; [ -f "$AK" ] && sed -i ${shq(`/${KEY_MARKER}/d`)} "$AK" && chown ${shq(su)}:${shq(su)} "$AK"; rm -f ${shq(home)}/.clone_db.sql.gz`, 30_000).catch(() => {})
-    await run("revoke", dest, `rm -f ${CLONE_KEY} ${CLONE_KEY}.pub /tmp/clone_${spec.domain}.tgz /tmp/clone_${spec.domain}.sql.gz /tmp/clone_${spec.domain}.sql`, 30_000).catch(() => {})
+    await run("revoke", source, `AK=${shq(home)}/.ssh/authorized_keys; [ -f "$AK" ] && sed -i ${shq(`/${MARKER}/d`)} "$AK" && chown ${shq(su)}:${shq(su)} "$AK"; rm -f ${shq(home)}/.clone_db.sql.gz`, 30_000).catch(() => {})
+    await run("revoke", dest, `rm -f ${KEY} ${KEY}.pub /tmp/clone_${spec.domain}.tgz /tmp/clone_${spec.domain}.sql.gz /tmp/clone_${spec.domain}.sql`, 30_000).catch(() => {})
     onProgress("revoke", "ok")
   }
 }
@@ -382,7 +397,9 @@ export async function runBedrockPull(
   const su = spec.sourceSiteUser
   const du = spec.destSiteUser
   const tmp = `/tmp/clone_${spec.domain}`
-  const sshk = `ssh -i ${CLONE_KEY} -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10`
+  const KEY = cloneKeyFor(spec.domain)
+  const MARKER = keyMarkerFor(spec.domain)
+  const sshk = `ssh -i ${KEY} -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10`
   const remote = (cmd: string) => `${sshk} ${shq(su)}@${srcIp} ${shq(cmd)} </dev/null`
   const fail = (stage: CloneStage, msg: string) => {
     onProgress(stage, "fail", msg)
@@ -398,7 +415,7 @@ export async function runBedrockPull(
   try {
     // 1. auth — ephemeral key on dest, granted onto the source site user.
     onProgress("auth", "start")
-    const gen = await run("auth", dest, `rm -f ${CLONE_KEY} ${CLONE_KEY}.pub; ssh-keygen -t ed25519 -f ${CLONE_KEY} -N "" -C ${KEY_MARKER} >/dev/null 2>&1 && cat ${CLONE_KEY}.pub`, 30_000)
+    const gen = await run("auth", dest, `rm -f ${KEY} ${KEY}.pub; ssh-keygen -t ed25519 -f ${KEY} -N "" -C ${MARKER} >/dev/null 2>&1 && cat ${KEY}.pub`, 30_000)
     const pub = gen.stdout.trim()
     if (!gen.ok || !pub.startsWith("ssh-")) return fail("auth", gen.stderr.trim() || "couldn't generate pull key")
     const grant = await run(
@@ -493,8 +510,8 @@ export async function runBedrockPull(
   } finally {
     // 7. revoke — drop the pull key (by marker) on source, clean dest temp + staged dump.
     onProgress("revoke", "start")
-    await run("revoke", source, `AK=${shq(home)}/.ssh/authorized_keys; [ -f "$AK" ] && sed -i ${shq(`/${KEY_MARKER}/d`)} "$AK" && chown ${shq(su)}:${shq(su)} "$AK"; rm -f ${shq(home)}/.clone_db.sql.gz`, 30_000).catch(() => {})
-    await run("revoke", dest, `rm -f ${CLONE_KEY} ${CLONE_KEY}.pub ${tmp}_auth.json ${tmp}_up.tgz ${tmp}_env ${tmp}.sql.gz ${tmp}.sql`, 30_000).catch(() => {})
+    await run("revoke", source, `AK=${shq(home)}/.ssh/authorized_keys; [ -f "$AK" ] && sed -i ${shq(`/${MARKER}/d`)} "$AK" && chown ${shq(su)}:${shq(su)} "$AK"; rm -f ${shq(home)}/.clone_db.sql.gz`, 30_000).catch(() => {})
+    await run("revoke", dest, `rm -f ${KEY} ${KEY}.pub ${tmp}_auth.json ${tmp}_up.tgz ${tmp}_env ${tmp}.sql.gz ${tmp}.sql`, 30_000).catch(() => {})
     onProgress("revoke", "ok")
   }
 }

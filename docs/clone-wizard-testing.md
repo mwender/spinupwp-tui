@@ -114,6 +114,18 @@ proven (HTTP 200, clean source-key revoke); `blank`+`database` create; Plan sizi
   errors; `⏎` on a failed site shows the full error + the log path. Read the log
   before re-driving anything.
 
+- **The pull key must be PER SITE** (`/root/.clone_pull_<domain>` + per-domain
+  authorized_keys marker). A single shared key file + concurrency 3 meant each
+  site's auth stage regenerated it and each revoke deleted it — breaking every
+  other in-flight site's SSH mid-chain (proven live 2026-07-02: a db pull got
+  "Permission denied (publickey)" seconds after another site's auth replaced the
+  key; only ever ONE site per run survived, whichever ran unopposed).
+- **Remote tar exit 1 is a WARNING, not a failure.** Live sites change files
+  mid-read (every-minute WP cron + bot traffic; one growing log file suffices) →
+  GNU tar exits 1, and `--warning=no-file-changed` suppressed the message but NOT
+  the exit code — silent fatal "file pull failed". The files stage now tolerates
+  rc ≤ 1 and keeps tar's warnings unsuppressed so the clone log names the exact
+  file; ≥2 / 124 (timeout) / 255 (ssh) still fail hard.
 - **rsync-over-ssh HANGS** in the sudo transport → files use **tar-over-ssh**, the DB uses
   **cat-over-ssh**, each bounded with `timeout -k 5 N`.
 - Order is **files → re-stamp wp-config → db import** (import needs wp-config already

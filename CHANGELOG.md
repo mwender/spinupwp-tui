@@ -38,6 +38,18 @@ versions; such changes are called out here.
   full set on the destination right after the site is created — verified by
   the destination's nginx `server_name` picking up every hostname.
 
+### Fixed (during live migration hardening)
+- **Concurrent clones no longer sabotage each other's SSH.** The server-to-server
+  pull authenticated every site with one shared temporary key, so with three
+  sites in flight each site's setup/cleanup replaced or deleted the key the
+  others were actively using — at most one site per run could survive. Each
+  site now gets its own key, created and revoked independently.
+- **A file changing on the live source mid-transfer no longer kills the whole
+  site's clone.** tar reports "file changed as we read it" with a warning exit
+  code that was being treated as fatal — and the wizard's own flags suppressed
+  the message that would have explained it. Warnings are now tolerated (real
+  transfer errors still fail) and logged with the exact file named.
+
 ### Changed
 - **The clone wizard no longer jumps to DNS cutover on its own.** When the
   clone roster settles, the wizard now stays put so you can eyeball every
