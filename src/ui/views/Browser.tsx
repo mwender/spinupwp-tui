@@ -22,7 +22,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -108,6 +108,10 @@ export function Browser({ rows }: { rows: number }) {
       case "P":
         // Purge page cache + object cache on the selected site.
         if (focus === "sites" && sites[siteIndex]) setPurgeCacheSite(sites[siteIndex])
+        return
+      case "m":
+        // Uptime Kuma monitoring for the selected site (connect on first use).
+        if (focus === "sites" && sites[siteIndex]) setKumaSite(sites[siteIndex])
         return
       case "K":
         // Grant Spinup's machine key to the selected site over SSH (privileged
@@ -226,6 +230,7 @@ export function Browser({ rows }: { rows: number }) {
           { key: "d", label: "identify app" },
           { key: "n", label: "DNS host" },
           { key: "u", label: "change PHP" },
+          { key: "m", label: "monitoring" },
           { key: "K", label: "grant key" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },

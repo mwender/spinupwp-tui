@@ -231,3 +231,33 @@ export async function seedVanityIndex(t: VanitySeedTarget): Promise<{ ok: boolea
   if (r.code !== 0) return { ok: false, error: meaningfulError(r.stderr, "Couldn't write index.php over SSH (is your key on the server yet?).") }
   return { ok: true }
 }
+
+export interface PushCronTarget {
+  host: string // server IP / hostname for SSH
+  user: string // site_user (the cron lands in this user's crontab — no sudo needed)
+  port: number | null
+  kumaUrl: string // Uptime Kuma base URL
+  pushToken: string
+}
+
+const PUSH_CRON_MARKER = "spinup-kuma-push"
+
+// Install (or refresh) the once-a-minute heartbeat cron that feeds the Kuma push
+// monitor: status=up plus the 1-min load in `ping`, which Kuma graphs. The beat
+// stopping is the signal (dead-man's switch) — so the cron itself never reports
+// "down"; it just goes quiet when the server/cron/egress dies.
+//
+// Idempotent: a marker comment identifies our line, and the install strips any
+// previous marked line before appending. NO `%` anywhere in the line — cron
+// treats a bare % as newline.
+export async function seedVanityPushCron(t: PushCronTarget): Promise<{ ok: boolean; error?: string }> {
+  const push = `${t.kumaUrl.replace(/\/+$/, "")}/api/push/${t.pushToken}`
+  const line = `* * * * * curl -fsS --max-time 20 '${push}?status=up&msg=ok&ping='$(awk '{print $1}' /proc/loadavg) >/dev/null 2>&1 # ${PUSH_CRON_MARKER}`
+  // The line contains quotes of both kinds once cron expands it, so ship it
+  // base64'd (same trick as the index.php seed) instead of fighting nesting.
+  const b64 = Buffer.from(line + "\n", "utf8").toString("base64")
+  const remote = `( crontab -l 2>/dev/null | grep -v '${PUSH_CRON_MARKER}' ; printf '%s' '${b64}' | base64 -d ) | crontab -`
+  const r = await runProcess(["ssh", ...SSH_OPTS, ...sshPort(t.port), `${t.user}@${t.host}`, remote], 60_000)
+  if (r.code !== 0) return { ok: false, error: meaningfulError(r.stderr, "Couldn't install the heartbeat cron over SSH.") }
+  return { ok: true }
+}

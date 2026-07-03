@@ -34,6 +34,7 @@ import { Forgotten } from "./views/Forgotten.tsx"
 import { DnsInventory } from "./views/DnsInventory.tsx"
 import { ProviderConnect } from "./views/ProviderConnect.tsx"
 import { DnsRecords } from "./views/DnsRecords.tsx"
+import { KumaSite } from "./views/KumaSite.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -74,7 +75,8 @@ export function App() {
     store.forgottenOpen ||
     store.dnsInventoryServer !== null ||
     store.connectZoneTarget !== null ||
-    store.dnsRecordsTarget !== null
+    store.dnsRecordsTarget !== null ||
+    store.kumaSite !== null
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
   }, [overlayActive, store])
@@ -240,6 +242,7 @@ export function App() {
       {store.dnsInventoryServer && <DnsInventory />}
       {store.connectZoneTarget && <ProviderConnect />}
       {store.dnsRecordsTarget && <DnsRecords />}
+      {store.kumaSite && <KumaSite />}
       {/* Async-completion toasts (PHP upgrade, server reboot/restart). Mounted last
           so it draws over every view + overlay; top-right, nudged clear of the
           2-row Header. It never takes keyboard focus. */}
