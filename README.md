@@ -118,6 +118,18 @@ Once you're in, the dashboard looks like this:
   so it auto-unlocks next time), then `K` on a site to **grant or revoke** your
   personal key and/or Spinup's dedicated machine key — one site or every site on the
   server. (See "Privileged writes over SSH" below.)
+- **Uptime Kuma monitoring** — press `m` on a site to wire it into your own
+  [Uptime Kuma](https://github.com/louislam/uptime-kuma) instance (one-time
+  connect, 2FA supported, verified by a real login). Vanity pages double as
+  health endpoints (`?healthz` returns 503 under CPU pressure / low disk;
+  `?format=json&key=…` serves full metrics) and get a load push monitor fed by a
+  once-a-minute cron — Kuma graphs server load, and a silent cron acts as a
+  dead-man's switch. Monitor status flows back in: a Monitor row in Details, a
+  "▼ N monitors down" header badge, uptime/response/load sparklines in the
+  Health view, and reboots automatically open a Kuma maintenance window so
+  planned downtime never pages you. Regular sites get a homepage monitor
+  (up/down + cert-expiry alerts) — client site files are never touched.
+  (See `docs/uptime-kuma.md` for recipes.)
 - **Completion toasts** — background writes that take a while (a PHP upgrade, a
   server reboot/restart, resolving your fleet's DNS) raise a non-focus-stealing
   toast when they finish, so you're not left guessing after you've moved on.
@@ -238,6 +250,13 @@ These can be set in `config.json` or via an environment variable:
   project `.env` won't take effect for the globally-installed `spinup` run from
   elsewhere. For a persistent, location-independent setting, use `config.json`.
 
+- **`uptimeKuma`** / `SPINUP_KUMA_URL` + `SPINUP_KUMA_USERNAME` +
+  `SPINUP_KUMA_PASSWORD` — an Uptime Kuma connection for the monitoring
+  features. Easiest path: press `m` on any site and connect in-app (creds are
+  verified by logging in, then stored in `config.json`, chmod 600, alongside a
+  login token so 2FA is only asked once). The env trio exists for
+  externally-managed setups and is read-only in the UI.
+
 ## Keybindings
 
 | Key | Action |
@@ -265,6 +284,7 @@ These can be set in `config.json` or via an environment variable:
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `H` | Enable / disable HTTPS on a site (Servers / Stacks / Search; needs a Read/Write token) |
 | `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
+| `m` | Site monitoring via Uptime Kuma — connect, add monitors, refresh a vanity page (Servers tab, sites pane) |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
 | `V` | Add a vanity site at the server's own hostname — DNS + site + HTTPS + SSH-key handoff (Servers tab; offered when no hostname site exists; needs a Read/Write token) |
