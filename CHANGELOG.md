@@ -12,6 +12,23 @@ versions; such changes are called out here.
 ## [Unreleased]
 
 ### Added
+- **Uptime Kuma integration — monitors register themselves.** Connect your Kuma
+  instance once (`m` on any site walks you through it; creds verified by a real
+  login and stored 0600, or via `SPINUP_KUMA_URL`/`_USERNAME`/`_PASSWORD`) and:
+  - The **vanity wizard grows two steps**: after publishing the page it registers
+    a healthz monitor + a load push monitor in Kuma, then installs a once-a-minute
+    heartbeat cron in the site user's crontab. The cron sends the 1-min load as
+    the push `ping`, so Kuma graphs server load — and a silent cron (server down,
+    cron dead, egress broken) flips the monitor: dead-man's-switch semantics.
+    Both steps auto-skip when Kuma isn't connected, and a failure there is
+    skippable — the site is already live.
+  - **`m` on any site** manages monitoring in place: vanity sites get the full
+    treatment (incl. `R` to re-publish pages seeded before the health-endpoint
+    feature existed), regular sites get a homepage monitor (up/down + cert-expiry
+    alerts) — client site files are never touched.
+  - The client speaks Kuma's socket.io API (its only management API), adopts
+    same-named monitors instead of duplicating them, reuses push tokens, and
+    handles both Kuma 1.x and 2.x monitor schemas.
 - **Vanity pages are now health endpoints any uptime monitor can watch.** The page
   the `V` wizard seeds gains two machine modes: `?healthz` returns plain
   `200 ok` / `503 unhealthy: …` (1-min load per core > 2, or disk free < 10%) so a

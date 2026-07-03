@@ -72,6 +72,14 @@ export interface AppConfig {
   // case and is never stored here — only the exceptions (e.g. "Integracon", a
   // third-party IT contact) are, so this stays empty for the common case.
   zoneAccessNotes: Record<string, string>
+  // Uptime Kuma connection (optional). Creds live here like provider creds (file
+  // is chmod 600); `jwt` is captured after the first successful login so later
+  // sessions use loginByToken (survives 2FA accounts, skips re-sending the
+  // password). Env overrides: SPINUP_KUMA_URL / _USERNAME / _PASSWORD.
+  uptimeKuma: UptimeKumaConn | null
+  // Kuma monitors Spinup has registered, keyed by site domain. `pushToken` is the
+  // token baked into the server-side cron; ids let later features pause/verify.
+  kumaMonitors: Record<string, KumaMonitorRef>
   // Per-vanity-site health keys, keyed by domain — the `key` the seeded page's
   // ?format=json mode requires (baked in at seed time). Kept here so re-seeds
   // reuse the same key (monitor URLs stay stable) and so monitor-registration
@@ -87,6 +95,20 @@ export interface AppConfig {
 export interface ServerProviderRef {
   id: number
   databaseProviderId?: number
+}
+
+export interface UptimeKumaConn {
+  url: string
+  username: string
+  password: string
+  jwt?: string
+  env?: boolean // creds came from the environment — read-only in the UI
+}
+
+export interface KumaMonitorRef {
+  healthId?: number // HTTP monitor on /?healthz
+  pushId?: number // push monitor fed by the server-side load cron
+  pushToken?: string
 }
 
 // A long-running, fire-and-forget job persisted across restarts so the app can
@@ -149,6 +171,8 @@ export interface StoredConfig {
   grantedKeys?: Record<string, string[]>
   zoneAccessNotes?: Record<string, string>
   vanityHealthKeys?: Record<string, string>
+  uptimeKuma?: UptimeKumaConn
+  kumaMonitors?: Record<string, KumaMonitorRef>
   lastSeenVersion?: string
 }
 
@@ -240,6 +264,14 @@ export function loadConfig(): AppConfig {
     grantedKeys: stored.grantedKeys ?? {},
     zoneAccessNotes: stored.zoneAccessNotes ?? {},
     vanityHealthKeys: stored.vanityHealthKeys ?? {},
+    uptimeKuma: ((): UptimeKumaConn | null => {
+      const url = process.env.SPINUP_KUMA_URL?.trim()
+      const username = process.env.SPINUP_KUMA_USERNAME?.trim()
+      const password = process.env.SPINUP_KUMA_PASSWORD?.trim()
+      if (url && username && password) return { url: url.replace(/\/+$/, ""), username, password, env: true }
+      return stored.uptimeKuma ?? null
+    })(),
+    kumaMonitors: stored.kumaMonitors ?? {},
     lastSeenVersion: stored.lastSeenVersion?.trim() || null,
   }
 }
