@@ -11,7 +11,7 @@ import { SpinupWPClient, ApiError, type ServerService, type SpinupWPClientLike }
 import { isDevMode } from "../dev/devMode.ts"
 import { createMockClient } from "../dev/mockClient.ts"
 import type { Server, Site, Event, ProviderMetadata, CreateServerPayload, CreateSitePayload, AdditionalDomain } from "../api/types.ts"
-import { loadConfig, saveConfig, type ServerProviderRef, type KumaMonitorRef } from "../config.ts"
+import { loadConfig, saveConfig, type ServerProviderRef, type KumaMonitorRef, type UptimeKumaConn } from "../config.ts"
 import { saveJob, removeJob } from "../lib/jobs.ts"
 import { APP_VERSION } from "../version.ts"
 import { cachedUpdateInfo, refreshUpdateInfo, type UpdateInfo } from "../lib/appUpdate.ts"
@@ -40,8 +40,8 @@ import {
 } from "../lib/providers.ts"
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
-import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, aRecordResolves } from "../lib/vanitySite.ts"
-import { withKuma, KumaClient, genPushToken, healthMonitorPayload, loadPushMonitorPayload } from "../lib/uptimeKuma.ts"
+import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, aRecordResolves, isVanityPair } from "../lib/vanitySite.ts"
+import { withKuma, KumaClient, registerMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
@@ -178,9 +178,7 @@ export interface VanityJob {
   propagateStartedAt?: number
   keepWaiting?: boolean // user chose "keep waiting" after the first timeout → poll
                         // indefinitely (count-up in the UI), no more timeout prompts
-  kumaHealthId?: number // Uptime Kuma monitor ids + push token, once registered
-  kumaPushId?: number
-  kumaPushToken?: string
+  kumaPushToken?: string // token feeding the load push monitor (cron step input)
 }
 export function isVanityInFlight(j: VanityJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
@@ -1424,7 +1422,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // maintenance window so the planned outage never pages. Best-effort in
         // both directions — Kuma being unreachable must never block a reboot.
         let kumaMaintId: number | null = null
-        const kumaConn = cfgRef.current.uptimeKuma
+        const kumaConn = isDevMode() ? null : cfgRef.current.uptimeKuma
         if (kind === "reboot" && kumaConn) {
           const domains = new Set(sitesForServer(server.id).map((s) => s.domain))
           const monitorIds: number[] = []
@@ -1437,7 +1435,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             try {
               const { result } = await withKuma(kumaConn, async (kuma) => {
                 const id = await kuma.addManualMaintenance(`Reboot ${server.name}`, "Planned reboot fired from Spinup")
-                await kuma.setMaintenanceMonitors(id, monitorIds)
+                try {
+                  await kuma.setMaintenanceMonitors(id, monitorIds)
+                } catch (err) {
+                  // Half-created window shields nothing — remove it rather than
+                  // orphaning an active manual window in Kuma.
+                  await kuma.deleteMaintenance(id).catch(() => {})
+                  throw err
+                }
                 return id
               })
               kumaMaintId = result
@@ -1466,9 +1471,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return
         }
 
+        // A reboot leaves the API briefly flaky (and 429s happen) — one transient
+        // getEvent failure must not mark the op failed and tear the maintenance
+        // window down mid-reboot. Only consecutive failures settle it.
+        let pollErrors = 0
         const poll = async () => {
           try {
             const ev = await client.getEvent(eventId)
+            pollErrors = 0
             if (ev.status === UPGRADE_DONE) {
               endKumaMaintenance()
               await refresh() // reboot clears reboot_required; status may flip too
@@ -1484,6 +1494,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               setTimeout(() => void poll(), UPGRADE_POLL_MS)
             }
           } catch (err) {
+            pollErrors += 1
+            if (pollErrors < 3) {
+              setTimeout(() => void poll(), UPGRADE_POLL_MS)
+              return
+            }
             const msg = err instanceof ApiError ? err.message : (err as Error).message
             setOp(server.id, { kind, label, status: UPGRADE_FAIL, error: msg })
             endKumaMaintenance()
@@ -2521,6 +2536,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // ---- Vanity site (connect a fresh, empty server) ----------------------
 
+  // One stable health key per domain — a resume/re-seed must reuse it so a
+  // monitor URL built against the page's ?format=json mode never goes stale.
+  const ensureVanityHealthKey = useCallback((domain: string): string => {
+    const keys = { ...cfgRef.current.vanityHealthKeys }
+    const key = keys[domain] ?? crypto.randomUUID().replace(/-/g, "")
+    if (keys[domain] !== key) {
+      keys[domain] = key
+      cfgRef.current.vanityHealthKeys = keys
+      void saveConfig({ vanityHealthKeys: keys })
+    }
+    return key
+  }, [])
+
+  // Keep the Kuma JWT fresh so later sessions log in by token (2FA-friendly).
+  // The env-sourced connection is never overwritten.
+  const persistKumaAuth = useCallback((conn: UptimeKumaConn, jwt: string) => {
+    if (conn.env || jwt === conn.jwt) return
+    cfgRef.current.uptimeKuma = { ...conn, jwt }
+    void saveConfig({ uptimeKuma: { ...conn, jwt } })
+  }, [])
+
+  const persistKumaMonitors = useCallback((domain: string, ref: KumaMonitorRef) => {
+    const map = { ...cfgRef.current.kumaMonitors, [domain]: ref }
+    cfgRef.current.kumaMonitors = map
+    void saveConfig({ kumaMonitors: map })
+  }, [])
+
   // The step machine. Each step performs its work then hands off to the next; it
   // re-enters at job.step (so resume continues mid-flight). Steps are written to be
   // idempotent where they can't re-attach to a remote handle (site/seed), so a
@@ -2668,51 +2710,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       async function doSeed(j: VanityJob) {
         persist({ ...j, step: "seed" })
-        // One stable key per domain: a resume/re-seed reuses it, so a monitor URL
-        // built against the page's ?format=json mode never goes stale.
-        const keys = { ...cfgRef.current.vanityHealthKeys }
-        const healthKey = keys[j.hostname] ?? crypto.randomUUID().replace(/-/g, "")
-        if (keys[j.hostname] !== healthKey) {
-          keys[j.hostname] = healthKey
-          cfgRef.current.vanityHealthKeys = keys
-          void saveConfig({ vanityHealthKeys: keys })
-        }
+        const healthKey = ensureVanityHealthKey(j.hostname)
         const res = await seedVanityIndex({ host: j.serverIp, user: j.siteUser, port: j.port, domain: j.hostname, publicFolder: j.publicFolder, healthKey })
         if (!res.ok) return fail(j, "seed", res.error || "Couldn't seed index.php over SSH.")
         await refresh()
         void doMonitor({ ...j, step: "monitor" })
       }
 
-      // Register the two Uptime Kuma monitors (healthz HTTP + load push). Auto-skips
-      // to done when no Kuma connection is configured. Idempotent on resume: reuses
-      // ids we already recorded, or adopts same-named monitors already in Kuma.
+      // Register the two Uptime Kuma monitors (healthz HTTP + load push) via the
+      // shared registerMonitors (same code path as the m overlay). Auto-skips to
+      // done when no Kuma connection is configured (or in Dev Mode — never touch
+      // a real Kuma from a demo).
       async function doMonitor(j: VanityJob) {
         const conn = cfgRef.current.uptimeKuma
-        if (!conn) return persist({ ...j, step: "done" })
+        if (!conn || isDevMode()) return persist({ ...j, step: "done" })
         persist({ ...j, step: "monitor" })
         try {
           const known = cfgRef.current.kumaMonitors[j.hostname] ?? {}
-          const proto = j.sslSkipped ? "http" : "https"
-          let pushToken = j.kumaPushToken ?? known.pushToken ?? genPushToken()
-          const { result, jwt } = await withKuma(conn, async (kuma) => {
-            const byName = new Map((await kuma.getMonitors()).map((m) => [m.name, m]))
-            const existingPush = byName.get(`${j.hostname} load`)
-            // A push monitor made outside Spinup keeps its own token — the cron
-            // must feed THAT one, so adopt it.
-            if (existingPush?.pushToken) pushToken = existingPush.pushToken
-            const healthId = known.healthId ?? byName.get(j.hostname)?.id ?? (await kuma.addMonitor(healthMonitorPayload(j.hostname, `${proto}://${j.hostname}/?healthz`)))
-            const pushId = known.pushId ?? existingPush?.id ?? (await kuma.addMonitor(loadPushMonitorPayload(`${j.hostname} load`, pushToken)))
-            return { healthId, pushId }
-          })
-          // Keep the JWT fresh so later sessions log in by token (2FA-friendly).
-          if (!conn.env && jwt !== conn.jwt) {
-            cfgRef.current.uptimeKuma = { ...conn, jwt }
-            void saveConfig({ uptimeKuma: { ...conn, jwt } })
-          }
-          const map = { ...cfgRef.current.kumaMonitors, [j.hostname]: { healthId: result.healthId, pushId: result.pushId, pushToken } }
-          cfgRef.current.kumaMonitors = map
-          void saveConfig({ kumaMonitors: map })
-          void doCron({ ...j, step: "cron", kumaHealthId: result.healthId, kumaPushId: result.pushId, kumaPushToken: pushToken })
+          const { result, jwt } = await withKuma(conn, (kuma) =>
+            registerMonitors(kuma, j.hostname, {
+              proto: j.sslSkipped ? "http" : "https",
+              healthzPath: "/?healthz",
+              wantPush: true,
+              known,
+              pushToken: j.kumaPushToken,
+            }),
+          )
+          persistKumaAuth(conn, jwt)
+          persistKumaMonitors(j.hostname, { healthId: result.healthId, pushId: result.pushId ?? known.pushId, pushToken: result.pushToken ?? known.pushToken })
+          void doCron({ ...j, step: "cron", kumaPushToken: result.pushToken ?? known.pushToken })
         } catch (err) {
           fail(j, "monitor", (err as Error).message)
         }
@@ -2750,7 +2776,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return
       }
     },
-    [client, allConnections, refresh, resolveZoneConn],
+    [client, allConnections, refresh, resolveZoneConn, ensureVanityHealthKey, persistKumaAuth, persistKumaMonitors],
   )
 
   const startVanity = useCallback(
@@ -2855,35 +2881,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Poll Kuma every minute for the registered monitors' status: one short-lived
   // connection per tick; the post-login event burst (beats + uptime) is the
   // snapshot. Kuma being unreachable keeps the last snapshot (stale > empty).
+  // Never runs in Dev Mode — a demo must not touch (or leak) the real Kuma.
   useEffect(() => {
+    if (isDevMode()) return
     const conn = cfgRef.current.uptimeKuma
     if (!conn) return
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const tick = async () => {
+      // Nothing registered → nothing to show; skip the connection entirely
+      // (re-checked each tick, since registration doesn't bump kumaEpoch).
+      if (Object.keys(cfgRef.current.kumaMonitors).length === 0) {
+        if (!cancelled) timer = setTimeout(() => void tick(), KUMA_POLL_MS)
+        return
+      }
       try {
         const { result } = await withKuma(conn, async (kuma) => {
           const monitors = await kuma.getMonitors()
-          await kuma.waitForSnapshot()
+          await kuma.waitForSnapshot(monitors.length)
           const byId = new Map(monitors.map((m) => [m.id, m]))
           const map = new Map<string, KumaDomainStatus>()
+          // A beat is "down" only at status 0 — pending (2) and maintenance (3)
+          // must not raise the down badge (that would false-alarm during the
+          // very maintenance windows we create around reboots).
+          const beatUp = (s: number) => s !== 0
           for (const [domain, ref] of Object.entries(cfgRef.current.kumaMonitors)) {
             const status: KumaDomainStatus = { up: null, uptime24: null, responseBeats: [], loadBeats: [], lastLoad: null }
             if (ref.healthId && byId.has(ref.healthId)) {
               const beats = kuma.beatsFor(ref.healthId)
               const last = beats[beats.length - 1]
-              status.up = last ? last.status === 1 : null
+              status.up = last ? beatUp(last.status) : null
               status.responseBeats = beats.map((b) => Number(b.ping) || 0)
               status.uptime24 = kuma.uptimeFor(ref.healthId, 24)
             }
             if (ref.pushId && byId.has(ref.pushId)) {
               const beats = kuma.beatsFor(ref.pushId)
-              // The cron pushes load ×100 as an integer (some Kuma builds drop
-              // float pings) — scale back to real load here.
-              status.loadBeats = beats.map((b) => (Number(b.ping) || 0) / 100)
+              // The cron pushes load ×LOAD_PUSH_SCALE as an integer (some Kuma
+              // builds drop float pings) — scale back to real load here.
+              status.loadBeats = beats.map((b) => (Number(b.ping) || 0) / LOAD_PUSH_SCALE)
               const last = beats[beats.length - 1]
-              status.lastLoad = last?.ping != null ? Number(last.ping) / 100 : null
-              if (status.up === null && last) status.up = last.status === 1
+              status.lastLoad = last?.ping != null ? Number(last.ping) / LOAD_PUSH_SCALE : null
+              if (status.up === null && last) status.up = beatUp(last.status)
             }
             map.set(domain, status)
           }
@@ -2909,6 +2947,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // the stored JWT. The env-sourced connection is never overwritten.
   const connectKuma = useCallback(
     async (conn: { url: string; username: string; password: string }, twofa?: string): Promise<{ ok: true; version: string | null } | { ok: false; error: string; tokenRequired?: boolean }> => {
+      if (isDevMode()) return { ok: false, error: "Dev Mode never talks to a real Uptime Kuma." }
       try {
         const url = conn.url.trim().replace(/\/+$/, "")
         const kuma = await KumaClient.connect(url)
@@ -2919,6 +2958,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           cfgRef.current.uptimeKuma = stored
           void saveConfig({ uptimeKuma: stored })
           setKumaEpoch((e) => e + 1) // start the status poll loop now
+          await kuma.waitForVersion() // `info` can land after the login ack
           return { ok: true, version: kuma.version }
         } finally {
           kuma.disconnect()
@@ -2935,17 +2975,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Push the current embedded page (with its health-endpoint modes) into an
   // existing vanity site's docroot, minting/reusing the domain's stable health
   // key. Shared by the standalone refresh and the Kuma setup's reseed option.
-  const reseedVanityPage = useCallback(async (site: Site, server: Server) => {
-    const domain = site.domain
-    const keys = { ...cfgRef.current.vanityHealthKeys }
-    const healthKey = keys[domain] ?? crypto.randomUUID().replace(/-/g, "")
-    if (keys[domain] !== healthKey) {
-      keys[domain] = healthKey
-      cfgRef.current.vanityHealthKeys = keys
-      void saveConfig({ vanityHealthKeys: keys })
-    }
-    return seedVanityIndex({ host: server.ip_address ?? "", user: site.site_user ?? deriveSiteUser(domain), port: server.ssh_port ?? null, domain, publicFolder: site.public_folder, healthKey })
-  }, [])
+  const reseedVanityPage = useCallback(
+    async (site: Site, server: Server) => {
+      const domain = site.domain
+      const healthKey = ensureVanityHealthKey(domain)
+      return seedVanityIndex({ host: server.ip_address ?? "", user: site.site_user ?? deriveSiteUser(domain), port: server.ssh_port ?? null, domain, publicFolder: site.public_folder, healthKey })
+    },
+    [ensureVanityHealthKey],
+  )
 
   // Standalone vanity-page refresh — no Uptime Kuma involvement, works without a
   // connection. This is how a page seeded by an older Spinup gets the current
@@ -2955,6 +2992,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const server = servers.find((s) => s.id === site.server_id)
       if (!server) return
       const setOp = (op: KumaOp) => setKumaOps((prev) => new Map(prev).set(site.id, op))
+      if (!server.ip_address) {
+        setOp({ status: "error", detail: "", error: "The server has no IP address yet — wait for provisioning to finish." })
+        return
+      }
       setOp({ status: "running", detail: "Publishing the current page…" })
       void reseedVanityPage(site, server).then((res) => {
         if (res.ok) setOp({ status: "done", detail: "Page re-published — health endpoints are live." })
@@ -2972,10 +3013,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const startKumaSetup = useCallback(
     (site: Site, opts: { reseed?: boolean } = {}) => {
       const conn = cfgRef.current.uptimeKuma
-      if (!conn) return
+      if (!conn || isDevMode()) return
       const server = servers.find((s) => s.id === site.server_id)
-      const isVanity = !!server && server.name === site.domain
+      const isVanity = !!server && isVanityPair(site.domain, server.name)
       const setOp = (op: KumaOp) => setKumaOps((prev) => new Map(prev).set(site.id, op))
+      // The vanity treatment SSHes into the box (re-seed + cron) — that needs a
+      // real IP, so fail with a plain precondition instead of a cryptic ssh error.
+      if (isVanity && server && !server.ip_address) {
+        setOp({ status: "error", detail: "", error: "The server has no IP address yet — wait for provisioning to finish." })
+        return
+      }
       const run = async () => {
         try {
           const domain = site.domain
@@ -2986,31 +3033,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           setOp({ status: "running", detail: "Registering monitors in Uptime Kuma…" })
           const known = cfgRef.current.kumaMonitors[domain] ?? {}
-          let pushToken = known.pushToken ?? genPushToken()
-          const { result, jwt } = await withKuma(conn, async (kuma) => {
-            const byName = new Map((await kuma.getMonitors()).map((m) => [m.name, m]))
-            const targetUrl = isVanity ? `https://${domain}/?healthz` : `https://${domain}/`
-            const healthId = known.healthId ?? byName.get(domain)?.id ?? (await kuma.addMonitor(healthMonitorPayload(domain, targetUrl)))
-            let pushId: number | undefined
-            if (isVanity) {
-              const existingPush = byName.get(`${domain} load`)
-              // A push monitor made outside Spinup keeps its own token — the cron
-              // must feed THAT one, so adopt it.
-              if (existingPush?.pushToken) pushToken = existingPush.pushToken
-              pushId = known.pushId ?? existingPush?.id ?? (await kuma.addMonitor(loadPushMonitorPayload(`${domain} load`, pushToken)))
-            }
-            return { healthId, pushId }
-          })
-          if (!conn.env && jwt !== conn.jwt) {
-            cfgRef.current.uptimeKuma = { ...conn, jwt }
-            void saveConfig({ uptimeKuma: { ...conn, jwt } })
-          }
-          const map = { ...cfgRef.current.kumaMonitors, [domain]: { healthId: result.healthId, pushId: result.pushId, pushToken: result.pushId ? pushToken : known.pushToken } }
-          cfgRef.current.kumaMonitors = map
-          void saveConfig({ kumaMonitors: map })
-          if (isVanity && result.pushId && server) {
+          // Monitor over the protocol the site actually serves — an https monitor
+          // on an http-only site would be permanently down.
+          const proto = site.https?.enabled ? "https" : "http"
+          const { result, jwt } = await withKuma(conn, (kuma) =>
+            registerMonitors(kuma, domain, { proto, healthzPath: isVanity ? "/?healthz" : "/", wantPush: isVanity, known }),
+          )
+          persistKumaAuth(conn, jwt)
+          persistKumaMonitors(domain, { healthId: result.healthId, pushId: result.pushId ?? known.pushId, pushToken: result.pushToken ?? known.pushToken })
+          if (isVanity && result.pushId && result.pushToken && server) {
             setOp({ status: "running", detail: "Installing the heartbeat cron…" })
-            const cron = await seedVanityPushCron({ host: server.ip_address ?? "", user: site.site_user ?? deriveSiteUser(domain), port: server.ssh_port ?? null, kumaUrl: conn.url, pushToken })
+            const cron = await seedVanityPushCron({ host: server.ip_address ?? "", user: site.site_user ?? deriveSiteUser(domain), port: server.ssh_port ?? null, kumaUrl: conn.url, pushToken: result.pushToken })
             if (!cron.ok) throw new Error(cron.error || "Couldn't install the heartbeat cron.")
           }
           setOp({ status: "done", detail: isVanity ? "Monitors live: healthz checks + load graph (cron beating every minute)." : "Monitor live: homepage checks + certificate-expiry alerts." })
@@ -3020,7 +3053,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       void run()
     },
-    [servers, reseedVanityPage],
+    [servers, reseedVanityPage, persistKumaAuth, persistKumaMonitors],
   )
 
   // ---- Clone a server to a new server (item 5) -----------------------------
@@ -3749,7 +3782,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     vanitySkipKuma,
     clearVanity,
     vanityHealthKeyFor,
-    kumaConfigured: cfgRef.current.uptimeKuma != null,
+    kumaConfigured: !isDevMode() && cfgRef.current.uptimeKuma != null,
     kumaSite,
     setKumaSite,
     kumaOps,

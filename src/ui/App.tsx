@@ -157,6 +157,9 @@ export function App() {
     // The DNS-records overlay owns the keyboard while open.
     if (store.dnsRecordsTarget) return
 
+    // The site-monitoring (Uptime Kuma) overlay owns the keyboard while open.
+    if (store.kumaSite) return
+
     if (showHelp) {
       if (key.name === "escape" || key.name === "q" || key.name === "?") setShowHelp(false)
       return

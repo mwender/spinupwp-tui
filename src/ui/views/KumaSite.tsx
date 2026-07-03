@@ -19,6 +19,7 @@ import { theme } from "../../lib/theme.ts"
 import { Panel, Centered, Field, SecretInput, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
+import { isVanityPair } from "../../lib/vanitySite.ts"
 
 const BASE_FIELDS = ["url", "username", "password"] as const
 // Fixed input width: the panel body is 66 wide, the label gutter is 12 ("❯ " +
@@ -41,10 +42,13 @@ export function KumaSite() {
   const fields: string[] = needsTwofa ? [...BASE_FIELDS, "2FA code"] : [...BASE_FIELDS]
 
   const server = site ? servers.find((s) => s.id === site.server_id) : undefined
-  const isVanity = !!site && !!server && server.name === site.domain
+  const isVanity = !!site && !!server && isVanityPair(site.domain, server.name)
   const registered = site ? kumaMonitorFor(site.domain) : null
   const op = site ? kumaOps.get(site.id) : undefined
-  const connecting = showConnect && !kumaConfigured
+  // Not gated on kumaConfigured: `c` must also work as a RE-connect (e.g. the
+  // stored JWT went stale after a Kuma password change on a 2FA account —
+  // without this the only fix would be hand-editing config.json).
+  const connecting = showConnect
 
   // While the connect form is up, its inputs own the keyboard (suppresses the
   // global single-key shortcuts); cleared on connect/close.
@@ -108,7 +112,7 @@ export function KumaSite() {
       if (name === "up") return setFieldIdx((i) => Math.max(i - 1, 0))
       return
     }
-    if (name === "c" && !kumaConfigured) return setShowConnect(true)
+    if (name === "c") return setShowConnect(true)
     if (name === "a" && site && op?.status !== "running") {
       if (!kumaConfigured) return setShowConnect(true) // monitors need a connection
       return startKumaSetup(site)
@@ -197,7 +201,7 @@ export function KumaSite() {
           )}
           <Field label="Site" value={site!.domain} />
           <Field label="Kind" value={isVanity ? "vanity page (full server monitoring)" : "site homepage (up/down + cert expiry)"} />
-          <Field label="Kuma" value={kumaConfigured ? "connected" : "not connected · c"} valueColor={kumaConfigured ? theme.good : theme.textFaint} />
+          <Field label="Kuma" value={kumaConfigured ? "connected · c to reconnect" : "not connected · c"} valueColor={kumaConfigured ? theme.good : theme.textFaint} />
           <Field label="Monitors" value={registered ? `registered${registered.pushId ? " (healthz + load push)" : ""}` : "not registered yet"} />
           <box style={{ height: 1 }} />
           {op?.status === "running" ? (
@@ -236,7 +240,7 @@ export function KumaSite() {
     const base: { key: string; label: string }[] = []
     if (isVanity) base.push({ key: "R", label: kumaConfigured ? "refresh page + monitors" : "refresh page" })
     base.push({ key: "a", label: registered ? "repair monitors" : "add monitors" })
-    if (!kumaConfigured) base.push({ key: "c", label: "connect Kuma" })
+    base.push({ key: "c", label: kumaConfigured ? "reconnect Kuma" : "connect Kuma" })
     return [...base, { key: "esc", label: "close" }]
   }
 }

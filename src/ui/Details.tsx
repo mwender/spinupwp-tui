@@ -125,7 +125,7 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
         : "no beats yet"
     : kumaMonitorFor(site.domain)
       ? "registered · awaiting poll"
-      : "not monitored · m"
+      : "not monitored · m (Servers)" // `m` means media fallback in Search — scope the teach
   const kumaColor = kuma ? (kuma.up === false ? theme.bad : kuma.up ? theme.good : theme.textDim) : theme.textFaint
   const httpsProgress = httpsToggles.get(site.id)
   const purgeProgress = purgeCacheProgress.get(site.id)

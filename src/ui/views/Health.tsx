@@ -97,7 +97,10 @@ export function Health() {
 
   if (!server) return null
 
-  const procRows = Math.max(3, Math.min(snapshot?.processes.length ?? 0, height - 18))
+  // The conditional Kuma Monitor panel takes up to 5 rows (2 border + 3 content)
+  // out of the same right column — shrink the process budget when it renders.
+  const kumaRows = kumaStatus.get(server.name) ? 5 : 0
+  const procRows = Math.max(3, Math.min(snapshot?.processes.length ?? 0, height - 18 - kumaRows))
 
   return (
     <box
