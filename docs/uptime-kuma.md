@@ -72,10 +72,22 @@ at-a-glance fleet view you can share. Monitors shown on a status page also get
 public badge URLs (`/api/badge/:id/status`, `/uptime`, `/cert-exp`, …) you can embed
 anywhere.
 
-## Roadmap
+## Let Spinup do it for you
 
-Deeper integration ships in later Spinup releases: registering these monitors
-automatically from the vanity wizard, a per-server load graph via Kuma push
-monitors (cron-fed, dead-man's-switch semantics), maintenance windows around
-server reboots, and Kuma-backed uptime/response sparklines inside Spinup's Health
-view.
+Connect your Kuma instance once and Spinup registers monitors itself:
+
+- **`m` on any site** (sites pane) opens the monitoring overlay. First use walks
+  through connecting (URL + login, verified by actually logging in; stored in
+  `config.json`, chmod 600 — or set `SPINUP_KUMA_URL`, `SPINUP_KUMA_USERNAME`,
+  `SPINUP_KUMA_PASSWORD`). Then `a` registers monitors: vanity sites get the
+  healthz monitor + a **load push monitor fed by a once-a-minute cron** in the
+  site user's crontab (Kuma graphs the load; a silent cron — server down, cron
+  dead, egress broken — flips the monitor: dead-man's-switch semantics). Regular
+  sites get a homepage monitor; Spinup never touches a client site's files.
+- **Vanity pages published before this feature** need one `R` (re-seed) from the
+  `m` overlay to gain the health endpoints, then everything above applies.
+- **The vanity wizard (`V`) does all of this automatically** as its final two
+  steps whenever a Kuma connection is configured.
+
+Spinup adopts same-named monitors rather than duplicating them, so hand-made
+monitors survive; a hand-made push monitor keeps its token (the cron adopts it).

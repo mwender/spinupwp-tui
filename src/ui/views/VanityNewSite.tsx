@@ -22,6 +22,8 @@ const STEP_LABELS: { step: VanityStep; label: string }[] = [
   { step: "https", label: "Enable HTTPS (Let's Encrypt)" },
   { step: "sshkey", label: "Add your SSH key" },
   { step: "seed", label: "Publish the page" },
+  { step: "monitor", label: "Register Uptime Kuma monitors" },
+  { step: "cron", label: "Install the heartbeat cron" },
 ]
 const STEP_ORDER: VanityStep[] = STEP_LABELS.map((s) => s.step)
 
@@ -32,7 +34,7 @@ function fmtClock(ms: number): string {
 }
 
 export function VanityNewSite() {
-  const { vanityServer: server, setVanityServer, vanityJob: job, startVanity, vanitySshKeyDone, vanitySkipSsl, vanityKeepWaiting, vanityStopWaiting, vanityRetry, clearVanity, vanityHealthKeyFor, accountSlug, setInputMode, sites, isSudoConnected, keyGrants, startGrantRemembered, preferredGrantKeys, clearGrantKey, sudoConnectServer, setSudoConnectServer } = useStore()
+  const { vanityServer: server, setVanityServer, vanityJob: job, startVanity, vanitySshKeyDone, vanitySkipSsl, vanityKeepWaiting, vanityStopWaiting, vanityRetry, vanitySkipKuma, clearVanity, vanityHealthKeyFor, kumaConfigured, accountSlug, setInputMode, sites, isSudoConnected, keyGrants, startGrantRemembered, preferredGrantKeys, clearGrantKey, sudoConnectServer, setSudoConnectServer } = useStore()
 
   const [siteUser, setSiteUser] = useState(() => (server ? deriveSiteUser(server.name) : ""))
   const [editingUser, setEditingUser] = useState(false)
@@ -138,6 +140,8 @@ export function VanityNewSite() {
     }
     if (job.step === "error") {
       if (name === "r") return vanityRetry()
+      // Monitoring failures are skippable — the site itself is already live.
+      if (name === "s" && (job.failedStep === "monitor" || job.failedStep === "cron")) return vanitySkipKuma()
       if (name === "x") return discard()
     }
     if (job.step === "done" && name === "o") {
@@ -176,7 +180,9 @@ export function VanityNewSite() {
   function stepRows(): StepRow[] {
     const cur = job?.step
     const failed = job?.step === "error" ? job.failedStep : undefined
-    return STEP_LABELS.filter((s) => !(s.step === "https" && job?.sslSkipped)).map(({ step, label }) => {
+    return STEP_LABELS.filter((s) => !(s.step === "https" && job?.sslSkipped))
+      .filter((s) => !((s.step === "monitor" || s.step === "cron") && !kumaConfigured))
+      .map(({ step, label }) => {
       let state: StepRow["state"] = "pending"
       if (failed === step) state = "failed"
       else if (cur === "done") state = "done"
@@ -275,7 +281,11 @@ export function VanityNewSite() {
             <box style={{ height: 1 }} />
             <text content={`✕ ${job.error ?? "Something went wrong."}`} fg={theme.bad} wrapMode="none" />
             <box style={{ height: 1 }} />
-            <text content="r retry this step · x discard · Esc keep for later" fg={theme.textFaint} wrapMode="none" />
+            <text
+              content={job.failedStep === "monitor" || job.failedStep === "cron" ? "r retry · s skip monitoring (site is live) · x discard · Esc later" : "r retry this step · x discard · Esc keep for later"}
+              fg={theme.textFaint}
+              wrapMode="none"
+            />
           </box>
         </Panel>
       )
@@ -375,7 +385,10 @@ export function VanityNewSite() {
       return [...(sudoOn ? [] : [{ key: "S", label: "connect sudo" }]), { key: "e", label: "edit user" }, { key: "y", label: "create" }, { key: "q", label: "cancel" }]
     }
     if (job.step === "done") return [{ key: "o", label: "open site" }, { key: "esc", label: "close" }]
-    if (job.step === "error") return [{ key: "r", label: "retry" }, { key: "x", label: "discard" }, { key: "esc", label: "later" }]
+    if (job.step === "error") {
+      const skippable = job.failedStep === "monitor" || job.failedStep === "cron"
+      return [{ key: "r", label: "retry" }, ...(skippable ? [{ key: "s", label: "skip monitoring" }] : []), { key: "x", label: "discard" }, { key: "esc", label: "later" }]
+    }
     if (job.step === "sshkey") {
       const granting = grant && isKeyGrantInFlight(grant)
       if (granting) return [{ key: "esc", label: "background" }]
