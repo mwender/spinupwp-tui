@@ -175,12 +175,15 @@ export function Browser({ rows }: { rows: number }) {
         }
         return
       case "V":
-        // Connect an empty server: create a vanity site at its hostname. Also
-        // reopens an unfinished build for this server (in-flight, parked at the
-        // SSH-key step, or errored — all after the site may already exist).
-        // Otherwise only for 0-site servers.
-        if (server && ((vanityJob && vanityJob.step !== "done" && vanityJob.serverId === server.id) || sitesForServer(server.id).length === 0)) {
-          setVanityServer(server)
+        // Create the vanity site at the server's own hostname. Offered whenever
+        // the server doesn't already HAVE a site there — a busy server benefits
+        // just as much as an empty one (the hostname page + a key-holding site
+        // user). Also reopens an unfinished build for this server (in-flight,
+        // parked at the SSH-key step, or errored — all after the site may exist).
+        if (server) {
+          const resumable = vanityJob && vanityJob.step !== "done" && vanityJob.serverId === server.id
+          const hasVanity = sitesForServer(server.id).some((s) => s.domain.toLowerCase() === server.name.toLowerCase())
+          if (resumable || !hasVanity) setVanityServer(server)
         }
         return
       case "h":

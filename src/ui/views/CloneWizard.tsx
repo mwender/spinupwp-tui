@@ -61,6 +61,7 @@ export function CloneWizard() {
     startClone,
     cloneRetrySite,
     cloneContinueToCutover,
+    cloneGoBack,
     toggleCutoverExclude,
     verifyCloneSite,
     cutoverCheck,
@@ -105,9 +106,11 @@ export function CloneWizard() {
     }
   }, [job?.step, cloneDetectRepoKeys])
 
-  // The cutover roster gets its own cursor run — reset it when we land there.
+  // Every screen owns its own cursor run — reset it whenever the step changes
+  // (forward or back), so a cursor position from a longer roster never lands
+  // out-of-range on the next screen.
   useEffect(() => {
-    if (job?.step === "cutover") setIdx(0)
+    setIdx(0)
   }, [job?.step])
 
   // Tick once a second while any selected site is mid-stage so the roster's
@@ -120,13 +123,14 @@ export function CloneWizard() {
     return () => clearInterval(t)
   }, [job?.step, job?.sites])
 
-  // Read + classify each site's DNS record when we land on the cutover step — but
-  // only if it hasn't been checked yet (so reopening a backgrounded wizard doesn't
-  // reset in-progress flips). The check itself is read-only.
+  // Read + classify each site's DNS records when we land on the cutover step — but
+  // per-site, only the ones never checked, so reopening a backgrounded wizard (or
+  // returning after ← back → retry) never resets in-progress flips, and a site that
+  // became "done" via retry after backing out still gets its records read.
   useEffect(() => {
     if (job?.step !== "cutover") return
-    const cloned = job.sites.filter((s) => s.selected && s.step === "done")
-    if (cloned.length > 0 && cloned.every((s) => !s.cutover)) void cutoverCheck()
+    const unchecked = job.sites.filter((s) => s.selected && s.step === "done" && !s.cutover)
+    if (unchecked.length > 0) void cutoverCheck(unchecked.map((s) => s.sourceSiteId))
   }, [job?.step, job?.sites, cutoverCheck])
 
   // Dev-only auto-sudo (both ends) from .env so the flow is testable headlessly.
@@ -192,6 +196,15 @@ export function CloneWizard() {
       // reopen with C on the source server. Before launch / at the summary, esc cancels.
       if (job.step === "clone" || job.step === "cutover") return backgroundClone()
       return close()
+    }
+
+    // ← / h — back one screen (layered views close first, matching esc). The config
+    // steps go back freely; after the fan-out has fired, the only back edge is
+    // cutover → the clone roster (re-verify / retry) — cloneGoBack enforces this.
+    if (name === "left" || name === "h") {
+      if (verifyOpen != null) return setVerifyOpen(null)
+      if (pickExisting) return setPickExisting(false)
+      return cloneGoBack()
     }
 
     if (job.step === "plan") {
@@ -277,7 +290,7 @@ export function CloneWizard() {
     if (job.step === "clone" || job.step === "done") {
       const sel = job.sites.filter((s) => s.selected)
       // While drilled into a verify/failure view: v re-runs verify (done sites),
-      // r retries the drilled FAILED site, ←/Esc(handled above) goes back.
+      // r retries the drilled FAILED site, ←/h/Esc (handled above) goes back.
       if (verifyOpen != null) {
         const drilled = job.sites.find((s) => s.sourceSiteId === verifyOpen)
         if (name === "r" && drilled?.step === "error") {
@@ -285,7 +298,6 @@ export function CloneWizard() {
           return cloneRetrySite(verifyOpen)
         }
         if (name === "v" && drilled?.step === "done") return verifyCloneSite(verifyOpen)
-        if (name === "left" || name === "h") return setVerifyOpen(null)
         return
       }
       const n = sel.length
@@ -814,7 +826,7 @@ export function CloneWizard() {
     }
     if (job!.step === "server") {
       if (pickExisting) return [{ key: "↑↓", label: "select" }, { key: "⏎", label: "use server" }, { key: "esc", label: "back" }]
-      return [{ key: "⏎", label: "provision new" }, ...(eligibleDests.length > 0 ? [{ key: "d", label: "use existing" }] : []), { key: "esc", label: "close" }]
+      return [{ key: "⏎", label: "provision new" }, ...(eligibleDests.length > 0 ? [{ key: "d", label: "use existing" }] : []), { key: "←", label: "back" }, { key: "esc", label: "close" }]
     }
     if (job!.step === "trust") {
       const destServer = job!.destServerId != null ? servers.find((s) => s.id === job!.destServerId) ?? null : null
@@ -824,6 +836,7 @@ export function CloneWizard() {
         { key: "G", label: "sudo source" },
         { key: "w", label: "SpinupWP" },
         ...(both ? [{ key: "⏎", label: "continue" }] : []),
+        { key: "←", label: "back" },
         { key: "esc", label: "close" },
       ]
     }
@@ -853,6 +866,7 @@ export function CloneWizard() {
         ...(anyConsole ? [{ key: "⏎", label: "registrar" }] : []),
         ...(ready > 0 ? [{ key: "c", label: "cut over" }] : []),
         { key: "r", label: "re-check" },
+        { key: "←", label: "clone roster" },
         { key: "f", label: "finish" },
         { key: "esc", label: "background" },
       ]
@@ -867,6 +881,7 @@ export function CloneWizard() {
         ...(hasManual ? [{ key: "o", label: "open settings" }] : []),
         { key: "r", label: "re-check" },
         ...(!blocked ? [{ key: "⏎", label: "continue" }] : []),
+        { key: "←", label: "back" },
         { key: "esc", label: "close" },
       ]
     }

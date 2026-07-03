@@ -19,7 +19,7 @@ import { openUrl, copyToClipboard } from "../../lib/open.ts"
 import { List, moveSelection } from "../List.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { Spinner } from "../components.tsx"
-import { useStore, isTtlWriteInFlight } from "../store.tsx"
+import { useStore, isRecordWriteInFlight, type RecordEditKind } from "../store.tsx"
 import type { Site } from "../../api/types.ts"
 
 // Fixed column widths (chars) so columns align on every row; VALUE flexes.
@@ -123,7 +123,7 @@ export function DnsInventory() {
     resolveServerHosting,
     hostingFor,
     isHostingResolving,
-    ttlWriteForHost,
+    recordWriteForHost,
     zoneAccessNotes,
   } = useStore()
   const allConnections = useMemo(() => Object.values(connections).flat(), [connections])
@@ -164,6 +164,19 @@ export function DnsInventory() {
     let zoneCount = 0
     let hereCount = 0
     let resolving = false
+
+    // Does this hostname point at THE SERVER BEING VIEWED? Computed here, at
+    // render, against the current server's IP — the cached HostRecord is shared
+    // across servers, so a stored flag would be stale from another server's view.
+    // A settled repoint (recordWrites) wins over the cached resolution until the
+    // next refresh, so a just-flipped row reads correctly right away.
+    const serverIp = server?.ip_address ?? ""
+    const hereFor = (name: string, rec: { type: string; resolvedIps: string[] } | undefined): boolean => {
+      if (!serverIp || !rec) return false
+      const vw = recordWriteForHost(name, rec.type, "value")
+      const ips = vw?.status === "done" && vw.value ? [vw.value] : rec.resolvedIps
+      return ips.includes(serverIp)
+    }
 
     for (const site of sites) {
       const entries = [
@@ -230,7 +243,8 @@ export function DnsInventory() {
         const wwwRec = headHost.startsWith("www.") ? undefined : hostingFor(wwwName)
         const wwwTarget = wwwRec?.type === "CNAME" ? norm(wwwRec.value) : ""
         const wwwFollows = wwwTarget !== "" && (wwwTarget === headHost || wwwTarget === g.apex)
-        if (hasRecord && headRec!.pointsHere) hereCount++
+        const headHere = hasRecord && hereFor(headHost, headRec)
+        if (headHere) hereCount++
         if (headResolving) resolving = true
 
         out.push({
@@ -253,7 +267,7 @@ export function DnsInventory() {
           recordType: headRec?.type ?? "",
           ttl: headRec?.ttl ?? null,
           value: headRec?.value ?? "",
-          pointsHere: headRec?.pointsHere ?? false,
+          pointsHere: headHere,
           resolving: headResolving,
           wwwFollows,
         })
@@ -265,7 +279,8 @@ export function DnsInventory() {
           const hr = hostingFor(name)
           if (hr && hr.type === "none") continue // no record for this hostname — nothing to migrate
           const isResolving = isHostingResolving(name) || (!hr && cached?.zone != null)
-          if (hr?.pointsHere) hereCount++
+          const hrHere = hereFor(name, hr)
+          if (hrHere) hereCount++
           if (!hr && isResolving) resolving = true
           const cnameTarget = hr?.type === "CNAME" ? hr.value.toLowerCase().replace(/\.$/, "") : ""
           const followsApex = cnameTarget !== "" && cnameTarget === g.apex
@@ -279,7 +294,7 @@ export function DnsInventory() {
             recordType: hr?.type ?? "",
             ttl: hr?.ttl ?? null,
             value: hr?.value ?? "",
-            pointsHere: hr?.pointsHere ?? false,
+            pointsHere: hrHere,
             followsApex,
             resolving: !hr,
             indent: isPrimaryZone ? 1 : 2,
@@ -290,12 +305,12 @@ export function DnsInventory() {
 
     const summary = `${zoneCount} zone${zoneCount === 1 ? "" : "s"}${hereCount ? ` · ${hereCount} point${hereCount === 1 ? "s" : ""} here` : ""}`
     return { rows: out, summary, pending: resolving }
-  }, [sites, dnsZones, dnsResolving, zoneForDomain, accessForZone, accountForZone, hostingFor, isHostingResolving])
+  }, [sites, server, dnsZones, dnsResolving, zoneForDomain, accessForZone, accountForZone, hostingFor, isHostingResolving, recordWriteForHost])
 
   const safeIndex = Math.min(index, Math.max(0, rows.length - 1))
   const close = () => setDnsInventoryServer(null)
 
-  function openDrill(r: InvRow) {
+  function openDrill(r: InvRow, edit: RecordEditKind) {
     if (r.access === "web") return openWeb(r)
     if (r.access !== "editable") return showFlash("Connect API access first — press c")
     const conn = connForZone(r.apex, r.hostKey, r.liveNs)
@@ -313,7 +328,12 @@ export function DnsInventory() {
       if (!r.hasRecord || !r.recordType) return showFlash("No record to edit on this line.")
       rec = { name: r.recordName, type: r.recordType }
     }
-    setDnsRecordsTarget({ apex: r.apex, hostKey: r.hostKey, connId: conn.id, record: rec })
+    // Repointing is an A/AAAA concern — a CNAME already points at a NAME and moves
+    // with it, so the thing to repoint is the record it targets.
+    if (edit === "value" && rec.type !== "A" && rec.type !== "AAAA") {
+      return showFlash(`A ${rec.type} record follows its target — repoint the A record it points to.`)
+    }
+    setDnsRecordsTarget({ apex: r.apex, hostKey: r.hostKey, connId: conn.id, record: rec, edit })
   }
 
   function openWeb(r: InvRow) {
@@ -358,7 +378,12 @@ export function DnsInventory() {
       case "right":
       case "l":
       case "t":
-        if (r) openDrill(r)
+        if (r) openDrill(r, "ttl")
+        return
+      case "p":
+        // Point the record somewhere else (the migration repoint) — a picker of
+        // the account's servers, since that's where a record almost always goes.
+        if (r) openDrill(r, "value")
         return
       case "c":
         if (!r) return
@@ -427,6 +452,7 @@ export function DnsInventory() {
         hints={[
           { key: "↑↓/jk", label: "select" },
           { key: "⏎", label: "edit TTL" },
+          { key: "p", label: "point at…" },
           { key: "c", label: "manage access" },
           ...(focusSite ? [{ key: "a", label: "all sites" }] : []),
           { key: "r", label: "refresh" },
@@ -451,8 +477,8 @@ export function DnsInventory() {
         </box>
       )
     }
-    const wp = ttlWriteForHost(name, type)
-    if (isTtlWriteInFlight(wp)) {
+    const wp = recordWriteForHost(name, type, "ttl")
+    if (isRecordWriteInFlight(wp)) {
       return (
         <box style={{ flexDirection: "row", width: TTL_W, flexShrink: 0 }}>
           <Spinner color={selected ? theme.text : theme.brand} interval={120} />
@@ -460,10 +486,27 @@ export function DnsInventory() {
         </box>
       )
     }
-    const effTtl = wp?.status === "done" ? wp.ttl : ttl
+    const effTtl = wp?.status === "done" ? (wp.ttl ?? ttl) : ttl
     const txt = effTtl == null ? "—" : String(effTtl)
     const fg = selected ? theme.text : faint ? theme.textFaint : theme.accent
     return <text content={txt.padEnd(TTL_W)} fg={fg} wrapMode="none" style={{ flexShrink: 0 }} />
+  }
+
+  // The VALUE cell, write-aware like the TTL cell: a spinner + "→ip" while a
+  // repoint is in flight, the settled new value once done (the authoritative host
+  // has it), else the resolved value.
+  function valueCell(name: string, type: string, value: string, selected: boolean) {
+    const wp = recordWriteForHost(name, type, "value")
+    if (isRecordWriteInFlight(wp)) {
+      return (
+        <box style={{ flexDirection: "row", flexShrink: 1 }}>
+          <Spinner color={selected ? theme.text : theme.brand} interval={120} />
+          <text content={` →${truncate(wp!.value ?? "", 36)}`} fg={selected ? theme.text : theme.warn} wrapMode="none" />
+        </box>
+      )
+    }
+    const eff = wp?.status === "done" && wp.value ? wp.value : value
+    return <text content={truncate(eff, 38)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
   }
 
   // host + access glyph — a right-side cluster on zone lines.
@@ -505,7 +548,7 @@ export function DnsInventory() {
             <text content={"".padEnd(TTL_W)} wrapMode="none" style={{ flexShrink: 0 }} />
           </>
         )}
-        <text content={truncate(r.value, 38)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+        {valueCell(r.recordName, r.recordType, r.value, selected)}
         {r.pointsHere ? <text content=" ◀ here" fg={selected ? theme.text : theme.good} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
         {r.wwwFollows ? <text content=" +www" fg={selected ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
         {r.note ? <text content={"  " + r.note} fg={selected ? theme.text : r.noteColor} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
@@ -524,7 +567,7 @@ export function DnsInventory() {
         <text content={indentedName(r.name, r.indent)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
         <text content={(r.resolving ? "" : r.recordType).padEnd(TYPE_W)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
         {ttlCell(r.name, r.recordType, r.ttl, r.resolving, r.followsApex, selected)}
-        <text content={truncate(r.value, 38)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+        {valueCell(r.name, r.recordType, r.value, selected)}
         {r.followsApex ? (
           <text content=" follows apex" fg={selected ? theme.text : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
         ) : r.pointsHere ? (

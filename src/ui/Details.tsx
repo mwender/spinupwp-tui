@@ -13,7 +13,7 @@ import { useStore, isUpgradeInFlight, isServerOpInFlight, isHttpsToggleInFlight,
 import type { Server, Site } from "../api/types.ts"
 
 export function ServerDetail({ server, siteCount, showControl = false }: { server: Server; siteCount: number; showControl?: boolean }) {
-  const { rebootInfo, serverOps, isServerOsEol } = useStore()
+  const { rebootInfo, serverOps, isServerOsEol, sitesForServer, vanityJob } = useStore()
   const ds = server.disk_space
   const pct = diskUsedPct(ds?.used, ds?.total)
   const op = serverOps.get(server.id)
@@ -81,11 +81,23 @@ export function ServerDetail({ server, siteCount, showControl = false }: { serve
       {showControl ? (
         <>
           <box style={{ height: 1 }} />
-          <ControlPanel heading="Server Control" groups={SERVER_CONTROL} />
+          <ControlPanel heading="Server Control" groups={serverControlGroups()} />
         </>
       ) : null}
     </box>
   )
+
+  // The static groups, plus a Manage "V" row whenever the V key would actually do
+  // something: the server has no site at its own hostname yet (busy servers
+  // benefit from a vanity site just like empty ones), or an unfinished build for
+  // this server can be reopened.
+  function serverControlGroups(): ActionGroup[] {
+    const resumable = vanityJob != null && vanityJob.step !== "done" && vanityJob.serverId === server.id
+    const hasVanity = sitesForServer(server.id).some((s) => s.domain.toLowerCase() === server.name.toLowerCase())
+    if (!resumable && hasVanity) return SERVER_CONTROL
+    const vanityItem: [string, string] = ["V", resumable ? "Resume vanity-site build" : "Vanity site at hostname"]
+    return SERVER_CONTROL.map((g) => (g.title === "Manage" ? { ...g, items: [...g.items, vanityItem] } : g))
+  }
 }
 
 export const SERVER_CONTROL: ActionGroup[] = [
