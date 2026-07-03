@@ -81,11 +81,15 @@ Connect your Kuma instance once and Spinup registers monitors itself:
   `config.json`, chmod 600 — or set `SPINUP_KUMA_URL`, `SPINUP_KUMA_USERNAME`,
   `SPINUP_KUMA_PASSWORD`). Then `a` registers monitors: vanity sites get the
   healthz monitor + a **load push monitor fed by a once-a-minute cron** in the
-  site user's crontab (Kuma graphs the load; a silent cron — server down, cron
-  dead, egress broken — flips the monitor: dead-man's-switch semantics). Regular
+  site user's crontab. Kuma graphs the pushed value: 1-min load ×100 as an
+  integer (164 = load 1.64 — some Kuma builds drop float pings; Spinup's own
+  views scale it back). A silent cron — server down, cron dead, egress broken —
+  flips the monitor: dead-man's-switch semantics. Regular
   sites get a homepage monitor; Spinup never touches a client site's files.
-- **Vanity pages published before this feature** need one `R` (re-seed) from the
-  `m` overlay to gain the health endpoints, then everything above applies.
+- **Vanity pages published before this feature** need one `R` (refresh) from the
+  `m` overlay to gain the health endpoints, then everything above applies. `R`
+  doesn't require a Kuma connection — unconnected it just re-publishes the
+  current page; connected it also registers the monitors and cron in one go.
 - **The vanity wizard (`V`) does all of this automatically** as its final two
   steps whenever a Kuma connection is configured.
 

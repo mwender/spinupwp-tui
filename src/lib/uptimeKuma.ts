@@ -9,6 +9,13 @@
 // beyond its first (token-prompted) login.
 
 import { io, type Socket } from "socket.io-client"
+import type { KumaMonitorRef } from "../config.ts"
+
+// The push cron sends 1-min load ×this as an INTEGER (some Kuma builds validate
+// `ping` as an int and silently store null for floats — verified live). Every
+// encoder (the cron line) and decoder (the store's status poll) shares this one
+// constant so the unit contract can't drift.
+export const LOAD_PUSH_SCALE = 100
 
 export interface KumaCreds {
   url: string
@@ -70,6 +77,12 @@ export class KumaClient {
   private monitorList: Record<string, KumaMonitor> | null = null
   private notificationList: { id: number; isDefault?: boolean; active?: boolean; config?: string }[] = []
 
+  // Kuma pushes each monitor's recent beats + uptime percentages as events right
+  // after login (it's how its own dashboard populates) — capture them so one
+  // short-lived connection yields a full status snapshot with no extra queries.
+  private heartbeats = new Map<number, KumaBeat[]>()
+  private uptimes = new Map<string, number>() // "<monitorId>:<period>" → percent
+
   private constructor(socket: Socket) {
     this.socket = socket
     socket.on("info", (info: { version?: string }) => {
@@ -80,6 +93,47 @@ export class KumaClient {
     })
     socket.on("notificationList", (list: typeof this.notificationList) => {
       this.notificationList = list ?? []
+    })
+    socket.on("heartbeatList", (monitorID: number | string, beats: KumaBeat[], overwrite?: boolean) => {
+      const id = Number(monitorID)
+      const prev = overwrite ? [] : (this.heartbeats.get(id) ?? [])
+      // Cap the retained history: the UI reads the last ~40 beats, and an
+      // uncapped append would grow without bound on a long-lived connection.
+      this.heartbeats.set(id, [...prev, ...(beats ?? [])].slice(-100))
+    })
+    socket.on("uptime", (monitorID: number | string, period: number | string, percent: number) => {
+      this.uptimes.set(`${Number(monitorID)}:${period}`, percent)
+    })
+  }
+
+  beatsFor(monitorId: number): KumaBeat[] {
+    return this.heartbeats.get(monitorId) ?? []
+  }
+
+  uptimeFor(monitorId: number, period: number): number | null {
+    return this.uptimes.get(`${monitorId}:${period}`) ?? null
+  }
+
+  // The post-login event burst (one heartbeatList per monitor) arrives over ~a
+  // second. Wait until we've heard from `expected` monitors (not just one — a
+  // single early arrival is a partial snapshot) or the deadline passes.
+  async waitForSnapshot(expected: number, ms = 1500): Promise<void> {
+    const deadline = Date.now() + ms
+    while (this.heartbeats.size < Math.max(1, expected) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+  }
+
+  // `info` (with the version) can land after the login ack; wait briefly so the
+  // connect flow can report a real version instead of racing it.
+  async waitForVersion(ms = 1200): Promise<void> {
+    if (this.version) return
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, ms)
+      this.socket.once("info", () => {
+        clearTimeout(t)
+        resolve()
+      })
     })
   }
 
@@ -151,6 +205,10 @@ export class KumaClient {
           resolve()
         })
       })
+      // If the ack below rejects first, `wait` is never awaited — pre-attach a
+      // no-op handler so its own later timeout can't become an unhandled
+      // rejection (the `await wait` path still observes the real error).
+      wait.catch(() => {})
       await this.emitAck("getMonitorList")
       if (!this.monitorList) await wait
     }
@@ -264,6 +322,7 @@ export function loadPushMonitorPayload(name: string, pushToken: string): Record<
     type: "push",
     name,
     pushToken,
+    description: "1-min load average ×100 (integer), pushed by Spinup's heartbeat cron. 164 = load 1.64.",
     // The cron beats once a minute; alert after ~2 missed beats.
     interval: 60,
     retryInterval: 60,
@@ -272,6 +331,39 @@ export function loadPushMonitorPayload(name: string, pushToken: string): Record<
     // Kuma validates status-code arrays on every monitor type, push included.
     accepted_statuscodes: ["200-299"],
   }
+}
+
+// Adopt-or-create the monitors for one domain — THE single implementation shared
+// by the vanity wizard's monitor step and the `m` overlay's add/repair, so the
+// two paths cannot drift. Rules:
+//   - A recorded id is trusted only if the monitor still EXISTS in Kuma (deleted
+//     over there ⇒ re-create, don't silently no-op).
+//   - Same-named monitors are adopted rather than duplicated; an adopted push
+//     monitor keeps its own token so the cron feeds the right one.
+//   - The two creates are independent acks — run them in parallel.
+export async function registerMonitors(
+  kuma: KumaClient,
+  domain: string,
+  opts: { proto: "http" | "https"; healthzPath: string; wantPush: boolean; known?: KumaMonitorRef | null; pushToken?: string | null },
+): Promise<{ healthId: number; pushId?: number; pushToken?: string }> {
+  const monitors = await kuma.getMonitors()
+  const byId = new Map(monitors.map((m) => [m.id, m]))
+  const byName = new Map(monitors.map((m) => [m.name, m]))
+  const known = opts.known ?? {}
+  const live = (id?: number) => (id != null && byId.has(id) ? id : undefined)
+
+  let pushToken = opts.pushToken ?? known.pushToken ?? genPushToken()
+  const existingPush = opts.wantPush && live(known.pushId) == null ? byName.get(`${domain} load`) : undefined
+  if (existingPush?.pushToken) pushToken = existingPush.pushToken
+
+  const [healthId, pushId] = await Promise.all([
+    (async () => live(known.healthId) ?? byName.get(domain)?.id ?? (await kuma.addMonitor(healthMonitorPayload(domain, `${opts.proto}://${domain}${opts.healthzPath}`))))(),
+    (async () => {
+      if (!opts.wantPush) return undefined
+      return live(known.pushId) ?? existingPush?.id ?? (await kuma.addMonitor(loadPushMonitorPayload(`${domain} load`, pushToken)))
+    })(),
+  ])
+  return { healthId, pushId, pushToken: opts.wantPush ? pushToken : undefined }
 }
 
 // Connect → login → run → always disconnect. Returns the (possibly refreshed) JWT

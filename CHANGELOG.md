@@ -25,10 +25,28 @@ versions; such changes are called out here.
   - **`m` on any site** manages monitoring in place: vanity sites get the full
     treatment (incl. `R` to re-publish pages seeded before the health-endpoint
     feature existed), regular sites get a homepage monitor (up/down + cert-expiry
-    alerts) — client site files are never touched.
+    alerts) — client site files are never touched. **`R` works without Kuma
+    too**: unconnected, it simply pushes the current page (a vanity-page
+    refresh); connected, it also registers monitors + the cron. The connect
+    form is opt-in (`c`), never a gate.
   - The client speaks Kuma's socket.io API (its only management API), adopts
     same-named monitors instead of duplicating them, reuses push tokens, and
     handles both Kuma 1.x and 2.x monitor schemas.
+- **Kuma metrics live inside Spinup.** With a connection configured, the store
+  polls Kuma once a minute and the data surfaces where you already look:
+  - **Health view** gains a "Monitor (Uptime Kuma)" panel — up/down, 24h uptime %,
+    a response-time sparkline, and a server-load sparkline fed by the heartbeat
+    cron (real history that survives reopening the view, which the SSH-sampled
+    CPU history can't).
+  - **Details pane** shows a Monitor row per site (up/down + 24h uptime, or
+    "not monitored · m"); the **header** shows a "▼ N monitors down" badge —
+    only bad news earns header space.
+  - **Reboots never page you**: firing a reboot first wraps the server's
+    monitors in a Kuma maintenance window and removes it when the reboot event
+    settles. Strictly best-effort — Kuma being unreachable never blocks the
+    reboot — and the confirm screen says it's happening.
+  - Load pushes are sent ×100 as integers (some Kuma builds silently drop float
+    pings — found the hard way); Spinup's views scale them back.
 - **Vanity pages are now health endpoints any uptime monitor can watch.** The page
   the `V` wizard seeds gains two machine modes: `?healthz` returns plain
   `200 ok` / `503 unhealthy: …` (1-min load per core > 2, or disk free < 10%) so a

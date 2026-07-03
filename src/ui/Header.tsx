@@ -27,7 +27,8 @@ const SUBTITLES: Record<Route, string> = {
 }
 
 export function Header() {
-  const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob, vanityJob, cloneJob, cloneServer } = useStore()
+  const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob, vanityJob, cloneJob, cloneServer, kumaStatus } = useStore()
+  const kumaDown = [...kumaStatus.values()].filter((s) => s.up === false).length
   const updateReady = updateInfo?.updateAvailable ?? false
   const building = isNewServerInFlight(newServerJob)
   const connecting = isVanityInFlight(vanityJob)
@@ -94,6 +95,8 @@ export function Header() {
             <text content={`  Cloning ${truncate(cloneJob!.sourceServerName, 20)} — press C  `} fg={theme.warn} wrapMode="none" />
           </box>
         )}
+        {/* Uptime Kuma: only bad news earns header space — silence when all up. */}
+        {kumaDown > 0 && <text content={`  ▼ ${kumaDown} monitor${kumaDown === 1 ? "" : "s"} down  `} fg={theme.bad} style={{ flexShrink: 0 }} wrapMode="none" />}
         {loading && <Spinner interval={100} />}
         <text content={`  ${servers.length} servers · ${sites.length} sites  `} fg={theme.textDim} style={{ flexShrink: 0 }} />
         <text content={lastUpdated ? `updated ${timeAgo(lastUpdated.toISOString())}` : "loading…"} fg={theme.textFaint} style={{ flexShrink: 0 }} />

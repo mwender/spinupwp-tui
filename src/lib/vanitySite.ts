@@ -7,6 +7,14 @@
 
 import { resolve4 } from "node:dns/promises"
 import { SSH_OPTS, sshPort, runProcess, meaningfulError, remoteDocRoot } from "./dbBackup.ts"
+import { pushUrl, LOAD_PUSH_SCALE } from "./uptimeKuma.ts"
+
+// The vanity convention: the site living at the server's own hostname. Every
+// feature that special-cases vanity sites (full monitoring, page re-seed) keys
+// off this ONE predicate so they can't diverge.
+export function isVanityPair(siteDomain: string, serverName: string): boolean {
+  return siteDomain === serverName
+}
 
 // Does the hostname now resolve to the server IP? Used to gate Let's Encrypt on the
 // new A record having propagated. Uses the system resolver; a fresh subdomain has no
@@ -247,12 +255,16 @@ const PUSH_CRON_MARKER = "spinup-kuma-push"
 // stopping is the signal (dead-man's switch) — so the cron itself never reports
 // "down"; it just goes quiet when the server/cron/egress dies.
 //
+// Load is sent ×LOAD_PUSH_SCALE as an INTEGER (1.64 → 164): some Kuma builds
+// validate `ping` as an int and silently store null for floats (verified live).
+// The store's Kuma poll divides by the same constant.
+//
 // Idempotent: a marker comment identifies our line, and the install strips any
 // previous marked line before appending. NO `%` anywhere in the line — cron
-// treats a bare % as newline.
+// treats a bare % as newline (which also rules out awk printf here).
 export async function seedVanityPushCron(t: PushCronTarget): Promise<{ ok: boolean; error?: string }> {
-  const push = `${t.kumaUrl.replace(/\/+$/, "")}/api/push/${t.pushToken}`
-  const line = `* * * * * curl -fsS --max-time 20 '${push}?status=up&msg=ok&ping='$(awk '{print $1}' /proc/loadavg) >/dev/null 2>&1 # ${PUSH_CRON_MARKER}`
+  const push = pushUrl(t.kumaUrl, t.pushToken)
+  const line = `* * * * * curl -fsS --max-time 20 '${push}?status=up&msg=ok&ping='$(awk '{print int($1*${LOAD_PUSH_SCALE})}' /proc/loadavg) >/dev/null 2>&1 # ${PUSH_CRON_MARKER}`
   // The line contains quotes of both kinds once cron expands it, so ship it
   // base64'd (same trick as the index.php seed) instead of fighting nesting.
   const b64 = Buffer.from(line + "\n", "utf8").toString("base64")

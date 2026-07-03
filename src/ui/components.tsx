@@ -241,12 +241,14 @@ export function SecretInput({
   focused,
   placeholder,
   onSubmit,
+  width,
 }: {
   value: string
   onChange: (v: string) => void
   focused?: boolean
   placeholder?: string
   onSubmit?: () => void
+  width?: number // fixed box width; omit for content-sized (existing call sites)
 }) {
   // Mirror the value in a ref so a rapid burst of key events (or a paste split
   // into per-char events) accumulates instead of each handler closing over a
@@ -289,6 +291,7 @@ export function SecretInput({
         backgroundColor: theme.bgAlt,
         paddingLeft: 1,
         paddingRight: 1,
+        ...(width != null ? { width } : {}),
       }}
     >
       <text content={focused ? "❯ " : "  "} fg={focused ? theme.brand : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />

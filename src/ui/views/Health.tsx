@@ -10,7 +10,7 @@ import { theme, diskColor } from "../../lib/theme.ts"
 import { formatBytes, bar, formatUptime, sparkline, timeAgo, truncate } from "../../lib/format.ts"
 import { Panel, Spinner, Centered } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
-import { useStore } from "../store.tsx"
+import { useStore, type KumaDomainStatus } from "../store.tsx"
 import { fetchServerHealth, type HealthSnapshot } from "../../lib/ssh.ts"
 
 const POLL_MS = 2500
@@ -50,7 +50,7 @@ function Gauge({
 }
 
 export function Health() {
-  const { healthServer, setHealthServer, sitesForServer, sshUser } = useStore()
+  const { healthServer, setHealthServer, sitesForServer, sshUser, kumaStatus } = useStore()
   const { height } = useTerminalDimensions()
   const server = healthServer
 
@@ -97,7 +97,10 @@ export function Health() {
 
   if (!server) return null
 
-  const procRows = Math.max(3, Math.min(snapshot?.processes.length ?? 0, height - 18))
+  // The conditional Kuma Monitor panel takes up to 5 rows (2 border + 3 content)
+  // out of the same right column — shrink the process budget when it renders.
+  const kumaRows = kumaStatus.get(server.name) ? 5 : 0
+  const procRows = Math.max(3, Math.min(snapshot?.processes.length ?? 0, height - 18 - kumaRows))
 
   return (
     <box
@@ -161,7 +164,7 @@ export function Health() {
           </box>
         </Centered>
       ) : snapshot ? (
-        <HealthBody snapshot={snapshot} history={history} server={server} procRows={procRows} staleError={error} />
+        <HealthBody snapshot={snapshot} history={history} server={server} procRows={procRows} staleError={error} kuma={kumaStatus.get(server.name)} />
       ) : null}
 
       <StatusBar
@@ -182,12 +185,14 @@ function HealthBody({
   server,
   procRows,
   staleError,
+  kuma,
 }: {
   snapshot: HealthSnapshot
   history: number[]
   server: { name: string }
   procRows: number
   staleError: string | null
+  kuma?: KumaDomainStatus
 }) {
   const s = snapshot
   const memPct = s.memTotal > 0 ? (s.memUsed / s.memTotal) * 100 : 0
@@ -258,6 +263,29 @@ function HealthBody({
               )}
             </box>
           </Panel>
+          {kuma && (
+            <Panel title=" Monitor (Uptime Kuma) ">
+              <box style={{ flexDirection: "column" }}>
+                <box style={{ flexDirection: "row", height: 1 }}>
+                  <text content={kuma.up === false ? "○ down" : kuma.up ? "● up" : "· no beats yet"} fg={kuma.up === false ? theme.bad : kuma.up ? theme.good : theme.textFaint} style={{ flexShrink: 0 }} />
+                  {kuma.uptime24 != null && <text content={`   ${(kuma.uptime24 * 100).toFixed(2)}% (24h)`} fg={theme.textDim} wrapMode="none" />}
+                </box>
+                {kuma.responseBeats.length > 1 && (
+                  <box style={{ flexDirection: "row", height: 1 }}>
+                    <text content="response " fg={theme.textDim} style={{ flexShrink: 0 }} />
+                    <text content={sparkline(kuma.responseBeats.slice(-40), 40)} fg={theme.brand} wrapMode="none" style={{ flexShrink: 1 }} />
+                  </box>
+                )}
+                {kuma.loadBeats.length > 1 && (
+                  <box style={{ flexDirection: "row", height: 1 }}>
+                    <text content="load     " fg={theme.textDim} style={{ flexShrink: 0 }} />
+                    <text content={sparkline(kuma.loadBeats.slice(-40), 40)} fg={theme.accent} wrapMode="none" style={{ flexShrink: 1 }} />
+                    {kuma.lastLoad != null && <text content={` ${kuma.lastLoad.toFixed(2)}`} fg={theme.textDim} style={{ flexShrink: 0 }} />}
+                  </box>
+                )}
+              </box>
+            </Panel>
+          )}
           <Panel title=" Top processes " flexGrow={1}>
             <box style={{ flexGrow: 1, flexDirection: "column" }}>
               <box style={{ flexDirection: "row", height: 1 }}>

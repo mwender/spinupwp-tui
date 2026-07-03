@@ -115,7 +115,18 @@ export const SERVER_CONTROL: ActionGroup[] = [
 ]
 
 export function SiteDetail({ site, serverName }: { site: Site; serverName: string }) {
-  const { probes, probingIds, isProbeStale, phpUpgrades, httpsToggles, purgeCacheProgress, localLinks, grantedKeyKinds } = useStore()
+  const { probes, probingIds, isProbeStale, phpUpgrades, httpsToggles, purgeCacheProgress, localLinks, grantedKeyKinds, kumaStatus, kumaMonitorFor } = useStore()
+  const kuma = kumaStatus.get(site.domain)
+  const kumaValue = kuma
+    ? kuma.up === false
+      ? "DOWN"
+      : kuma.up
+        ? `up${kuma.uptime24 != null ? ` · ${(kuma.uptime24 * 100).toFixed(2)}% (24h)` : ""}`
+        : "no beats yet"
+    : kumaMonitorFor(site.domain)
+      ? "registered · awaiting poll"
+      : "not monitored · m (Servers)" // `m` means media fallback in Search — scope the teach
+  const kumaColor = kuma ? (kuma.up === false ? theme.bad : kuma.up ? theme.good : theme.textDim) : theme.textFaint
   const httpsProgress = httpsToggles.get(site.id)
   const purgeProgress = purgeCacheProgress.get(site.id)
   const updates = (site.wp_plugin_updates || 0) + (site.wp_theme_updates || 0) + (site.wp_core_update ? 1 : 0)
@@ -172,6 +183,7 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       <Field label="User" value={site.site_user ?? "—"} />
       <Field label="Granted" value={keyValue} valueColor={keyParts.length ? theme.good : theme.textFaint} />
       <Field label="Public dir" value={site.public_folder ?? "/"} />
+      <Field label="Monitor" value={kumaValue} valueColor={kumaColor} />
       <Field label="Local" value={linkValue} valueColor={linkColor} />
       <SiteDnsSection site={site} />
       <Field
