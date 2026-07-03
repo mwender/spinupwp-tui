@@ -65,8 +65,10 @@ Once you're in, the dashboard looks like this:
   records that move a site to another server: each site's hostnames with their type,
   TTL (in seconds), and a `◀ here` flag when they point at this server. Connect a
   provider (AWS Route 53 / Cloudflare) and press `⏎` to **edit a record's TTL** — the
-  prep step for a low-risk cutover. It only ever touches a site's own hosting records,
-  never your MX/TXT/other records. (See "DNS hosts, access & editing" below.)
+  prep step for a low-risk cutover — or `p` to **repoint the record**: pick another
+  of your SpinupWP servers from a list (or enter an IP) and move the traffic. It only
+  ever touches a site's own hosting records, never your MX/TXT/other records. (See
+  "DNS hosts, access & editing" below.)
 - **Database backup & sync** — on a linked WordPress site (Search tab), press `d`
   to download a gzipped production database backup into the copy's `sql/` folder
   (**read-only on production**), or — opt-in — press `p` to pull production into
@@ -97,8 +99,9 @@ Once you're in, the dashboard looks like this:
   kernel/security packages). (See "Server actions" below.)
 - **Create & connect a server** — press `c` on the Servers tab to provision a new
   server (DigitalOcean / Vultr / Linode / Hetzner), priced from the provider catalog
-  and pre-filled to match a selected server. Then press `V` on a server with **no
-  sites** to connect it end to end: Spinup writes the DNS A record, creates a
+  and pre-filled to match a selected server. Then press `V` on any server that
+  doesn't yet have a **site at its own hostname** to connect it end to end: Spinup
+  writes the DNS A record, creates a
   placeholder "vanity" site, enables HTTPS, hands you off to add your SSH key, and
   publishes a status page — turning a bare server into one you can actually work
   with. Long builds run in the background and survive a restart. (See "Creating &
@@ -252,7 +255,7 @@ These can be set in `config.json` or via an environment variable:
 | `m` | Production media fallback: serve missing-locally images from production (Search; WordPress + linked) |
 | `L` | Link / edit a site's local working copy |
 | `t` / `v` | Open the linked copy in a terminal / its local URL in your browser |
-| `n` | DNS migration view for a site — its records + TTLs (`⏎` edits a TTL; `a` shows the whole server) |
+| `n` | DNS migration view for a site — its records + TTLs (`⏎` edits a TTL; `p` repoints the record; `a` shows the whole server) |
 | `N` | DNS migration view for the whole server |
 | `h` | Live server health (CPU/mem/disk over SSH) |
 | `d` | Detect a site's stack via SSH (Servers / Stacks tabs) |
@@ -264,7 +267,7 @@ These can be set in `config.json` or via an environment variable:
 | `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
-| `V` | Connect a 0-site server with a vanity site — DNS + site + HTTPS + SSH-key handoff (Servers tab; needs a Read/Write token) |
+| `V` | Add a vanity site at the server's own hostname — DNS + site + HTTPS + SSH-key handoff (Servers tab; offered when no hostname site exists; needs a Read/Write token) |
 | `C` | Clone a server's sites to a new/existing destination (Servers tab; needs a Read/Write token + sudo) |
 | `S` | Connect sudo on a server for privileged writes — optionally remembered in the macOS Keychain (Servers tab) |
 | `K` | Grant / revoke an SSH key on a site, or every site on the server (needs sudo connected) |
@@ -390,8 +393,11 @@ build fires `POST /servers` and tracks the ~10-minute provision in the backgroun
 
 **Connect it with a vanity site (`V`).** A brand-new server has **no site**, so
 there's nothing to attach an SSH key to and no way for Spinup to reach it — empty
-servers are flagged in **amber** in the Servers list. Press `V` on one to build a
-small placeholder ("vanity") site at the server's own hostname, end to end:
+servers are flagged in **amber** in the Servers list. A busy server benefits from
+the same thing (a status page at its own hostname + a site user to hold your key),
+so `V` is offered on **any server that doesn't yet have a site at its own
+hostname** — it also appears under **Manage** in the server's Details panel. It
+builds the small placeholder ("vanity") site end to end:
 
 1. **DNS** — writes an `A` record for the hostname → the server IP (AWS Route 53),
    using the connection from the DNS module.
@@ -489,7 +495,9 @@ over SSH). The steps:
 
 The clone runs in the **background** — pressing `Esc` doesn't abandon it; a header
 badge (`⠹ Cloning … — press C`) surfaces the in-flight job and `C` reopens the live
-roster. **Every job writes a full log** (`~/.config/spinupwp-tui/logs/`, passwords
+roster. `←` (or `h`) steps **back a screen**: the setup steps go back freely, and
+once cloning has started the one back edge is DNS cutover → the clone roster — so
+you can re-verify or retry a site before flipping live traffic. **Every job writes a full log** (`~/.config/spinupwp-tui/logs/`, passwords
 redacted, self-pruning) — `⏎` on a failed site shows the complete error and `r`
 retries just that site. Pairs naturally with the DNS module: **lower the TTLs**
 (`n`/`N` → `⏎`) a day or two ahead so the cutover propagates fast.
@@ -620,10 +628,18 @@ never shown or changed. Moving a site can't take down its email.
   check re-reads the live nameservers and **blocks** the change if the connected
   account's zone isn't the one actually serving the domain. Route 53 changes are
   followed to completion; the record shows an "updating" status that keeps ticking
-  even if you leave the view. Only the **TTL** is editable here — a record's target
-  is repointed separately, during the clone wizard's DNS cutover (see "Cloning a
-  server" below). Cloudflare **proxied** records keep their TTL fixed to automatic
-  (so it's not editable here), but their origin IP still repoints fine at cutover.
+  even if you leave the view. Cloudflare **proxied** records keep their TTL fixed
+  to automatic, so it's not editable here — repointing still works (next).
+- **Repoint a record (`p`).** The same focused editor, on the record's **value** —
+  where it points. The picker leads with **your SpinupWP servers** (name + IP, the
+  record's current home tagged), because pointing a record at one of your own boxes
+  is what this is for; a custom IP is the fallback. The same confirm and NS
+  pre-flight gate apply, the write is followed to completion in the background, and
+  the inventory row shows `→ new IP` while it applies. A Cloudflare **proxied**
+  record repoints its **origin** behind the proxy (visitors keep resolving
+  Cloudflare's IPs). CNAMEs aren't repointed — they follow their target, which is
+  the record to edit. This is the standalone version of the clone wizard's DNS
+  cutover: migrate a single site, finish a cutover by hand, or fix a stale record.
 - **Connect a provider (`c`).** Manage credentials for the selected zone's
   provider — **AWS Route 53** (an IAM access key), **Cloudflare** (a scoped token),
   or **GoDaddy** (a Production API key). Multiple accounts per provider are
@@ -632,8 +648,8 @@ never shown or changed. Moving a site can't take down its email.
   environment variables are honored (`CLOUDFLARE_API_TOKEN`, `AWS_ACCESS_KEY_ID` /
   `AWS_SECRET_ACCESS_KEY`, `GODADDY_API_KEY` / `GODADDY_API_SECRET`). Secrets are
   masked as you type. Listing hosts needs only read access (Cloudflare `Zone:Read`);
-  **editing a TTL** needs write access — Route 53 record writes, or a Cloudflare
-  `Zone.DNS:Edit` token.
+  **editing (a TTL or a repoint)** needs write access — Route 53 record writes, or a
+  Cloudflare `Zone.DNS:Edit` token.
 - **Web-only hosts (GoDaddy, Namecheap, Network Solutions, …).** A registrar with
   no usable API shows `↗`; press `w` (in the inventory or the connect overlay) to
   open its web console — for GoDaddy specifically, your Clients hub, with the

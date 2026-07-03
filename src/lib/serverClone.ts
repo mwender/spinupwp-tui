@@ -703,10 +703,14 @@ export interface VerifySpec {
 }
 
 // One round-trip per side: collect labeled wp-cli facts as `key=value` lines.
+// --skip-plugins/--skip-themes: no plugin code runs per invocation (a plugin making a
+// stalled outbound call once ate the whole budget and cut the facts off mid-script) —
+// and the flags are identical on both sides, so every count stays comparable. The
+// trailing `eof` sentinel is how verifyClone tells "read got cut off" from "differs".
 async function wpFacts(ctx: SudoCtx, root: string, user: string): Promise<Record<string, string>> {
   const script = [
     `cd ${shq(root)} 2>/dev/null || exit 0`,
-    `u() { sudo -u ${shq(user)} -H wp "$@" 2>/dev/null; }`,
+    `u() { sudo -u ${shq(user)} -H wp --skip-plugins --skip-themes "$@" 2>/dev/null; }`,
     `echo "core=$(u core version)"`,
     `echo "posts=$(u post list --post_type=any --format=count)"`,
     `echo "pages=$(u post list --post_type=page --format=count)"`,
@@ -714,8 +718,9 @@ async function wpFacts(ctx: SudoCtx, root: string, user: string): Promise<Record
     `echo "plugins=$(u plugin list --status=active --format=count)"`,
     `echo "siteurl=$(u option get siteurl)"`,
     `echo "home=$(u option get home)"`,
+    `echo "eof=1"`,
   ].join("\n")
-  const res = await exec(ctx, script, 60_000)
+  const res = await exec(ctx, script, 120_000)
   const out: Record<string, string> = {}
   for (const line of res.stdout.split("\n")) {
     const m = line.match(/^(\w+)=(.*)$/)
@@ -752,6 +757,13 @@ export async function verifyClone(source: SudoCtx, dest: SudoCtx, spec: VerifySp
     wpFacts(dest, destDir, spec.destSiteUser),
     curlStatus(spec.domain, spec.destIp),
   ])
+  // A missing tail sentinel means the facts script was cut off partway (timeout, a
+  // stalled command) — fail the verify loudly instead of rendering the missing tail
+  // as misleading ✕ "–" mismatch rows (which read as "the clone differs").
+  if (sf.eof !== "1" || cf.eof !== "1") {
+    const side = sf.eof !== "1" ? "source" : "clone"
+    throw new Error(`couldn't read the ${side}'s WordPress facts (the wp-cli read was cut off) — press v to re-run`)
+  }
   const checks: VerifyCheck[] = []
   checks.push({ key: "http", label: "Clone serves (HTTP)", source: "—", clone: http, ok: /^[23]\d\d$/.test(http) })
   const cmp = (key: string, label: string) => {

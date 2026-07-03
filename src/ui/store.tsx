@@ -347,24 +347,31 @@ export function isKeyGrantInFlight(p: KeyGrantProgress | undefined): boolean {
   return p != null && p.status !== "done" && p.status !== "error"
 }
 
-// A record TTL change (Phase 3), tracked in the store (same model as the other
+// Which single field of a hosting record an edit targets: its TTL, or its VALUE
+// (where the record points — the migration repoint). One editor, two modes.
+export type RecordEditKind = "ttl" | "value"
+
+// A record change (Phase 3), tracked in the store (same model as the other
 // writes) so it survives the records overlay being closed and a Route 53 change
 // can keep polling to INSYNC in the background. Keyed by the record's stable key.
 // `status`: queued → pending (Route 53 propagating) → done | failed. Cloudflare
-// applies synchronously, so it jumps straight to done.
-export interface TtlWriteProgress {
-  ttl: number
+// applies synchronously, so it jumps straight to done. `kind` says which field
+// changed; `ttl`/`value` carry the target for that kind.
+export interface RecordWriteProgress {
+  kind: RecordEditKind
+  ttl?: number
+  value?: string
   status: string
   error?: string
   host: string // record hostname (lowercased) — lets the inventory match a write to a row
   type: string // record type (A / AAAA / CNAME …)
 }
-const TTL_DONE = "done"
-const TTL_FAIL = "failed"
-const TTL_POLL_MS = 3000
+const WRITE_DONE = "done"
+const WRITE_FAIL = "failed"
+const WRITE_POLL_MS = 3000
 
-export function isTtlWriteInFlight(p: TtlWriteProgress | undefined): boolean {
-  return p != null && p.status !== TTL_DONE && p.status !== TTL_FAIL
+export function isRecordWriteInFlight(p: RecordWriteProgress | undefined): boolean {
+  return p != null && p.status !== WRITE_DONE && p.status !== WRITE_FAIL
 }
 
 // A resolved website-hosting record for one hostname (apex / www / additional
@@ -376,7 +383,12 @@ export interface HostRecord {
   type: string // A | AAAA | CNAME | none
   ttl: number | null // configured TTL (from the authoritative answer)
   value: string // record value (IP or CNAME target)
-  pointsHere: boolean // resolves (following CNAMEs) to this server's IP
+  // Every A value in the authoritative answer (following CNAME chains). Kept
+  // server-NEUTRAL on purpose: the cache is keyed by hostname and shared across
+  // servers, so "points at this server" is computed at render time against the
+  // server being viewed — a baked-in boolean went stale the moment the same
+  // hostname was viewed from a different server's inventory.
+  resolvedIps: string[]
   checkedAt: number
 }
 
@@ -495,9 +507,10 @@ interface StoreValue extends DataState {
   startClone: () => void // run the fan-out (worker pool, cap = concurrency) over selected sites
   cloneRetrySite: (siteId: number) => void // re-run one failed site
   cloneContinueToCutover: () => void // explicit user continue: settled roster → DNS cutover
+  cloneGoBack: () => void // ← one screen back (config steps freely; post-fan-out only cutover → roster)
   toggleCutoverExclude: (siteId: number, name: string) => void // space: include/exclude a ready cutover record
   verifyCloneSite: (siteId: number) => void // slice 5: verify one cloned site (source-vs-clone)
-  cutoverCheck: () => Promise<void> // slice 6: read + classify each site's DNS record
+  cutoverCheck: (siteIds?: number[]) => Promise<void> // slice 6: read + classify each site's DNS records (optionally only the given sites)
   startCutover: () => void // slice 6: flip every "ready" record to the new IP (batched)
   cloneCutoverFinish: () => void // slice 6: cutover → done summary
   backgroundClone: () => void // hide the wizard, keep the in-flight clone running (reopen with C)
@@ -707,21 +720,24 @@ interface StoreValue extends DataState {
   // The zone whose provider-connect overlay is open (apex + its host key), or null.
   connectZoneTarget: { apex: string; hostKey: string } | null
   setConnectZoneTarget: (t: { apex: string; hostKey: string } | null) => void
-  // The zone whose DNS-records overlay is open (Phase 3: view records + edit TTL),
-  // with the connection id we'll authenticate the record calls with. `record` is the
-  // single hosting record to edit (migration lens — never a whole zone). null = closed.
-  dnsRecordsTarget: { apex: string; hostKey: string; connId: string; record: { name: string; type: string } } | null
-  setDnsRecordsTarget: (t: { apex: string; hostKey: string; connId: string; record: { name: string; type: string } } | null) => void
-  // In-flight (and just-settled) record TTL changes, keyed by the record key.
-  // Tracked in the store so a Route 53 change keeps polling after the overlay closes.
-  ttlWrites: Map<string, TtlWriteProgress>
+  // The zone whose DNS-records overlay is open (Phase 3: edit TTL, or repoint the
+  // value), with the connection id we'll authenticate the record calls with.
+  // `record` is the single hosting record to edit (migration lens — never a whole
+  // zone); `edit` picks which field the editor targets. null = closed.
+  dnsRecordsTarget: { apex: string; hostKey: string; connId: string; record: { name: string; type: string }; edit: RecordEditKind } | null
+  setDnsRecordsTarget: (t: { apex: string; hostKey: string; connId: string; record: { name: string; type: string }; edit: RecordEditKind } | null) => void
+  // In-flight (and just-settled) record changes (TTL + value), keyed by the record
+  // key. Tracked in the store so a Route 53 change keeps polling after the overlay closes.
+  recordWrites: Map<string, RecordWriteProgress>
   // Read ONE hosting record via the serving connection (scoped; on demand).
   getZoneRecord: (connId: string, apex: string, name: string, type: string) => Promise<RecordResult>
-  // The latest TTL write for a hostname+type (drives the inventory's updating status).
-  ttlWriteForHost: (host: string, type: string) => TtlWriteProgress | undefined
+  // The latest write of a kind for a hostname+type (drives the inventory's updating status).
+  recordWriteForHost: (host: string, type: string, kind: RecordEditKind) => RecordWriteProgress | undefined
   // Change a record's TTL via the host's API and follow it to completion.
   startTtlChange: (connId: string, zoneId: string, record: DnsRecord, ttl: number) => void
-  clearTtlWrite: (key: string) => void
+  // Repoint a record's value (where it points) and follow it to completion.
+  startValueChange: (connId: string, zoneId: string, record: DnsRecord, value: string) => void
+  clearRecordWrite: (key: string) => void
   // Whether a PHP version is past end-of-life (real dates vs today, refreshed).
   isPhpEol: (version: string | null | undefined) => boolean
   // PHP versions to offer in the upgrade picker (dynamic; current always included).
@@ -969,8 +985,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [connections, setConnections] = useState<Record<ConnProvider, Connection[]>>(() => cfgRef.current.providerConnections)
   const [providerZones, setProviderZones] = useState<Map<string, VerifiedConn>>(() => providersCacheRef.current!.snapshot())
   const [connectZoneTarget, setConnectZoneTarget] = useState<{ apex: string; hostKey: string } | null>(null)
-  const [dnsRecordsTarget, setDnsRecordsTarget] = useState<{ apex: string; hostKey: string; connId: string; record: { name: string; type: string } } | null>(null)
-  const [ttlWrites, setTtlWrites] = useState<Map<string, TtlWriteProgress>>(new Map())
+  const [dnsRecordsTarget, setDnsRecordsTarget] = useState<{ apex: string; hostKey: string; connId: string; record: { name: string; type: string }; edit: RecordEditKind } | null>(null)
+  const [recordWrites, setRecordWrites] = useState<Map<string, RecordWriteProgress>>(new Map())
 
   // PHP EOL dates: embedded defaults overlaid with the last cached fetch; a
   // background refresh (endoflife.date) updates them when the cache is stale.
@@ -2089,17 +2105,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Resolve one hostname's record at its zone's authoritative NS. Records "none"
   // when the hostname has no record (so it isn't retried); a network miss also
   // caches none until a forced refresh.
-  const resolveHostingOne = useCallback(async (host: string, apex: string, ns: string[], serverIp: string | null) => {
+  const resolveHostingOne = useCallback(async (host: string, apex: string, ns: string[]) => {
     if (hostingInFlight.current.has(host)) return
     hostingInFlight.current.add(host)
     setHostingResolving((prev) => new Set(prev).add(host))
     try {
       const ans = await queryAuthoritative(host, "A", ns)
       const own = ans?.find((a) => a.name.toLowerCase() === host)
-      const here = !!(serverIp && ans?.some((a) => a.type === "A" && a.value === serverIp))
+      const ips = ans?.filter((a) => a.type === "A").map((a) => a.value) ?? []
       const rec: HostRecord = own
-        ? { host, apex, type: own.type, ttl: own.ttl, value: own.value, pointsHere: here, checkedAt: Date.now() }
-        : { host, apex, type: "none", ttl: null, value: "", pointsHere: false, checkedAt: Date.now() }
+        ? { host, apex, type: own.type, ttl: own.ttl, value: own.value, resolvedIps: ips, checkedAt: Date.now() }
+        : { host, apex, type: "none", ttl: null, value: "", resolvedIps: [], checkedAt: Date.now() }
       setHostingRecords((prev) => new Map(prev).set(host, rec))
     } finally {
       hostingInFlight.current.delete(host)
@@ -2113,7 +2129,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const resolveServerHosting = useCallback(
     (server: Server, force = false) => {
-      const serverIp = server.ip_address ?? null
       const hosts = new Set<string>()
       for (const s of sites) if (s.server_id === server.id) for (const h of candidateHostnames(domainsForSite(s))) hosts.add(h)
       // Only resolve hostnames whose zone NS we already know (needed to query the
@@ -2135,7 +2150,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const worker = async () => {
         while (cursor < pool.length) {
           const { host, apex, ns } = pool[cursor++]
-          await resolveHostingOne(host, apex, ns, serverIp)
+          await resolveHostingOne(host, apex, ns)
         }
       }
       for (let i = 0; i < Math.min(CONCURRENCY, pool.length); i++) void worker()
@@ -2315,7 +2330,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [allConnections, verifyAndCache],
   )
 
-  // ---- DNS record TTL change (Phase 3, first write) -------------------------
+  // ---- DNS record changes (Phase 3: TTL, then value/repoint) ----------------
 
   const getZoneRecord = useCallback(
     async (connId: string, apex: string, name: string, type: string): Promise<RecordResult> => {
@@ -2327,23 +2342,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [allConnections],
   )
 
-  const setTtlWrite = (key: string, progress: TtlWriteProgress) =>
-    setTtlWrites((prev) => new Map(prev).set(key, progress))
+  const setRecordWrite = (key: string, progress: RecordWriteProgress) =>
+    setRecordWrites((prev) => new Map(prev).set(key, progress))
 
-  // The latest TTL write for a given hostname+type, if any — so the inventory can
-  // show an "updating"/just-changed status on the matching record row.
-  const ttlWriteForHost = useCallback(
-    (host: string, type: string): TtlWriteProgress | undefined => {
+  // The latest write of a kind for a given hostname+type, if any — so the inventory
+  // can show an "updating"/just-changed status on the matching record cell.
+  const recordWriteForHost = useCallback(
+    (host: string, type: string, kind: RecordEditKind): RecordWriteProgress | undefined => {
       const h = host.toLowerCase()
-      for (const p of ttlWrites.values()) if (p.host === h && p.type === type) return p
+      for (const p of recordWrites.values()) if (p.kind === kind && p.host === h && p.type === type) return p
       return undefined
     },
-    [ttlWrites],
+    [recordWrites],
   )
 
-  const clearTtlWrite = useCallback(
+  const clearRecordWrite = useCallback(
     (key: string) =>
-      setTtlWrites((prev) => {
+      setRecordWrites((prev) => {
         if (!prev.has(key)) return prev
         const next = new Map(prev)
         next.delete(key)
@@ -2352,20 +2367,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  const startTtlChange = useCallback(
-    (connId: string, zoneId: string, record: DnsRecord, ttl: number) => {
-      const existing = ttlWrites.get(record.key)
-      if (existing && isTtlWriteInFlight(existing)) return // one change per record at a time
+  // Shared runner for both single-field record writes (TTL + value): fire the
+  // provider call, then follow an async change (Route 53) to INSYNC. Progress is
+  // stamped with the record's host/type so the inventory can match an in-flight
+  // write back to its row after the editor closes.
+  const runRecordChange = useCallback(
+    (connId: string, record: DnsRecord, base: { kind: RecordEditKind; ttl?: number; value?: string }, exec: (provider: NonNullable<ReturnType<typeof recordProviderFor>>, creds: Record<string, string>) => Promise<{ ok: boolean; pollId?: string; error?: string }>) => {
+      const existing = recordWrites.get(record.key)
+      if (existing && isRecordWriteInFlight(existing)) return // one change per record at a time
 
-      // Stamp every progress update with the record's host/type so the inventory can
-      // match an in-flight write back to its row after the editor closes.
       const put = (status: string, error?: string) =>
-        setTtlWrite(record.key, { ttl, status, host: record.name.toLowerCase(), type: record.type, ...(error ? { error } : {}) })
+        setRecordWrite(record.key, { ...base, status, host: record.name.toLowerCase(), type: record.type, ...(error ? { error } : {}) })
 
       const conn = allConnections.find((c) => c.id === connId)
       const provider = conn ? recordProviderFor(conn.provider) : null
       if (!conn || !provider) {
-        put(TTL_FAIL, "Lost the provider connection — reopen the records view.")
+        put(WRITE_FAIL, "Lost the provider connection — reopen the records view.")
         return
       }
 
@@ -2373,18 +2390,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         put("queued")
         let res
         try {
-          res = await provider.setTtl(conn.creds, zoneId, record, ttl)
+          res = await exec(provider, conn.creds)
         } catch (err) {
-          put(TTL_FAIL, (err as Error).message)
+          put(WRITE_FAIL, (err as Error).message)
           return
         }
         if (!res.ok) {
-          put(TTL_FAIL, res.error || "The provider rejected the change.")
+          put(WRITE_FAIL, res.error || "The provider rejected the change.")
           return
         }
         // No poll id (Cloudflare) → already applied. Otherwise poll to INSYNC.
         if (!res.pollId || !provider.pollChange) {
-          put(TTL_DONE)
+          put(WRITE_DONE)
           return
         }
         const pollId = res.pollId
@@ -2392,18 +2409,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const poll = async () => {
           try {
             const status = await provider.pollChange!(conn.creds, pollId)
-            if (status === "done") put(TTL_DONE)
-            else if (status === "failed") put(TTL_FAIL, "The change failed to propagate.")
-            else setTimeout(() => void poll(), TTL_POLL_MS)
+            if (status === "done") put(WRITE_DONE)
+            else if (status === "failed") put(WRITE_FAIL, "The change failed to propagate.")
+            else setTimeout(() => void poll(), WRITE_POLL_MS)
           } catch (err) {
-            put(TTL_FAIL, (err as Error).message)
+            put(WRITE_FAIL, (err as Error).message)
           }
         }
-        setTimeout(() => void poll(), TTL_POLL_MS)
+        setTimeout(() => void poll(), WRITE_POLL_MS)
       }
       void run()
     },
-    [allConnections, ttlWrites],
+    [allConnections, recordWrites],
+  )
+
+  const startTtlChange = useCallback(
+    (connId: string, zoneId: string, record: DnsRecord, ttl: number) =>
+      runRecordChange(connId, record, { kind: "ttl", ttl }, (provider, creds) => provider.setTtl(creds, zoneId, record, ttl)),
+    [runRecordChange],
+  )
+
+  // The repoint write. setValue is optional on a provider (GoDaddy has none), but
+  // any zone reachable here came through an API-editable connection — the guard is
+  // just belt-and-braces.
+  const startValueChange = useCallback(
+    (connId: string, zoneId: string, record: DnsRecord, value: string) =>
+      runRecordChange(connId, record, { kind: "value", value }, (provider, creds) =>
+        provider.setValue ? provider.setValue(creds, zoneId, record, value) : Promise.resolve({ ok: false, error: "This provider can't repoint records via its API." }),
+      ),
+    [runRecordChange],
   )
 
   // ---- Vanity site (connect a fresh, empty server) ----------------------
@@ -3122,6 +3156,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // ← back one screen. The config steps (plan → server → trust → gitaccess) step back
+  // freely — nothing has executed yet, so re-picking sites or the dest is safe. Once
+  // the fan-out has fired (sites created on the dest = prod writes), re-opening the
+  // config screens would invite editing a plan that's already executing, so the ONLY
+  // post-fan-out back edge is cutover → the clone roster (re-verify / retry a site
+  // before flipping DNS). Cutover state is per-site and survives the round trip.
+  const cloneGoBack = useCallback(() => {
+    setCloneJob((j) => {
+      if (!j) return j
+      if (j.step === "cutover") return { ...j, step: "clone" }
+      if (j.fanoutStarted) return j
+      if (j.step === "server") return { ...j, step: "plan" }
+      if (j.step === "trust") return { ...j, step: "server" }
+      if (j.step === "gitaccess") return { ...j, step: "trust" }
+      return j
+    })
+  }, [])
+
   // ---- DNS cutover (slice 6) ------------------------------------------------
   const destIpOf = useCallback(
     (j: CloneJob) => j.destServerIp ?? (j.destServerId != null ? servers.find((s) => s.id === j.destServerId)?.ip_address ?? "" : ""),
@@ -3143,12 +3195,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // classify it (already-on-new = done; editable-on-old = ready; not-API-editable =
   // manual), and stash the plan in site.cutover. A hostname with no A record (a www
   // CNAME → apex, or absent) is skipped — only a missing PRIMARY A is flagged.
-  // Read-only; the flip is a separate explicit action.
-  const cutoverCheck = useCallback(async () => {
+  // Read-only; the flip is a separate explicit action. `siteIds` scopes the check
+  // (the wizard passes just-arrived sites so a re-entry never resets in-flight rows).
+  const cutoverCheck = useCallback(async (siteIds?: number[]) => {
     const j = cloneJob
     if (!j) return
     const targetIp = destIpOf(j)
-    const dones = j.sites.filter((s) => s.selected && s.step === "done")
+    const dones = j.sites.filter((s) => s.selected && s.step === "done" && (siteIds == null || siteIds.includes(s.sourceSiteId)))
     await Promise.all(
       dones.map(async (site) => {
         const hostnames = [site.domain, ...(site.additionalDomains ?? [])]
@@ -3382,6 +3435,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     startClone,
     cloneRetrySite,
     cloneContinueToCutover,
+    cloneGoBack,
     toggleCutoverExclude,
     verifyCloneSite,
     cutoverCheck,
@@ -3502,11 +3556,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setConnectZoneTarget,
     dnsRecordsTarget,
     setDnsRecordsTarget,
-    ttlWrites,
+    recordWrites,
     getZoneRecord,
-    ttlWriteForHost,
+    recordWriteForHost,
     startTtlChange,
-    clearTtlWrite,
+    startValueChange,
+    clearRecordWrite,
     isPhpEol,
     offeredPhpVersions,
     isServerOsEol,

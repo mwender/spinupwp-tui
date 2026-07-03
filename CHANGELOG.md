@@ -11,6 +11,56 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **A vanity site can now be added to a server that already has sites.** `V` was
+  only offered on empty servers (its original "connect a fresh box" role), so a
+  busy server had no way to get its hostname page + key-holding site user. The
+  gate is now "does the server have a site at its own hostname yet" — and when
+  it doesn't, a `V — Vanity site at hostname` row appears under Manage in the
+  server's Details panel (or "Resume vanity-site build" for an unfinished one).
+- **The DNS view can now repoint a record — press `p` to choose where it points.**
+  Alongside the TTL editor, the `N` view's single-record editor gains a "Point
+  at…" mode: pick from a list of your SpinupWP servers (name + IP, with the
+  current one tagged) — pointing a record at one of your own boxes is what this
+  is for — or enter a custom IP. Same confirm-before-firing flow as every other
+  live write, and the change keeps applying in the background (Route 53 polls to
+  INSYNC) if you close the editor. The inventory's VALUE column shows the
+  in-flight repoint (`→ new IP`) and the settled value, mirroring the TTL cell.
+  Guardrails carried over from the cutover work: a CNAME row explains it follows
+  its target instead of opening, a Cloudflare *proxied* record repoints its
+  origin (with a note that visitors keep resolving Cloudflare's IPs), a
+  multi-value record warns it'll be collapsed to the one new value, and the
+  NS-mismatch pre-flight blocks edits through a stale duplicate zone.
+- **The clone wizard can now go back a screen with `←` (or `h`).** The setup
+  steps (Plan ↔ Destination ↔ Connect dest ↔ Git access) step back freely —
+  nothing has executed yet, so re-picking sites or the destination is safe.
+  Once the per-site fan-out has fired, the one back edge is **DNS cutover →
+  the clone roster**, so a verify can be re-run or a failed site retried
+  before flipping live traffic. Cutover state survives the round trip: rows
+  already checked, flipped, or mid-flight are never reset, and a site that
+  becomes done via retry gets its DNS records read on re-entry.
+
+### Fixed
+- **The DNS view's `◀ here` marker is now always relative to the server you're
+  viewing.** The "points here" flag was baked into each hostname's cached
+  resolution at lookup time, relative to whichever server's inventory triggered
+  it — so after checking DNS on the new server post-migration, reopening the
+  view on the OLD server showed records that point at the new box flagged
+  `◀ here` (with the wrong "N point here" tally). The cache now stores the
+  resolved IPs neutrally and computes "here" at render against the current
+  server; a just-repointed record also reads correctly immediately, before any
+  refresh.
+- **Clone verification no longer reports a cut-off read as a mismatch.** The
+  source-vs-clone facts run as one wp-cli script per side; if it was
+  interrupted partway (a timeout, or a plugin stalling on an outbound call),
+  the missing tail rendered as `–` mismatch rows — reading as "the clone
+  differs" when nothing had been compared. Verification now runs wp-cli with
+  `--skip-plugins --skip-themes` (no plugin code stalls the read, and both
+  sides use identical flags so every count stays comparable), allows the
+  facts read twice the time, and a read that still comes back incomplete
+  fails loudly as a verify error naming the side, instead of masquerading as
+  differences.
+
 ## [0.12.0] - 2026-07-02
 
 ### Fixed
