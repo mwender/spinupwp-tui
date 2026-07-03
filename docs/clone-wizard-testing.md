@@ -118,7 +118,9 @@ proven (HTTP 200, clean source-key revoke); `blank`+`database` create; Plan sizi
 - **Every clone job writes a JSONL log** to `<configDir>/logs/clone-<ts>-<src>-to-<dst>.jsonl`
   (every sudo script + full stdout/stderr, passwords redacted). The roster truncates
   errors; `⏎` on a failed site shows the full error + the log path. Read the log
-  before re-driving anything.
+  before re-driving anything. Retention: swept when a new job's logger is created —
+  older than 30 days OR beyond the 20 newest job logs → deleted (copy a log
+  elsewhere to keep it).
 
 - **The pull key must be PER SITE** (`/root/.clone_pull_<domain>` + per-domain
   authorized_keys marker). A single shared key file + concurrency 3 meant each

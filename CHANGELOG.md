@@ -100,7 +100,9 @@ versions; such changes are called out here.
 - **Every clone job now writes a full log** to `~/.config/spinupwp-tui/logs/`
   (one JSONL file per job: every remote script, exit code, and complete
   output, with passwords redacted). Previously errors were truncated to the
-  roster's width and lost when the app closed.
+  roster's width and lost when the app closed. Logs self-prune when a new
+  job starts: anything older than 30 days or beyond the 20 most recent job
+  logs is removed (copy a log elsewhere to keep it longer).
 - **Press `⏎` on a failed site in the clone roster** to see the full
   untruncated error, the failing step, and the log path — and `r` there
   retries just that site.
