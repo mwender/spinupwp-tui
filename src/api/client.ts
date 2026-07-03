@@ -13,6 +13,8 @@ import type {
   ProviderMetadata,
   CreateServerPayload,
   CreateSitePayload,
+  AdditionalDomain,
+  AddDomainPayload,
 } from "./types.ts"
 
 // The restartable services SpinupWP exposes (POST /servers/{id}/services/{svc}/restart).
@@ -50,6 +52,8 @@ export interface SpinupWPClientLike {
   disableHttps(siteId: number): Promise<{ event_id: number } | undefined>
   purgePageCache(siteId: number): Promise<{ event_id: number }>
   purgeObjectCache(siteId: number): Promise<{ event_id: number }>
+  listSiteDomains(siteId: number): Promise<AdditionalDomain[]>
+  addSiteDomain(siteId: number, payload: AddDomainPayload): Promise<{ event_id: number }>
   listEvents(maxPages?: number): Promise<Event[]>
   getEvent(id: number): Promise<Event>
   upgradeSitePhp(siteId: number, phpVersion: string): Promise<{ event_id: number }>
@@ -58,6 +62,35 @@ export interface SpinupWPClientLike {
 }
 
 const MAX_PAGES = 100 // hard safety cap when auto-paginating
+
+// ---- Rate-limit awareness -------------------------------------------------
+// SpinupWP sends X-RateLimit-Remaining on every response (Laravel throttle,
+// 1-minute windows). All traffic funnels through fetchWithRateLimit below:
+// PROACTIVE pacing — when the window is nearly spent, spread the remaining
+// requests across what's left of it instead of slamming into the wall — plus
+// REACTIVE Retry-After backoff on 429 (safe to retry: a 429 was rejected before
+// any processing). Module-level so every client instance shares one budget.
+// Born from the 2026-07-02 prod clone retry, where three concurrent site workers'
+// event polling burned the window and made SUCCESSFUL operations look failed.
+let rlRemaining = Infinity
+let rlResetAt = 0
+const RL_LOW_WATER = 8 // start pacing when fewer than this many requests remain
+const RL_MAX_RETRIES = 3
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+function rlUpdate(headers: Headers): void {
+  const rem = Number(headers.get("x-ratelimit-remaining"))
+  if (Number.isFinite(rem)) rlRemaining = rem
+  // No reset header outside 429s — assume the standard 1-minute window rolls over.
+  if (rlResetAt < Date.now()) rlResetAt = Date.now() + 60_000
+}
+
+async function rlGate(): Promise<void> {
+  if (rlRemaining > RL_LOW_WATER) return
+  const windowLeft = Math.max(0, rlResetAt - Date.now())
+  const delay = rlRemaining <= 1 ? windowLeft : Math.ceil(windowLeft / Math.max(1, rlRemaining))
+  if (delay > 0) await sleep(delay + Math.random() * 300)
+}
 
 export class SpinupWPClient implements SpinupWPClientLike {
   private token: string
@@ -68,6 +101,30 @@ export class SpinupWPClient implements SpinupWPClientLike {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "")
   }
 
+  // Gate → fetch → learn from headers; on 429 wait out Retry-After (default 20s)
+  // and retry a few times before surfacing it. Network errors become ApiError(0).
+  private async fetchWithRateLimit(url: string, init: RequestInit): Promise<Response> {
+    for (let attempt = 0; ; attempt++) {
+      await rlGate()
+      let res: Response
+      try {
+        res = await fetch(url, init)
+      } catch (err) {
+        throw new ApiError(`Network error reaching the SpinupWP API: ${(err as Error).message}`, 0)
+      }
+      rlUpdate(res.headers)
+      if (res.status === 429 && attempt < RL_MAX_RETRIES) {
+        const ra = Number(res.headers.get("retry-after"))
+        const waitMs = (Number.isFinite(ra) && ra > 0 ? ra : 20) * 1000
+        rlRemaining = 0
+        rlResetAt = Date.now() + waitMs
+        await sleep(waitMs + Math.random() * 500)
+        continue
+      }
+      return res
+    }
+  }
+
   private async request<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
     const url = new URL(this.baseUrl + path)
     if (params) {
@@ -76,21 +133,13 @@ export class SpinupWPClient implements SpinupWPClientLike {
       }
     }
 
-    let res: Response
-    try {
-      res = await fetch(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          Accept: "application/json",
-          "User-Agent": "spinupwp-tui",
-        },
-      })
-    } catch (err) {
-      throw new ApiError(
-        `Network error reaching the SpinupWP API: ${(err as Error).message}`,
-        0,
-      )
-    }
+    const res = await this.fetchWithRateLimit(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: "application/json",
+        "User-Agent": "spinupwp-tui",
+      },
+    })
 
     if (res.status === 401) {
       throw new ApiError("Unauthorized — your access token was rejected (401).", 401)
@@ -115,21 +164,16 @@ export class SpinupWPClient implements SpinupWPClientLike {
   // 403 into an actionable message. All other statuses mirror request().
   private async mutate<T>(path: string, method: string, body?: unknown): Promise<T> {
     const url = this.baseUrl + path
-    let res: Response
-    try {
-      res = await fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "User-Agent": "spinupwp-tui",
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      })
-    } catch (err) {
-      throw new ApiError(`Network error reaching the SpinupWP API: ${(err as Error).message}`, 0)
-    }
+    const res = await this.fetchWithRateLimit(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "spinupwp-tui",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
 
     if (res.status === 401) {
       throw new ApiError("Unauthorized — your access token was rejected (401).", 401)
@@ -226,6 +270,19 @@ export class SpinupWPClient implements SpinupWPClientLike {
   // enableHttps().
   createSite(payload: CreateSitePayload): Promise<{ event_id: number }> {
     return this.mutate<{ event_id: number }>("/sites", "POST", payload)
+  }
+
+  // Additional domains on a site (the extra hostnames nginx answers for). The
+  // clone wizard re-creates the source's set on the dest — a fresh site only
+  // serves its primary domain otherwise.
+  async listSiteDomains(siteId: number): Promise<AdditionalDomain[]> {
+    return this.listAll<AdditionalDomain>(`/sites/${siteId}/domains`)
+  }
+
+  // Add an additional domain to a site. Async (nginx reconfig) → returns an
+  // event_id to poll. Needs a Read/Write token.
+  addSiteDomain(siteId: number, payload: AddDomainPayload): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/domains`, "POST", payload)
   }
 
   // Enable HTTPS on a site. `type: "webroot"` requests a Let's Encrypt cert (the

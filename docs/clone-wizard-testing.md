@@ -70,6 +70,70 @@ proven (HTTP 200, clean source-key revoke); `blank`+`database` create; Plan sizi
 
 ## Hard-won lessons baked into the code (don't relearn)
 
+- **The webroot is DETECTED, never assumed.** The 2026-07-02 web2→mercury production
+  run failed all 6 sites because every long-lived Standard-WP site there uses
+  `/public/` while both test sites use `/`. And the `public_folder` *setting* can't be
+  trusted either: SpinupWP never moves files (the panel warns you to do it yourself —
+  the user's SOP), so setting and reality can disagree. The Standard-WP pull now runs
+  a `detect` stage on the source (`detectWpDirScript` — wp-settings.php is the core
+  marker), `planWebroot` decides the action (match → as-is; core at files root +
+  deeper setting → **normalize the dest**: sweep files under the configured folder
+  with **wp-config.php placed one level ABOVE the webroot** (the config-above-webroot
+  convention — a deliberate product stance, see CLAUDE.md "WordPress layout rules"),
+  completing the move-the-files step; subdirectory install → as-is; two custom dirs →
+  clear refusal),
+  and verify/sizing use the same detection. Local matrix test:
+  `layout-test.ts` pattern (fake trees + the exact bash fragments). Bedrock keeps
+  running wp-cli from the project root. Any new test coverage should include a
+  `/public/` site — `pub.spinuptui.com` on web1 was created for exactly this (WP at
+  files root + `/public/` setting = the mid-SOP state; a correct clone comes out
+  *healed* and serving).
+- **`is_wordpress: false` non-git sites clone as FILES-ONLY** (stack `"files"`:
+  redirect shells, static/PHP sites — no DB, no wp-cli). Opt-in in Plan (default
+  deselected, tagged "files only"); dest is created blank with NO database block;
+  `runFilesOnlyPull` reuses the hardened tar transport (per-site key, tolerant
+  tar, 60-min budget, byte meter) minus all WP stages; `verifyFilesClone` compares
+  file count + total bytes (1% tolerance) + HTTP. Validated live web1→web2 with
+  `static.spinuptui.com` (fixture left in place; PHP executes on the clone).
+  Additional-domain carry-over applies as usual — that's the main event for
+  redirect shells.
+- **Dest DB `table_prefix` must match the source** (production uses `wzl_`, `s81_`,
+  etc.) — the create payload now copies `database.table_prefix`.
+- **Additional domains must be re-created on the dest** — a fresh site's nginx
+  `server_name` holds ONLY the primary domain (verified on the test boxes), so
+  `www.` + extra hostnames would 404/default-vhost after cutover.
+  `syncAdditionalDomains` (`src/lib/cloneDomains.ts`) copies the source's set —
+  redirect settings included — right after the dest create; idempotent (skips
+  domains already present), so per-site retries are safe. Proof of success =
+  the dest's nginx `server_name` line; a `www` request answering 301 (WordPress
+  canonical redirect) means it's working.
+- **`DELETE /sites/{id}` orphans the SpinupWP database RECORD unless you pass
+  `delete_database=true`** (also `delete_backups=true`). An orphaned record —
+  even with the actual MySQL DB dropped by hand — makes any later create that
+  reuses the db name fail with a 422 ("already exists on this server"), and
+  orphaned records can only be removed in the SpinupWP web UI. When deleting
+  clone leftovers, always delete the database with the site. (web2 currently
+  has an orphaned `pubsite` DB record from learning this; the live fixture
+  clone uses `pubsite2`.)
+- **Every clone job writes a JSONL log** to `<configDir>/logs/clone-<ts>-<src>-to-<dst>.jsonl`
+  (every sudo script + full stdout/stderr, passwords redacted). The roster truncates
+  errors; `⏎` on a failed site shows the full error + the log path. Read the log
+  before re-driving anything. Retention: swept when a new job's logger is created —
+  older than 30 days OR beyond the 20 newest job logs → deleted (copy a log
+  elsewhere to keep it).
+
+- **The pull key must be PER SITE** (`/root/.clone_pull_<domain>` + per-domain
+  authorized_keys marker). A single shared key file + concurrency 3 meant each
+  site's auth stage regenerated it and each revoke deleted it — breaking every
+  other in-flight site's SSH mid-chain (proven live 2026-07-02: a db pull got
+  "Permission denied (publickey)" seconds after another site's auth replaced the
+  key; only ever ONE site per run survived, whichever ran unopposed).
+- **Remote tar exit 1 is a WARNING, not a failure.** Live sites change files
+  mid-read (every-minute WP cron + bot traffic; one growing log file suffices) →
+  GNU tar exits 1, and `--warning=no-file-changed` suppressed the message but NOT
+  the exit code — silent fatal "file pull failed". The files stage now tolerates
+  rc ≤ 1 and keeps tar's warnings unsuppressed so the clone log names the exact
+  file; ≥2 / 124 (timeout) / 255 (ssh) still fail hard.
 - **rsync-over-ssh HANGS** in the sudo transport → files use **tar-over-ssh**, the DB uses
   **cat-over-ssh**, each bounded with `timeout -k 5 N`.
 - Order is **files → re-stamp wp-config → db import** (import needs wp-config already

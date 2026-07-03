@@ -11,6 +11,83 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **The clone wizard now detects each site's real webroot instead of assuming
+  it.** The first clone of a long-lived production server failed every site:
+  they all used a `/public/` public folder while the pull chain hardcoded
+  `files/` as the webroot. And the `public_folder` *setting* alone can't be
+  trusted either — SpinupWP never moves files when you configure one (its UI
+  tells you to move them yourself). The Standard-WP pull now finds where
+  WordPress actually lives on the source, and when a site is mid-move (core
+  still at the files root, setting pointing deeper) the clone completes the
+  move on the destination — placing `wp-config.php` one directory **above**
+  the webroot, the long-standing config-outside-the-docroot hardening Spinup
+  is deliberately opinionated about. Root-webroot sites keep the stock layout
+  untouched; subdirectory installs clone as-is; anything unrecognizable
+  refuses with a clear message instead of a mystery failure.
+- **Sites SpinupWP marks as not-WordPress (redirect shells, static/PHP
+  sites) now clone as "files only"** — opt-in in the Plan step (tagged, default
+  off). The destination is created with no database, the whole files tree
+  transfers verbatim over the same hardened transport (with byte progress),
+  and verification compares file count, total size, and HTTP response instead
+  of WordPress facts. Previously these sites failed mid-pull with a cryptic
+  error; an interim fix merely excluded them.
+- **Cloned databases keep the source's table prefix** — the destination DB
+  was previously always created with `wp_`, breaking sites with custom
+  prefixes.
+- **Cloned sites now carry over the source's additional domains** (with their
+  redirect settings). A freshly created site only answers for its primary
+  domain, so `www.` and every extra hostname would have pointed at a server
+  that didn't serve them after DNS cutover. The wizard now re-creates the
+  full set on the destination right after the site is created — verified by
+  the destination's nginx `server_name` picking up every hostname.
+
+### Fixed (during live migration hardening)
+- **Concurrent clones no longer sabotage each other's SSH.** The server-to-server
+  pull authenticated every site with one shared temporary key, so with three
+  sites in flight each site's setup/cleanup replaced or deleted the key the
+  others were actively using — at most one site per run could survive. Each
+  site now gets its own key, created and revoked independently.
+- **A file changing on the live source mid-transfer no longer kills the whole
+  site's clone.** tar reports "file changed as we read it" with a warning exit
+  code that was being treated as fatal — and the wizard's own flags suppressed
+  the message that would have explained it. Warnings are now tolerated (real
+  transfer errors still fail) and logged with the exact file named.
+
+- **Large file transfers no longer get killed by the wizard's own timeout.**
+  A ~15-minute production pull was cut off at exactly 900s by two stacked
+  timeouts — and the error surfaced a harmless tar warning instead of the
+  real cause. The file-transfer budget is now 60 minutes, the outer session
+  timeout strictly exceeds the in-script one, and an actual timeout says
+  "file transfer timed out after 60 minutes" in so many words.
+- **Manual DNS records in the cutover now show your access note** ("Delegate
+  Access" by default, or whatever you've written for that zone) instead of
+  wrongly telling you to connect an account for registrars that are managed
+  by hand on purpose. API-connectable hosts (Cloudflare, Route 53) keep the
+  actionable "connect an account" message.
+
+### Changed
+- **The DNS cutover screen grew real controls.** ↑↓ moves a cursor over the
+  records; space includes/excludes any ready record from the batch flip
+  (◉/◯, same as the Plan step); ⏎ on a record opens its zone's registrar
+  web console with the zone name copied to the clipboard (the
+  delegate-access flow); `c` cuts over exactly the included records; finish
+  moved to `f`.
+- **In-flight clone stages show a live elapsed timer** in the roster, so a
+  long file pull reads as working rather than frozen.
+- **File and database transfers show live byte progress** — the roster reads
+  `pull · files · 1.2 GB · 18 MB/s · 4m32s` while a transfer runs. Measured
+  by a read-only sidecar that stats the growing archive over its own SSH
+  session every few seconds, so the progress display can never interfere
+  with the transfer itself. File transfers show the Plan-measured size as a
+  soft ceiling (`1.2 GB of ~2.9 GB` — approximate because the archive
+  compresses in flight), and database pulls show a true percent (the dump
+  is staged and gzipped on the source first, so its final size is a fact).
+- **The clone wizard no longer jumps to DNS cutover on its own.** When the
+  clone roster settles, the wizard now stays put so you can eyeball every
+  site's final state — press `c` to continue to the cutover step (which moves
+  live traffic) when you're ready.
+
 ### Added
 - **Dev Mode (`SPINUP_DEV_MODE=1`).** Boots straight into the dashboard against
   a small in-memory example fleet — no API token, no network calls, nothing
@@ -19,6 +96,23 @@ versions; such changes are called out here.
   would against a real account — spinners, toasts, in-progress states — so
   it's useful for demos, screenshots, and UI work without a live account on
   hand. A purple `DEV MODE` badge in the header makes it unmistakable.
+- **The API client is now rate-limit aware.** It watches
+  `X-RateLimit-Remaining` on every response and paces itself as the window
+  runs low, and a 429 is absorbed with a Retry-After backoff instead of
+  surfacing as a failure. This matters: during a real migration, rate-limited
+  polling made three *successful* operations report as failures. Event
+  polling is also slower-cadence and tolerates transient API errors, and a
+  genuinely failed domain-add now includes SpinupWP's own event output in the
+  error.
+- **Every clone job now writes a full log** to `~/.config/spinupwp-tui/logs/`
+  (one JSONL file per job: every remote script, exit code, and complete
+  output, with passwords redacted). Previously errors were truncated to the
+  roster's width and lost when the app closed. Logs self-prune when a new
+  job starts: anything older than 30 days or beyond the 20 most recent job
+  logs is removed (copy a log elsewhere to keep it longer).
+- **Press `⏎` on a failed site in the clone roster** to see the full
+  untruncated error, the failing step, and the log path — and `r` there
+  retries just that site.
 
 ## [0.11.0] - 2026-07-01
 

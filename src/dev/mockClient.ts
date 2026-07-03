@@ -158,6 +158,22 @@ export function createMockClient(): SpinupWPClientLike {
       return { event_id }
     },
 
+    async listSiteDomains(siteId) {
+      const site = sites.find((s) => s.id === siteId)
+      return (site?.additional_domains ?? []).map((d) => ({ ...d }))
+    },
+
+    async addSiteDomain(siteId, payload) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) {
+        site.additional_domains = site.additional_domains ?? []
+        const domId = 9000 + sites.reduce((n, x) => n + (x.additional_domains?.length ?? 0), 0)
+        site.additional_domains.push({ id: domId, domain: payload.domain, redirect: { enabled: payload.redirect?.enabled ?? false, type: payload.redirect?.type ?? 301, destination: payload.redirect?.destination ?? site.domain }, created_at: new Date().toISOString() })
+      }
+      const event_id = pushEvent("site.domains.updated", site?.server_id ?? null, `Updating domains for ${site?.domain ?? siteId}`)
+      return { event_id }
+    },
+
     async listEvents(maxPages) {
       const limit = (maxPages ?? 3) * 100
       return events.slice(0, limit).map((e) => ({ ...e }))

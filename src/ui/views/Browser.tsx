@@ -225,6 +225,7 @@ export function Browser({ rows }: { rows: number }) {
           { key: "u", label: "change PHP" },
           { key: "K", label: "grant key" },
           { key: "o", label: "open" },
+          { key: "w", label: "SpinupWP" },
           { key: "s", label: "ssh" },
           { key: "h", label: "health" },
         ]
