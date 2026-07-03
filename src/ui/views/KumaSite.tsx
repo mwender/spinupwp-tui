@@ -21,6 +21,9 @@ import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
 
 const BASE_FIELDS = ["url", "username", "password"] as const
+// Fixed input width: the panel body is 66 wide, the label gutter is 12 ("❯ " +
+// padEnd(10)), so 52 fills the row — roomy enough that long URLs stay visible.
+const INPUT_W = 52
 
 export function KumaSite() {
   const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, servers, setInputMode } = useStore()
@@ -140,27 +143,30 @@ export function KumaSite() {
           <text content="Verified by logging in before anything is saved (config, 0600)." fg={theme.textFaint} wrapMode="none" />
           <box style={{ height: 1 }} />
           {fields.map((f, i) => (
-            <box key={f} style={{ flexDirection: "row" }}>
-              <text content={`${i === fieldIdx ? "❯" : " "} ${f.padEnd(9)}`} fg={i === fieldIdx ? theme.brand : theme.textDim} style={{ flexShrink: 0 }} />
-              {f === "password" ? (
-                <SecretInput focused={i === fieldIdx && !busy} value={draft.password} onChange={(v: string) => setDraft((d) => ({ ...d, password: v }))} onSubmit={verify} />
-              ) : f === "2FA code" ? (
-                <input
-                  focused={i === fieldIdx && !busy}
-                  value={twofa}
-                  onInput={setTwofa}
-                  placeholder="123456"
-                  style={{ backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
-                />
-              ) : (
-                <input
-                  focused={i === fieldIdx && !busy}
-                  value={draft[f as "url" | "username"]}
-                  onInput={(v: string) => setDraft((d) => ({ ...d, [f]: v }))}
-                  placeholder={f === "url" ? "https://kuma.example.com" : ""}
-                  style={{ backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
-                />
-              )}
+            <box key={f} style={{ flexDirection: "column" }}>
+              <box style={{ flexDirection: "row" }}>
+                <text content={`${i === fieldIdx ? "❯" : " "} ${f.padEnd(10)}`} fg={i === fieldIdx ? theme.brand : theme.textDim} style={{ flexShrink: 0 }} />
+                {f === "password" ? (
+                  <SecretInput focused={i === fieldIdx && !busy} value={draft.password} onChange={(v: string) => setDraft((d) => ({ ...d, password: v }))} onSubmit={verify} width={INPUT_W} />
+                ) : f === "2FA code" ? (
+                  <input
+                    focused={i === fieldIdx && !busy}
+                    value={twofa}
+                    onInput={setTwofa}
+                    placeholder="123456"
+                    style={{ width: INPUT_W, backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
+                  />
+                ) : (
+                  <input
+                    focused={i === fieldIdx && !busy}
+                    value={draft[f as "url" | "username"]}
+                    onInput={(v: string) => setDraft((d) => ({ ...d, [f]: v }))}
+                    placeholder={f === "url" ? "https://kuma.example.com" : ""}
+                    style={{ width: INPUT_W, backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
+                  />
+                )}
+              </box>
+              {i < fields.length - 1 && <box style={{ height: 1 }} />}
             </box>
           ))}
           <box style={{ height: 1 }} />
