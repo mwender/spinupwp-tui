@@ -5,7 +5,7 @@
 // destination) are copied verbatim from the source. Idempotent: domains already on
 // the dest are skipped, so per-site retries re-run it safely.
 
-import type { SpinupWPClient } from "../api/client.ts"
+import type { SpinupWPClientLike } from "../api/client.ts"
 import type { AdditionalDomain } from "../api/types.ts"
 
 const EVENT_DONE = new Set(["deployed", "completed", "provisioned", "finished", "success"])
@@ -13,7 +13,7 @@ const EVENT_FAIL = new Set(["failed", "errored", "error"])
 
 // 5s cadence; a transient failure to READ the event is not the event failing —
 // tolerate a few consecutive API errors (the client already absorbs 429 bursts).
-async function pollEvent(client: SpinupWPClient, eventId: number, timeoutMs = 180_000): Promise<boolean> {
+async function pollEvent(client: SpinupWPClientLike, eventId: number, timeoutMs = 180_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   let apiErrs = 0
   while (Date.now() < deadline) {
@@ -37,7 +37,7 @@ export interface DomainSyncResult {
 }
 
 export async function syncAdditionalDomains(
-  client: SpinupWPClient,
+  client: SpinupWPClientLike,
   destSiteId: number,
   sourceDomains: AdditionalDomain[],
   log?: (entry: Record<string, unknown>) => void,

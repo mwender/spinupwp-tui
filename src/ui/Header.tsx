@@ -5,6 +5,7 @@ import { useStore, isNewServerInFlight, isVanityInFlight, isCloneInFlight, type 
 import { timeAgo, truncate } from "../lib/format.ts"
 import { Spinner } from "./components.tsx"
 import { APP_NAME, APP_VERSION } from "../version.ts"
+import { isDevMode } from "../dev/devMode.ts"
 
 const TABS: { route: Route; key: string; label: string }[] = [
   { route: "dashboard", key: "1", label: "Dashboard" },
@@ -50,6 +51,7 @@ export function Header() {
         <text content={`◆ ${APP_NAME}`} fg={theme.brand} style={{ flexShrink: 0 }} />
         <text content={` v${APP_VERSION}`} fg={theme.textFaint} style={{ flexShrink: 0 }} />
         {updateReady && <text content={` ✦ v${updateInfo!.latest}`} fg={theme.update} attributes={1} style={{ flexShrink: 0 }} />}
+        {isDevMode() && <text content=" DEV MODE " fg={theme.bg} bg={theme.purple} attributes={1} style={{ flexShrink: 0 }} />}
         <box style={{ width: 2, flexShrink: 0 }} />
         {TABS.map((tab) => {
           const active = tab.route === route

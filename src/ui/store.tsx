@@ -7,7 +7,9 @@
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "@opentui-ui/toast"
-import { SpinupWPClient, ApiError, type ServerService } from "../api/client.ts"
+import { SpinupWPClient, ApiError, type ServerService, type SpinupWPClientLike } from "../api/client.ts"
+import { isDevMode } from "../dev/devMode.ts"
+import { createMockClient } from "../dev/mockClient.ts"
 import type { Server, Site, Event, ProviderMetadata, CreateServerPayload, CreateSitePayload, AdditionalDomain } from "../api/types.ts"
 import { loadConfig, saveConfig, type ServerProviderRef } from "../config.ts"
 import { saveJob, removeJob } from "../lib/jobs.ts"
@@ -395,7 +397,7 @@ export interface DataState {
 }
 
 interface StoreValue extends DataState {
-  client: SpinupWPClient
+  client: SpinupWPClientLike
   route: Route
   setRoute: (r: Route) => void
   refresh: () => Promise<void>
@@ -775,9 +777,9 @@ export function useStore(): StoreValue {
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const cfgRef = useRef(loadConfig())
-  const clientRef = useRef<SpinupWPClient | null>(null)
+  const clientRef = useRef<SpinupWPClientLike | null>(null)
   if (!clientRef.current) {
-    clientRef.current = new SpinupWPClient(cfgRef.current)
+    clientRef.current = isDevMode() ? createMockClient() : new SpinupWPClient(cfgRef.current)
   }
   const client = clientRef.current
 
