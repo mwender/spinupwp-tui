@@ -72,6 +72,11 @@ export interface AppConfig {
   // case and is never stored here — only the exceptions (e.g. "Integracon", a
   // third-party IT contact) are, so this stays empty for the common case.
   zoneAccessNotes: Record<string, string>
+  // Per-vanity-site health keys, keyed by domain — the `key` the seeded page's
+  // ?format=json mode requires (baked in at seed time). Kept here so re-seeds
+  // reuse the same key (monitor URLs stay stable) and so monitor-registration
+  // features can build the JSON URL later. Letters/digits only.
+  vanityHealthKeys: Record<string, string>
   // The last app version the user actually saw the Release Notes overlay for
   // (or, on a fresh install / pre-this-feature upgrade, silently seeded to the
   // running version with no notes shown — nothing meaningful to announce). A
@@ -143,6 +148,7 @@ export interface StoredConfig {
   preferredGrantKeys?: string[]
   grantedKeys?: Record<string, string[]>
   zoneAccessNotes?: Record<string, string>
+  vanityHealthKeys?: Record<string, string>
   lastSeenVersion?: string
 }
 
@@ -233,6 +239,7 @@ export function loadConfig(): AppConfig {
     preferredGrantKeys: stored.preferredGrantKeys ?? [],
     grantedKeys: stored.grantedKeys ?? {},
     zoneAccessNotes: stored.zoneAccessNotes ?? {},
+    vanityHealthKeys: stored.vanityHealthKeys ?? {},
     lastSeenVersion: stored.lastSeenVersion?.trim() || null,
   }
 }
