@@ -524,6 +524,7 @@ interface StoreValue extends DataState {
   connectKuma: (conn: { url: string; username: string; password: string }) => Promise<{ ok: true; version: string | null } | { ok: false; error: string }>
   kumaMonitorFor: (domain: string) => KumaMonitorRef | null // monitors Spinup registered for a domain
   startKumaSetup: (site: Site, opts?: { reseed?: boolean }) => void
+  startVanityReseed: (site: Site) => void // refresh an existing vanity page (no Kuma needed)
   kumaStatus: Map<string, KumaDomainStatus> // live per-domain status, refreshed every minute
   // Clone a server to a new server (item 5). `cloneServer` opens the wizard; `cloneJob`
   // is the (Plan-draft then running) job whose heavy work lives in its `sites[]` vector.
@@ -2920,6 +2921,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const kumaMonitorFor = useCallback((domain: string) => cfgRef.current.kumaMonitors[domain] ?? null, [])
 
+  // Push the current embedded page (with its health-endpoint modes) into an
+  // existing vanity site's docroot, minting/reusing the domain's stable health
+  // key. Shared by the standalone refresh and the Kuma setup's reseed option.
+  const reseedVanityPage = useCallback(async (site: Site, server: Server) => {
+    const domain = site.domain
+    const keys = { ...cfgRef.current.vanityHealthKeys }
+    const healthKey = keys[domain] ?? crypto.randomUUID().replace(/-/g, "")
+    if (keys[domain] !== healthKey) {
+      keys[domain] = healthKey
+      cfgRef.current.vanityHealthKeys = keys
+      void saveConfig({ vanityHealthKeys: keys })
+    }
+    return seedVanityIndex({ host: server.ip_address ?? "", user: site.site_user ?? deriveSiteUser(domain), port: server.ssh_port ?? null, domain, publicFolder: site.public_folder, healthKey })
+  }, [])
+
+  // Standalone vanity-page refresh — no Uptime Kuma involvement, works without a
+  // connection. This is how a page seeded by an older Spinup gets the current
+  // version (health endpoints included).
+  const startVanityReseed = useCallback(
+    (site: Site) => {
+      const server = servers.find((s) => s.id === site.server_id)
+      if (!server) return
+      const setOp = (op: KumaOp) => setKumaOps((prev) => new Map(prev).set(site.id, op))
+      setOp({ status: "running", detail: "Publishing the current page…" })
+      void reseedVanityPage(site, server).then((res) => {
+        if (res.ok) setOp({ status: "done", detail: "Page re-published — health endpoints are live." })
+        else setOp({ status: "error", detail: "", error: res.error || "Couldn't re-publish the page over SSH." })
+      })
+    },
+    [servers, reseedVanityPage],
+  )
+
   // Set up monitoring for an existing site. A vanity site (domain = server name)
   // gets the full treatment — optional page re-seed (the upgrade path for pages
   // published before the health-endpoint feature), healthz monitor, load push
@@ -2937,14 +2970,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const domain = site.domain
           if (isVanity && opts.reseed && server) {
             setOp({ status: "running", detail: "Publishing the updated page…" })
-            const keys = { ...cfgRef.current.vanityHealthKeys }
-            const healthKey = keys[domain] ?? crypto.randomUUID().replace(/-/g, "")
-            if (keys[domain] !== healthKey) {
-              keys[domain] = healthKey
-              cfgRef.current.vanityHealthKeys = keys
-              void saveConfig({ vanityHealthKeys: keys })
-            }
-            const seed = await seedVanityIndex({ host: server.ip_address ?? "", user: site.site_user ?? deriveSiteUser(domain), port: server.ssh_port ?? null, domain, publicFolder: site.public_folder, healthKey })
+            const seed = await reseedVanityPage(site, server)
             if (!seed.ok) throw new Error(seed.error || "Couldn't re-seed the page over SSH.")
           }
           setOp({ status: "running", detail: "Registering monitors in Uptime Kuma…" })
@@ -2983,7 +3009,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       void run()
     },
-    [servers],
+    [servers, reseedVanityPage],
   )
 
   // ---- Clone a server to a new server (item 5) -----------------------------
@@ -3719,6 +3745,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     connectKuma,
     kumaMonitorFor,
     startKumaSetup,
+    startVanityReseed,
     kumaStatus,
     cloneServer,
     setCloneServer,

@@ -86,8 +86,10 @@ Connect your Kuma instance once and Spinup registers monitors itself:
   views scale it back). A silent cron — server down, cron dead, egress broken —
   flips the monitor: dead-man's-switch semantics. Regular
   sites get a homepage monitor; Spinup never touches a client site's files.
-- **Vanity pages published before this feature** need one `R` (re-seed) from the
-  `m` overlay to gain the health endpoints, then everything above applies.
+- **Vanity pages published before this feature** need one `R` (refresh) from the
+  `m` overlay to gain the health endpoints, then everything above applies. `R`
+  doesn't require a Kuma connection — unconnected it just re-publishes the
+  current page; connected it also registers the monitors and cron in one go.
 - **The vanity wizard (`V`) does all of this automatically** as its final two
   steps whenever a Kuma connection is configured.
 

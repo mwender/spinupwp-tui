@@ -25,7 +25,10 @@ versions; such changes are called out here.
   - **`m` on any site** manages monitoring in place: vanity sites get the full
     treatment (incl. `R` to re-publish pages seeded before the health-endpoint
     feature existed), regular sites get a homepage monitor (up/down + cert-expiry
-    alerts) — client site files are never touched.
+    alerts) — client site files are never touched. **`R` works without Kuma
+    too**: unconnected, it simply pushes the current page (a vanity-page
+    refresh); connected, it also registers monitors + the cron. The connect
+    form is opt-in (`c`), never a gate.
   - The client speaks Kuma's socket.io API (its only management API), adopts
     same-named monitors instead of duplicating them, reuses push tokens, and
     handles both Kuma 1.x and 2.x monitor schemas.
