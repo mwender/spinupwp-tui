@@ -21,6 +21,10 @@ export async function aRecordResolves(host: string, ip: string): Promise<boolean
 
 // Brand-neutral, auto light/dark, reads its hostname from the request. The
 // <load>/<uptime> tags are machine-readable (WHMCS uptime checker parses them).
+// Machine modes for monitoring tools (Uptime Kuma etc. — see docs/uptime-kuma.md):
+//   ?healthz            → 200 "ok" / 503 "unhealthy: …" (plain text, no key)
+//   ?format=json[&key=] → metrics JSON; key required when one is baked in at
+//                         seed time via the __SPINUP_HEALTH_KEY__ placeholder.
 export const VANITY_INDEX_PHP = `<?php
     // --- Server load (1-min average) -------------------------------------------
     $load = @file_get_contents("/proc/loadavg");
@@ -41,6 +45,68 @@ export const VANITY_INDEX_PHP = `<?php
 
     // Reusable on any server: derive the name from the request host, not a literal.
     $host = $_SERVER['HTTP_HOST'] ?? gethostname();
+
+    // --- Machine-readable modes (?healthz, ?format=json) ------------------------
+    // Substituted at seed time; empty means the JSON mode needs no key.
+    $health_key = '__SPINUP_HEALTH_KEY__';
+    if (isset($_GET['healthz']) || (($_GET['format'] ?? '') === 'json')) {
+        header('Cache-Control: no-store');
+        $cores = 1;
+        $cpuinfo = @file_get_contents('/proc/cpuinfo');
+        if ($cpuinfo && preg_match_all('/^processor\\s*:/m', $cpuinfo, $m)) $cores = max(1, count($m[0]));
+        // SpinupWP's FPM pool disables disk_*/exec (fatal even with @) but leaves
+        // shell_exec — guard with function_exists and fall back to df.
+        $disk_free_pct = null;
+        if (function_exists('disk_free_space') && function_exists('disk_total_space')) {
+            $dt = @disk_total_space(__DIR__);
+            $df = @disk_free_space(__DIR__);
+            if ($dt && $df !== false) $disk_free_pct = round($df / $dt * 100, 1);
+        } elseif (function_exists('shell_exec')) {
+            $df_out = @shell_exec('df -Pk ' . escapeshellarg(__DIR__) . ' 2>/dev/null');
+            if ($df_out && preg_match('/\\n\\S+\\s+(\\d+)\\s+\\d+\\s+(\\d+)\\s/', $df_out, $dm) && (int)$dm[1] > 0) {
+                $disk_free_pct = round((int)$dm[2] / (int)$dm[1] * 100, 1);
+            }
+        }
+        $mem_available_pct = null;
+        $meminfo = @file_get_contents('/proc/meminfo');
+        if ($meminfo && preg_match('/^MemTotal:\\s+(\\d+)/m', $meminfo, $mt)
+                     && preg_match('/^MemAvailable:\\s+(\\d+)/m', $meminfo, $ma)
+                     && (int)$mt[1] > 0) {
+            $mem_available_pct = round((int)$ma[1] / (int)$mt[1] * 100, 1);
+        }
+        // Unhealthy = CPU pressure (1-min load per core > 2) or low disk (< 10% free).
+        $reasons = [];
+        if ($load !== '' && ((float)$load / $cores) > 2) $reasons[] = 'load';
+        if ($disk_free_pct !== null && $disk_free_pct < 10) $reasons[] = 'disk';
+
+        // ?healthz: binary state only — safe without a key. A plain HTTP monitor
+        // (200-299 = up) gets threshold alerting for free via the 503.
+        if (isset($_GET['healthz'])) {
+            http_response_code($reasons ? 503 : 200);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo $reasons ? 'unhealthy: ' . implode(' ', $reasons) : 'ok';
+            exit;
+        }
+        if ($health_key !== '' && !hash_equals($health_key, (string)($_GET['key'] ?? ''))) {
+            http_response_code(403);
+            header('Content-Type: application/json');
+            echo '{"error":"forbidden"}';
+            exit;
+        }
+        header('Content-Type: application/json');
+        echo json_encode([
+            'host' => $host,
+            'status' => $reasons ? 'unhealthy' : 'ok',
+            'load_1m' => $load === '' ? null : (float)$load,
+            'cores' => $cores,
+            'uptime_s' => (int)$uptime,
+            'disk_free_pct' => $disk_free_pct,
+            'mem_available_pct' => $mem_available_pct,
+            'php_version' => PHP_VERSION,
+            'time' => gmdate('c'),
+        ]);
+        exit;
+    }
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -149,13 +215,17 @@ export interface VanitySeedTarget {
   port: number | null
   domain: string // the site domain (for the docroot path)
   publicFolder: string | null
+  // Baked into the page's ?format=json mode (letters/digits only — it lands inside
+  // a single-quoted PHP string). Empty/absent ⇒ the JSON mode needs no key.
+  healthKey?: string | null
 }
 
 // Push the embedded index.php into the site's docroot over SSH. Idempotent — safe
 // to re-run on resume (it overwrites). base64-pipe avoids any quoting headaches.
 export async function seedVanityIndex(t: VanitySeedTarget): Promise<{ ok: boolean; error?: string }> {
   const docroot = remoteDocRoot(t.domain, t.publicFolder)
-  const b64 = Buffer.from(VANITY_INDEX_PHP, "utf8").toString("base64")
+  const php = VANITY_INDEX_PHP.replace("__SPINUP_HEALTH_KEY__", t.healthKey ?? "")
+  const b64 = Buffer.from(php, "utf8").toString("base64")
   const remote = `mkdir -p '${docroot}' && printf '%s' '${b64}' | base64 -d > '${docroot}/index.php'`
   const r = await runProcess(["ssh", ...SSH_OPTS, ...sshPort(t.port), `${t.user}@${t.host}`, remote], 60_000)
   if (r.code !== 0) return { ok: false, error: meaningfulError(r.stderr, "Couldn't write index.php over SSH (is your key on the server yet?).") }

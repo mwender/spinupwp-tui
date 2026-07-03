@@ -487,6 +487,7 @@ interface StoreValue extends DataState {
   vanityStopWaiting: () => void // from keep-waiting: stop waiting, continue the normal flow
   vanityRetry: () => void // re-enter the failed step
   clearVanity: () => void
+  vanityHealthKeyFor: (domain: string) => string | null // key baked into the seeded page's ?format=json mode
   // Clone a server to a new server (item 5). `cloneServer` opens the wizard; `cloneJob`
   // is the (Plan-draft then running) job whose heavy work lives in its `sites[]` vector.
   cloneServer: Server | null
@@ -2589,7 +2590,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       async function doSeed(j: VanityJob) {
         persist({ ...j, step: "seed" })
-        const res = await seedVanityIndex({ host: j.serverIp, user: j.siteUser, port: j.port, domain: j.hostname, publicFolder: j.publicFolder })
+        // One stable key per domain: a resume/re-seed reuses it, so a monitor URL
+        // built against the page's ?format=json mode never goes stale.
+        const keys = { ...cfgRef.current.vanityHealthKeys }
+        const healthKey = keys[j.hostname] ?? crypto.randomUUID().replace(/-/g, "")
+        if (keys[j.hostname] !== healthKey) {
+          keys[j.hostname] = healthKey
+          cfgRef.current.vanityHealthKeys = keys
+          void saveConfig({ vanityHealthKeys: keys })
+        }
+        const res = await seedVanityIndex({ host: j.serverIp, user: j.siteUser, port: j.port, domain: j.hostname, publicFolder: j.publicFolder, healthKey })
         if (!res.ok) return fail(j, "seed", res.error || "Couldn't seed index.php over SSH.")
         await refresh()
         persist({ ...j, step: "done" })
@@ -2692,6 +2702,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setVanityJob(null)
     void removeJob(VANITY_JOB_ID)
   }, [])
+
+  // Reads through cfgRef (not reactive state): the key is written by doSeed before
+  // the job reaches "done", so any render that can show it already sees it.
+  const vanityHealthKeyFor = useCallback((domain: string) => cfgRef.current.vanityHealthKeys[domain] ?? null, [])
 
   // ---- Clone a server to a new server (item 5) -----------------------------
 
@@ -3417,6 +3431,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     vanityStopWaiting,
     vanityRetry,
     clearVanity,
+    vanityHealthKeyFor,
     cloneServer,
     setCloneServer,
     cloneJob,

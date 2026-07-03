@@ -32,7 +32,7 @@ function fmtClock(ms: number): string {
 }
 
 export function VanityNewSite() {
-  const { vanityServer: server, setVanityServer, vanityJob: job, startVanity, vanitySshKeyDone, vanitySkipSsl, vanityKeepWaiting, vanityStopWaiting, vanityRetry, clearVanity, accountSlug, setInputMode, sites, isSudoConnected, keyGrants, startGrantRemembered, preferredGrantKeys, clearGrantKey, sudoConnectServer, setSudoConnectServer } = useStore()
+  const { vanityServer: server, setVanityServer, vanityJob: job, startVanity, vanitySshKeyDone, vanitySkipSsl, vanityKeepWaiting, vanityStopWaiting, vanityRetry, clearVanity, vanityHealthKeyFor, accountSlug, setInputMode, sites, isSudoConnected, keyGrants, startGrantRemembered, preferredGrantKeys, clearGrantKey, sudoConnectServer, setSudoConnectServer } = useStore()
 
   const [siteUser, setSiteUser] = useState(() => (server ? deriveSiteUser(server.name) : ""))
   const [editingUser, setEditingUser] = useState(false)
@@ -242,14 +242,23 @@ export function VanityNewSite() {
 
     // Done.
     if (job.step === "done") {
+      const healthKey = vanityHealthKeyFor(job.hostname)
       return (
         <Panel title=" Server connected " active>
-          <box style={{ flexDirection: "column", width: 60, paddingTop: 1, paddingBottom: 1 }}>
+          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
               <text content="✓ " fg={theme.good} style={{ flexShrink: 0 }} />
               <text content={job.hostname} fg={theme.accent} wrapMode="none" style={{ flexShrink: 1 }} />
             </box>
             <text content="The vanity site is live and the server now has a site." fg={theme.textDim} wrapMode="none" />
+            {healthKey && (
+              <>
+                <box style={{ height: 1 }} />
+                <text content="The page doubles as a health endpoint for any uptime tool:" fg={theme.textDim} wrapMode="none" />
+                <text content="  /?healthz — up/down (503 on high load or low disk)" fg={theme.textFaint} wrapMode="none" />
+                <text content={`  /?format=json&key=${healthKey}`} fg={theme.textFaint} wrapMode="none" />
+              </>
+            )}
             <box style={{ height: 1 }} />
             <text content="o open in browser · Esc to close" fg={theme.textFaint} wrapMode="none" />
           </box>

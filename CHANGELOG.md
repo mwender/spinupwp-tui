@@ -11,6 +11,18 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Vanity pages are now health endpoints any uptime monitor can watch.** The page
+  the `V` wizard seeds gains two machine modes: `?healthz` returns plain
+  `200 ok` / `503 unhealthy: …` (1-min load per core > 2, or disk free < 10%) so a
+  plain HTTP monitor gets resource alerting for free, and `?format=json&key=…`
+  returns full metrics (load, cores, uptime, disk, memory, PHP version) guarded by
+  a per-site key generated at seed time (shown on the wizard's done screen, kept in
+  `vanityHealthKeys` in config.json so re-seeds keep monitor URLs stable). The
+  human page and its WHMCS-parseable `<load>`/`<uptime>` tags are unchanged.
+  Monitoring recipes — including Uptime Kuma keyword/JSON-query/cert-expiry
+  setups — live in `docs/uptime-kuma.md`.
+
 ## [0.13.0] - 2026-07-03
 
 ### Added
