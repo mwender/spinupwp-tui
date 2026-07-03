@@ -464,24 +464,35 @@ over SSH). The steps:
    bytes routed through your laptop), authenticating with a key granted onto the source
    for the job and **revoked when it's done**.
 4. **Clone sites** — a live roster runs the sites concurrently, each advancing
-   `create → pull → config → verify → done`. Both stacks are handled: **Standard WP**
-   (files + database, with `wp-config` re-stamped for the destination) and **Bedrock**
-   (git-native — created from the repo, `composer install` over SSH, uploads + secrets
-   pulled, `.env` re-stamped).
+   `create → pull → config → verify → done` with **live transfer progress** (bytes,
+   rate, elapsed; database pulls show a true percent). Three stacks are handled:
+   **Standard WP** (files + database, with `wp-config` re-stamped for the
+   destination), **Bedrock** (git-native — created from the repo, `composer install`
+   over SSH, uploads + secrets pulled, `.env` re-stamped), and **files-only** for
+   non-WordPress sites (redirect shells, static/PHP — opt-in in Plan, no database).
+   The pull **detects each site's real webroot** rather than trusting settings —
+   `public/`-style layouts (with `wp-config.php` one level above the webroot) are
+   preserved, and mid-move layouts are normalized on the destination. **Additional
+   domains carry over** automatically (with their redirect settings), so the clone
+   answers for every hostname the source did.
 5. **Verify** — drill into any cloned site for a source-vs-clone comparison (wp-cli
    facts + an HTTP check that hits the **new** server while DNS still points at the old
-   one).
-6. **DNS cutover** — when you're satisfied, repoint **every** `A` record across each
-   site's domains (apex + additional) to the new server, in one batched, partial-aware
-   pass; `www`-style records that follow the apex are skipped, not clobbered. Cloudflare
-   **proxied** records repoint automatically too (their origin IP is always PATCHable
-   even though their TTL stays fixed to automatic). Records in zones you can't edit are
-   listed for hand-editing.
+   one; files-only sites compare file count, size, and HTTP instead).
+6. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
+   settles, then repoints `A` records across each site's domains (apex + additional)
+   to the new server in one batched, partial-aware pass; `↑↓`/`space` include or
+   exclude individual records first. `www`-style records that follow the apex are
+   skipped, not clobbered. Cloudflare **proxied** records repoint automatically too
+   (their origin IP is always PATCHable even though their TTL stays fixed to
+   automatic). Records in zones you can't edit show your DNS access note and `⏎`
+   opens that zone's registrar console with the zone name copied — ready to paste.
 
 The clone runs in the **background** — pressing `Esc` doesn't abandon it; a header
 badge (`⠹ Cloning … — press C`) surfaces the in-flight job and `C` reopens the live
-roster. Pairs naturally with the DNS module: **lower the TTLs** (`n`/`N` → `⏎`) a day
-or two ahead so the cutover propagates fast.
+roster. **Every job writes a full log** (`~/.config/spinupwp-tui/logs/`, passwords
+redacted, self-pruning) — `⏎` on a failed site shows the complete error and `r`
+retries just that site. Pairs naturally with the DNS module: **lower the TTLs**
+(`n`/`N` → `⏎`) a day or two ahead so the cutover propagates fast.
 
 ## Local working copies
 
