@@ -70,6 +70,12 @@ export class KumaClient {
   private monitorList: Record<string, KumaMonitor> | null = null
   private notificationList: { id: number; isDefault?: boolean; active?: boolean; config?: string }[] = []
 
+  // Kuma pushes each monitor's recent beats + uptime percentages as events right
+  // after login (it's how its own dashboard populates) — capture them so one
+  // short-lived connection yields a full status snapshot with no extra queries.
+  private heartbeats = new Map<number, KumaBeat[]>()
+  private uptimes = new Map<string, number>() // "<monitorId>:<period>" → percent
+
   private constructor(socket: Socket) {
     this.socket = socket
     socket.on("info", (info: { version?: string }) => {
@@ -81,6 +87,29 @@ export class KumaClient {
     socket.on("notificationList", (list: typeof this.notificationList) => {
       this.notificationList = list ?? []
     })
+    socket.on("heartbeatList", (monitorID: number | string, beats: KumaBeat[], overwrite?: boolean) => {
+      const id = Number(monitorID)
+      const prev = overwrite ? [] : (this.heartbeats.get(id) ?? [])
+      this.heartbeats.set(id, [...prev, ...(beats ?? [])])
+    })
+    socket.on("uptime", (monitorID: number | string, period: number | string, percent: number) => {
+      this.uptimes.set(`${Number(monitorID)}:${period}`, percent)
+    })
+  }
+
+  beatsFor(monitorId: number): KumaBeat[] {
+    return this.heartbeats.get(monitorId) ?? []
+  }
+
+  uptimeFor(monitorId: number, period: number): number | null {
+    return this.uptimes.get(`${monitorId}:${period}`) ?? null
+  }
+
+  // The post-login event burst arrives over ~a second; waiting a beat makes a
+  // fresh connection's snapshot complete. No-op if data is already here.
+  async waitForSnapshot(ms = 1500): Promise<void> {
+    if (this.heartbeats.size > 0) return
+    await new Promise((r) => setTimeout(r, ms))
   }
 
   static async connect(url: string): Promise<KumaClient> {
@@ -264,6 +293,7 @@ export function loadPushMonitorPayload(name: string, pushToken: string): Record<
     type: "push",
     name,
     pushToken,
+    description: "1-min load average ×100 (integer), pushed by Spinup's heartbeat cron. 164 = load 1.64.",
     // The cron beats once a minute; alert after ~2 missed beats.
     interval: 60,
     retryInterval: 60,

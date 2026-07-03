@@ -71,6 +71,8 @@ export interface PhpUpgradeProgress {
 const UPGRADE_DONE = "deployed"
 const UPGRADE_FAIL = "failed"
 const UPGRADE_POLL_MS = 2500
+// Kuma status refresh — its monitors beat at 60s, so faster polling buys nothing.
+const KUMA_POLL_MS = 60_000
 
 export function isUpgradeInFlight(p: PhpUpgradeProgress | undefined): boolean {
   return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
@@ -190,6 +192,17 @@ export interface KumaOp {
   status: "running" | "done" | "error"
   detail: string
   error?: string
+}
+
+// One domain's live status as Kuma sees it, refreshed by the store's poll loop.
+// `responseBeats`/`loadBeats` are ping series (ms / 1-min load) oldest-first,
+// ready for sparkline().
+export interface KumaDomainStatus {
+  up: boolean | null // last beat status; null = no beats yet
+  uptime24: number | null // 0..1 fraction from Kuma's 24h uptime event
+  responseBeats: number[]
+  loadBeats: number[]
+  lastLoad: number | null
 }
 
 // Clone a server to a new server (backlog item 5). Five server-level steps wrapping
@@ -511,6 +524,7 @@ interface StoreValue extends DataState {
   connectKuma: (conn: { url: string; username: string; password: string }) => Promise<{ ok: true; version: string | null } | { ok: false; error: string }>
   kumaMonitorFor: (domain: string) => KumaMonitorRef | null // monitors Spinup registered for a domain
   startKumaSetup: (site: Site, opts?: { reseed?: boolean }) => void
+  kumaStatus: Map<string, KumaDomainStatus> // live per-domain status, refreshed every minute
   // Clone a server to a new server (item 5). `cloneServer` opens the wizard; `cloneJob`
   // is the (Plan-draft then running) job whose heavy work lives in its `sites[]` vector.
   cloneServer: Server | null
@@ -1404,6 +1418,42 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       const run = async () => {
         setOp(server.id, { kind, label, status: "queued" })
+
+        // Reboot only: shield this server's Kuma monitors behind a manual
+        // maintenance window so the planned outage never pages. Best-effort in
+        // both directions — Kuma being unreachable must never block a reboot.
+        let kumaMaintId: number | null = null
+        const kumaConn = cfgRef.current.uptimeKuma
+        if (kind === "reboot" && kumaConn) {
+          const domains = new Set(sitesForServer(server.id).map((s) => s.domain))
+          const monitorIds: number[] = []
+          for (const [domain, ref] of Object.entries(cfgRef.current.kumaMonitors)) {
+            if (!domains.has(domain)) continue
+            if (ref.healthId) monitorIds.push(ref.healthId)
+            if (ref.pushId) monitorIds.push(ref.pushId)
+          }
+          if (monitorIds.length) {
+            try {
+              const { result } = await withKuma(kumaConn, async (kuma) => {
+                const id = await kuma.addManualMaintenance(`Reboot ${server.name}`, "Planned reboot fired from Spinup")
+                await kuma.setMaintenanceMonitors(id, monitorIds)
+                return id
+              })
+              kumaMaintId = result
+            } catch {
+              // No window — worst case is one expected down alert.
+            }
+          }
+        }
+        const endKumaMaintenance = () => {
+          if (kumaMaintId == null || !kumaConn) return
+          const id = kumaMaintId
+          kumaMaintId = null
+          withKuma(kumaConn, (kuma) => kuma.deleteMaintenance(id)).catch(() => {
+            // Stale window left behind in Kuma — visible + deletable there.
+          })
+        }
+
         let eventId: number
         try {
           const res = kind === "reboot" ? await client.rebootServer(server.id) : await client.restartService(server.id, kind)
@@ -1411,6 +1461,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         } catch (err) {
           const msg = err instanceof ApiError ? err.message : (err as Error).message
           setOp(server.id, { kind, label, status: UPGRADE_FAIL, error: msg })
+          endKumaMaintenance()
           return
         }
 
@@ -1418,12 +1469,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           try {
             const ev = await client.getEvent(eventId)
             if (ev.status === UPGRADE_DONE) {
+              endKumaMaintenance()
               await refresh() // reboot clears reboot_required; status may flip too
               clearServerOp(server.id)
               // Background-completion nudge — a reboot can take minutes and the user
               // has usually closed the overlay (it tracks in the background).
               toast.success(kind === "reboot" ? `${server.name} rebooted` : `${SERVICE_NAMES[kind] ?? kind} restarted on ${server.name}`)
             } else if (ev.status === UPGRADE_FAIL) {
+              endKumaMaintenance()
               setOp(server.id, { kind, label, status: UPGRADE_FAIL, error: ev.output?.trim() || "The operation failed on SpinupWP." })
             } else {
               setOp(server.id, { kind, label, status: ev.status })
@@ -1432,13 +1485,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           } catch (err) {
             const msg = err instanceof ApiError ? err.message : (err as Error).message
             setOp(server.id, { kind, label, status: UPGRADE_FAIL, error: msg })
+            endKumaMaintenance()
           }
         }
         setTimeout(() => void poll(), UPGRADE_POLL_MS)
       }
       void run()
     },
-    [client, refresh, clearServerOp, serverOps],
+    [client, refresh, clearServerOp, serverOps, sitesForServer],
   )
 
   // ---- Create a server (POST /servers) ----------------------------------
@@ -2793,6 +2847,59 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const [kumaSite, setKumaSite] = useState<Site | null>(null)
   const [kumaOps, setKumaOps] = useState<Map<number, KumaOp>>(new Map())
+  const [kumaStatus, setKumaStatus] = useState<Map<string, KumaDomainStatus>>(new Map())
+  // Bumped when a connection is added mid-session so the poll loop (re)starts.
+  const [kumaEpoch, setKumaEpoch] = useState(0)
+
+  // Poll Kuma every minute for the registered monitors' status: one short-lived
+  // connection per tick; the post-login event burst (beats + uptime) is the
+  // snapshot. Kuma being unreachable keeps the last snapshot (stale > empty).
+  useEffect(() => {
+    const conn = cfgRef.current.uptimeKuma
+    if (!conn) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const tick = async () => {
+      try {
+        const { result } = await withKuma(conn, async (kuma) => {
+          const monitors = await kuma.getMonitors()
+          await kuma.waitForSnapshot()
+          const byId = new Map(monitors.map((m) => [m.id, m]))
+          const map = new Map<string, KumaDomainStatus>()
+          for (const [domain, ref] of Object.entries(cfgRef.current.kumaMonitors)) {
+            const status: KumaDomainStatus = { up: null, uptime24: null, responseBeats: [], loadBeats: [], lastLoad: null }
+            if (ref.healthId && byId.has(ref.healthId)) {
+              const beats = kuma.beatsFor(ref.healthId)
+              const last = beats[beats.length - 1]
+              status.up = last ? last.status === 1 : null
+              status.responseBeats = beats.map((b) => Number(b.ping) || 0)
+              status.uptime24 = kuma.uptimeFor(ref.healthId, 24)
+            }
+            if (ref.pushId && byId.has(ref.pushId)) {
+              const beats = kuma.beatsFor(ref.pushId)
+              // The cron pushes load ×100 as an integer (some Kuma builds drop
+              // float pings) — scale back to real load here.
+              status.loadBeats = beats.map((b) => (Number(b.ping) || 0) / 100)
+              const last = beats[beats.length - 1]
+              status.lastLoad = last?.ping != null ? Number(last.ping) / 100 : null
+              if (status.up === null && last) status.up = last.status === 1
+            }
+            map.set(domain, status)
+          }
+          return map
+        })
+        if (!cancelled) setKumaStatus(result)
+      } catch {
+        // Unreachable this tick — retry on the next one.
+      }
+      if (!cancelled) timer = setTimeout(() => void tick(), KUMA_POLL_MS)
+    }
+    void tick()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [kumaEpoch])
 
   // Verify a Kuma connection by actually logging in, then persist it (with the
   // minted JWT, so later sessions use loginByToken). The env-sourced connection
@@ -2804,6 +2911,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const stored = { url, username: conn.username, password: conn.password, jwt }
       cfgRef.current.uptimeKuma = stored
       void saveConfig({ uptimeKuma: stored })
+      setKumaEpoch((e) => e + 1) // start the status poll loop now
       return { ok: true, version }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -3611,6 +3719,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     connectKuma,
     kumaMonitorFor,
     startKumaSetup,
+    kumaStatus,
     cloneServer,
     setCloneServer,
     cloneJob,

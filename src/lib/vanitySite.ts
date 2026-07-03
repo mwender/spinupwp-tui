@@ -247,12 +247,16 @@ const PUSH_CRON_MARKER = "spinup-kuma-push"
 // stopping is the signal (dead-man's switch) — so the cron itself never reports
 // "down"; it just goes quiet when the server/cron/egress dies.
 //
+// Load is sent ×100 as an INTEGER (1.64 → 164, i.e. percent-of-one-core): some
+// Kuma builds validate `ping` as an int and silently store null for floats
+// (verified live). Consumers divide by 100 (see the store's Kuma poll).
+//
 // Idempotent: a marker comment identifies our line, and the install strips any
 // previous marked line before appending. NO `%` anywhere in the line — cron
-// treats a bare % as newline.
+// treats a bare % as newline (which also rules out awk printf here).
 export async function seedVanityPushCron(t: PushCronTarget): Promise<{ ok: boolean; error?: string }> {
   const push = `${t.kumaUrl.replace(/\/+$/, "")}/api/push/${t.pushToken}`
-  const line = `* * * * * curl -fsS --max-time 20 '${push}?status=up&msg=ok&ping='$(awk '{print $1}' /proc/loadavg) >/dev/null 2>&1 # ${PUSH_CRON_MARKER}`
+  const line = `* * * * * curl -fsS --max-time 20 '${push}?status=up&msg=ok&ping='$(awk '{print int($1*100)}' /proc/loadavg) >/dev/null 2>&1 # ${PUSH_CRON_MARKER}`
   // The line contains quotes of both kinds once cron expands it, so ship it
   // base64'd (same trick as the index.php seed) instead of fighting nesting.
   const b64 = Buffer.from(line + "\n", "utf8").toString("base64")

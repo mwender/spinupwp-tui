@@ -247,6 +247,9 @@ export function ServerActions() {
                     )}
                   </>
                 )}
+                {store.kumaConfigured && (
+                  <text content="Uptime Kuma monitors enter a maintenance window — no false alerts." fg={theme.textFaint} wrapMode="none" />
+                )}
               </>
             ) : (
               <text content="Brief interruption to that one service; sites stay up otherwise." fg={theme.textDim} wrapMode="none" />
