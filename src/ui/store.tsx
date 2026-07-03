@@ -41,7 +41,7 @@ import {
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
 import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, aRecordResolves } from "../lib/vanitySite.ts"
-import { withKuma, genPushToken, healthMonitorPayload, loadPushMonitorPayload } from "../lib/uptimeKuma.ts"
+import { withKuma, KumaClient, genPushToken, healthMonitorPayload, loadPushMonitorPayload } from "../lib/uptimeKuma.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
@@ -521,7 +521,7 @@ interface StoreValue extends DataState {
   kumaSite: Site | null // site whose Kuma overlay (m) is open
   setKumaSite: (s: Site | null) => void
   kumaOps: Map<number, KumaOp> // in-flight/settled monitor setups, by site id
-  connectKuma: (conn: { url: string; username: string; password: string }) => Promise<{ ok: true; version: string | null } | { ok: false; error: string }>
+  connectKuma: (conn: { url: string; username: string; password: string }, twofa?: string) => Promise<{ ok: true; version: string | null } | { ok: false; error: string; tokenRequired?: boolean }>
   kumaMonitorFor: (domain: string) => KumaMonitorRef | null // monitors Spinup registered for a domain
   startKumaSetup: (site: Site, opts?: { reseed?: boolean }) => void
   startVanityReseed: (site: Site) => void // refresh an existing vanity page (no Kuma needed)
@@ -2903,21 +2903,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [kumaEpoch])
 
   // Verify a Kuma connection by actually logging in, then persist it (with the
-  // minted JWT, so later sessions use loginByToken). The env-sourced connection
-  // is never overwritten — mirrors the provider-connection convention.
-  const connectKuma = useCallback(async (conn: { url: string; username: string; password: string }): Promise<{ ok: true; version: string | null } | { ok: false; error: string }> => {
-    try {
-      const url = conn.url.trim().replace(/\/+$/, "")
-      const { jwt, version } = await withKuma({ ...conn, url }, async () => true)
-      const stored = { url, username: conn.username, password: conn.password, jwt }
-      cfgRef.current.uptimeKuma = stored
-      void saveConfig({ uptimeKuma: stored })
-      setKumaEpoch((e) => e + 1) // start the status poll loop now
-      return { ok: true, version }
-    } catch (err) {
-      return { ok: false, error: (err as Error).message }
-    }
-  }, [])
+  // minted JWT, so later sessions use loginByToken). 2FA accounts: the first
+  // attempt comes back `tokenRequired`, the view reveals a code field, and the
+  // retry carries the TOTP — needed exactly once, since every later login uses
+  // the stored JWT. The env-sourced connection is never overwritten.
+  const connectKuma = useCallback(
+    async (conn: { url: string; username: string; password: string }, twofa?: string): Promise<{ ok: true; version: string | null } | { ok: false; error: string; tokenRequired?: boolean }> => {
+      try {
+        const url = conn.url.trim().replace(/\/+$/, "")
+        const kuma = await KumaClient.connect(url)
+        try {
+          const login = await kuma.login({ username: conn.username, password: conn.password, url }, twofa)
+          if (!login.ok) return { ok: false, error: login.error, tokenRequired: login.tokenRequired }
+          const stored = { url, username: conn.username, password: conn.password, jwt: login.jwt }
+          cfgRef.current.uptimeKuma = stored
+          void saveConfig({ uptimeKuma: stored })
+          setKumaEpoch((e) => e + 1) // start the status poll loop now
+          return { ok: true, version: kuma.version }
+        } finally {
+          kuma.disconnect()
+        }
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    },
+    [],
+  )
 
   const kumaMonitorFor = useCallback((domain: string) => cfgRef.current.kumaMonitors[domain] ?? null, [])
 

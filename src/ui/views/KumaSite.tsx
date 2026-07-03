@@ -20,7 +20,7 @@ import { Panel, Centered, Field, SecretInput, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
 
-const FIELDS = ["url", "username", "password"] as const
+const BASE_FIELDS = ["url", "username", "password"] as const
 
 export function KumaSite() {
   const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, servers, setInputMode } = useStore()
@@ -31,6 +31,11 @@ export function KumaSite() {
   const [error, setError] = useState<string | null>(null)
   const [connectedVersion, setConnectedVersion] = useState<string | null>(null)
   const [showConnect, setShowConnect] = useState(false)
+  // 2FA: revealed only after Kuma answers `tokenRequired` to a correct password.
+  // The code is used once — the stored JWT covers every later login.
+  const [needsTwofa, setNeedsTwofa] = useState(false)
+  const [twofa, setTwofa] = useState("")
+  const fields: string[] = needsTwofa ? [...BASE_FIELDS, "2FA code"] : [...BASE_FIELDS]
 
   const server = site ? servers.find((s) => s.id === site.server_id) : undefined
   const isVanity = !!site && !!server && server.name === site.domain
@@ -53,18 +58,32 @@ export function KumaSite() {
   const verify = () => {
     if (busy) return
     if (!draft.url.trim() || !draft.username.trim() || !draft.password) {
-      setError("All three fields are needed.")
+      setError("URL, username and password are all needed.")
+      return
+    }
+    if (needsTwofa && !twofa.trim()) {
+      setError("Enter the current 6-digit code from your authenticator.")
       return
     }
     setBusy(true)
     setError(null)
-    void connectKuma(draft).then((r) => {
+    void connectKuma(draft, needsTwofa ? twofa.trim() : undefined).then((r) => {
       setBusy(false)
       if (r.ok) {
         setConnectedVersion(r.version ?? "connected")
         setShowConnect(false)
         setInputMode(false)
-      } else setError(r.error)
+        return
+      }
+      if (r.tokenRequired && !needsTwofa) {
+        // Password was right; the account wants a TOTP. Reveal the field and
+        // land the cursor on it.
+        setNeedsTwofa(true)
+        setFieldIdx(BASE_FIELDS.length)
+        setError("2FA is on — enter the current code (needed once; a token is stored after).")
+        return
+      }
+      setError(r.error)
     })
   }
 
@@ -79,10 +98,10 @@ export function KumaSite() {
       }
       if (name === "return") {
         if (busy) return
-        if (fieldIdx < FIELDS.length - 1) return setFieldIdx(fieldIdx + 1)
+        if (fieldIdx < fields.length - 1) return setFieldIdx(fieldIdx + 1)
         return verify()
       }
-      if (name === "tab" || name === "down") return setFieldIdx((i) => Math.min(i + 1, FIELDS.length - 1))
+      if (name === "tab" || name === "down") return setFieldIdx((i) => Math.min(i + 1, fields.length - 1))
       if (name === "up") return setFieldIdx((i) => Math.max(i - 1, 0))
       return
     }
@@ -120,15 +139,23 @@ export function KumaSite() {
           <text content="One-time setup: your Uptime Kuma instance's URL and login." fg={theme.textDim} wrapMode="none" />
           <text content="Verified by logging in before anything is saved (config, 0600)." fg={theme.textFaint} wrapMode="none" />
           <box style={{ height: 1 }} />
-          {FIELDS.map((f, i) => (
+          {fields.map((f, i) => (
             <box key={f} style={{ flexDirection: "row" }}>
               <text content={`${i === fieldIdx ? "❯" : " "} ${f.padEnd(9)}`} fg={i === fieldIdx ? theme.brand : theme.textDim} style={{ flexShrink: 0 }} />
               {f === "password" ? (
                 <SecretInput focused={i === fieldIdx && !busy} value={draft.password} onChange={(v: string) => setDraft((d) => ({ ...d, password: v }))} onSubmit={verify} />
+              ) : f === "2FA code" ? (
+                <input
+                  focused={i === fieldIdx && !busy}
+                  value={twofa}
+                  onInput={setTwofa}
+                  placeholder="123456"
+                  style={{ backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
+                />
               ) : (
                 <input
                   focused={i === fieldIdx && !busy}
-                  value={draft[f]}
+                  value={draft[f as "url" | "username"]}
                   onInput={(v: string) => setDraft((d) => ({ ...d, [f]: v }))}
                   placeholder={f === "url" ? "https://kuma.example.com" : ""}
                   style={{ backgroundColor: theme.bgAlt, focusedBackgroundColor: theme.bgAlt, textColor: theme.text }}
