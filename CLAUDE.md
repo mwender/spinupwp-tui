@@ -29,7 +29,7 @@ template). Never put client domains in any public artifact; anonymize.
 
 - **Single-line text truncation needs `wrapMode="none"`.** OpenTUI text
   word-wraps by default; in a `height: 1` row a long value (e.g.
-  `web3.rockytopinsider.com`) otherwise shows only the first wrapped segment
+  `web3.example-client.com`) otherwise shows only the first wrapped segment
   (`web3.`). Any growable/shrinkable text in a one-line row sets `wrapMode="none"`.
 - **`flexGrow` needs a definite-width context.** A row of `flexGrow`/`flexShrink`
   children only distributes slack when its container has a real width. The
