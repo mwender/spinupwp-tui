@@ -95,3 +95,25 @@ Connect your Kuma instance once and Spinup registers monitors itself:
 
 Spinup adopts same-named monitors rather than duplicating them, so hand-made
 monitors survive; a hand-made push monitor keeps its token (the cron adopts it).
+
+## Rotating leaked secrets (screencast cleanup)
+
+Two secrets can leak by simply being on screen: the push monitor's URL (Kuma
+shows it in full on the monitor page) and the health key in a
+`?format=json&key=…` monitor URL. Neither lets anyone *read* your metrics —
+the push token only lets a sender **write** beats (fake "up"s masking a real
+outage), and the health key gates the metrics JSON. If either has been shown
+in a recording or screenshot, press **`r` in the `m` overlay** right after:
+
+- A fresh push token is **edited into the existing push monitor** — same
+  monitor row, so heartbeat history, uptime stats, and notification wiring
+  survive (nothing is deleted or re-created) — and the heartbeat cron is
+  rewritten to the new URL. The old push URL stops accepting beats immediately.
+- A fresh health key is re-seeded into the vanity page (the old key starts
+  returning `403`), and any Kuma monitor whose URL still embeds the old key
+  (recipe 4 above) is re-keyed automatically.
+
+Rotation is confirm-gated and works without a Kuma connection too — then only
+the health key rotates, and the push token is left for when you connect.
+Expect at most one or two missed heartbeats during the swap; the push
+monitor's retries absorb them without alerting.

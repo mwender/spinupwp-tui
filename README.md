@@ -129,6 +129,10 @@ Once you're in, the dashboard looks like this:
   Health view, and reboots automatically open a Kuma maintenance window so
   planned downtime never pages you. Regular sites get a homepage monitor
   (up/down + cert-expiry alerts) — client site files are never touched.
+  Showed a push URL or health key on a screencast? `r` in the `m` overlay
+  **rotates both secrets in place** — the old ones die immediately, the Kuma
+  monitor (and its history) survives. Vanity sites are marked `⌂` in the
+  Servers tab so they never hide among domain-named servers' sites.
   (See `docs/uptime-kuma.md` for recipes.)
 - **Completion toasts** — background writes that take a while (a PHP upgrade, a
   server reboot/restart, resolving your fleet's DNS) raise a non-focus-stealing
@@ -284,7 +288,7 @@ These can be set in `config.json` or via an environment variable:
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `H` | Enable / disable HTTPS on a site (Servers / Stacks / Search; needs a Read/Write token) |
 | `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
-| `m` | Site monitoring via Uptime Kuma — connect, add monitors, refresh a vanity page (Servers tab, sites pane) |
+| `m` | Site monitoring via Uptime Kuma — connect, add monitors, refresh a vanity page, rotate secrets (Servers tab, sites pane) |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
 | `V` | Add a vanity site at the server's own hostname — DNS + site + HTTPS + SSH-key handoff (Servers tab; offered when no hostname site exists; needs a Read/Write token) |

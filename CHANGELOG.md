@@ -11,6 +11,21 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Rotate monitoring secrets (`r` in the `m` overlay, vanity sites).** Made for
+  screencasts: record with the push URL or metrics-JSON key on screen, then press
+  `r` right after and both secrets die. A new push token is edited into the
+  *existing* Kuma push monitor — same monitor row, so heartbeat history, uptime
+  stats and notification wiring all survive (no delete/re-create) — the heartbeat
+  cron is rewritten to the new URL over SSH, a new health key is re-seeded into
+  the vanity page, and any Kuma monitor URL still carrying the old key (the
+  JSON-query recipe) is re-keyed automatically. Confirm-gated; works without a
+  Kuma connection too (then just the health key rotates).
+- **Vanity sites stand out in the Servers tab.** The server's own vanity/health
+  page is marked with a `⌂` glyph and brand-green tint in the sites list — with
+  servers named like domains (the vanity convention), it otherwise hides among
+  regular sites.
+
 ## [0.14.0] - 2026-07-03
 
 ### Added

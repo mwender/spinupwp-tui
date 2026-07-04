@@ -17,6 +17,7 @@ import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl, siteWebUrl } from "../../lib/spinupweb.ts"
 import { useStore, isServerOpInFlight } from "../store.tsx"
+import { isVanityPair } from "../../lib/vanitySite.ts"
 
 type Focus = "servers" | "sites"
 
@@ -293,10 +294,18 @@ export function Browser({ rows }: { rows: number }) {
               const updates = (s.wp_plugin_updates || 0) + (s.wp_theme_updates || 0) + (s.wp_core_update ? 1 : 0)
               const stack = classifyStack(s)
               const keyKinds = grantedKeyKinds(s.id)
+              // The server's own vanity/health page blends in perfectly when servers
+              // are named like domains — mark it (⌂ + brand tint) so it can't hide.
+              const vanity = !!server && isVanityPair(s.domain, server.name)
               return (
                 <>
                   <text content={statusDot(s.status) + " "} fg={statusColor(s.status)} style={{ flexShrink: 0 }} />
-                  <text content={truncate(s.domain, 40)} fg={selected ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+                  <text
+                    content={truncate((vanity ? "⌂ " : "") + s.domain, 40)}
+                    fg={selected ? theme.text : vanity ? theme.brand : theme.textDim}
+                    wrapMode="none"
+                    style={{ flexGrow: 1, flexShrink: 1 }}
+                  />
                   <SiteMetaCell linked={localLinks.has(s.id)} updates={updates} personalKey={keyKinds.personal > 0} machineKey={keyKinds.machine > 0} selected={selected} />
                   <text content={stackTag(stack) + " "} fg={stackColor(stack, selected)} style={{ flexShrink: 0 }} />
                   <PhpVersionCell version={s.php_version} upgrade={phpUpgrades.get(s.id)} selected={selected} />

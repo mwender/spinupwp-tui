@@ -50,6 +50,7 @@ interface Ack {
   maintenanceID?: number
   token?: string
   tokenRequired?: boolean
+  monitor?: KumaMonitor // getMonitor's payload
   data?: unknown
 }
 
@@ -245,6 +246,21 @@ export class KumaClient {
     return res.monitorID
   }
 
+  // The full monitor row (getMonitor returns more fields than the monitorList
+  // broadcast) — the shape editMonitor expects back, so rotate flows round-trip it.
+  async getMonitor(id: number): Promise<KumaMonitor> {
+    const res = await this.must("getMonitor", id)
+    if (!res.monitor) throw new KumaError("Kuma didn't return the monitor.")
+    return res.monitor
+  }
+
+  // Save changes to an existing monitor IN PLACE — same id, so heartbeat history,
+  // uptime stats and notification wiring all survive. Callers pass a full monitor
+  // object from getMonitor (Kuma's own edit dialog does the same round-trip).
+  async editMonitor(monitor: Record<string, unknown>): Promise<void> {
+    await this.must("editMonitor", monitor)
+  }
+
   async pauseMonitor(id: number): Promise<void> {
     await this.must("pauseMonitor", id)
   }
@@ -364,6 +380,29 @@ export async function registerMonitors(
     })(),
   ])
   return { healthId, pushId, pushToken: opts.wantPush ? pushToken : undefined }
+}
+
+// Swap a push monitor's token in place — the old push URL stops accepting beats
+// the moment this lands, but the monitor row (and its history) is untouched.
+export async function rotatePushToken(kuma: KumaClient, pushId: number, newToken: string): Promise<void> {
+  const mon = await kuma.getMonitor(pushId)
+  await kuma.editMonitor({ ...mon, pushToken: newToken })
+}
+
+// Repoint any monitor whose URL embeds the old health key (the JSON-query recipe
+// in docs/uptime-kuma.md bakes it into the query string) at the new key, so a
+// key rotation doesn't silently kill hand-made threshold monitors. Returns how
+// many were updated. Keys shorter than 8 chars are refused — too much risk of
+// matching an unrelated URL fragment.
+export async function retargetHealthKeyMonitors(kuma: KumaClient, oldKey: string, newKey: string): Promise<number> {
+  if (oldKey.length < 8) return 0
+  const monitors = await kuma.getMonitors()
+  const hits = monitors.filter((m) => typeof m.url === "string" && m.url.includes(oldKey))
+  for (const m of hits) {
+    const full = await kuma.getMonitor(m.id)
+    await kuma.editMonitor({ ...full, url: String(full.url).split(oldKey).join(newKey) })
+  }
+  return hits.length
 }
 
 // Connect → login → run → always disconnect. Returns the (possibly refreshed) JWT
