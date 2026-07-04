@@ -9,6 +9,9 @@
 //     + load push monitors and installs the heartbeat cron.
 //   - `a` registers monitors for this site (vanity: healthz + load push + cron;
 //     regular site: homepage monitor only — client site files are never touched).
+//   - `r` (vanity, confirm-gated) rotates the monitoring secrets: new push token
+//     edited into the existing monitor (history kept), cron rewritten, new health
+//     key re-seeded — so secrets shown on a screencast can be killed right after.
 //   - The connect form verifies by actually logging in before anything persists;
 //     the minted JWT is stored so later sessions (and 2FA accounts) log in by
 //     token. Env-sourced connections (SPINUP_KUMA_*) never see the form.
@@ -27,7 +30,7 @@ const BASE_FIELDS = ["url", "username", "password"] as const
 const INPUT_W = 52
 
 export function KumaSite() {
-  const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, servers, setInputMode } = useStore()
+  const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, servers, setInputMode } = useStore()
 
   const [draft, setDraft] = useState({ url: "", username: "", password: "" })
   const [fieldIdx, setFieldIdx] = useState(0)
@@ -35,6 +38,9 @@ export function KumaSite() {
   const [error, setError] = useState<string | null>(null)
   const [connectedVersion, setConnectedVersion] = useState<string | null>(null)
   const [showConnect, setShowConnect] = useState(false)
+  // `r` arms a confirm (rotation kills the live push URL / health key the moment
+  // it fires — never do that on a stray keypress); y/⏎ fires, Esc disarms.
+  const [confirmRotate, setConfirmRotate] = useState(false)
   // 2FA: revealed only after Kuma answers `tokenRequired` to a correct password.
   // The code is used once — the stored JWT covers every later login.
   const [needsTwofa, setNeedsTwofa] = useState(false)
@@ -112,7 +118,16 @@ export function KumaSite() {
       if (name === "up") return setFieldIdx((i) => Math.max(i - 1, 0))
       return
     }
+    if (confirmRotate) {
+      if ((name === "y" || name === "return") && site) {
+        setConfirmRotate(false)
+        return startKumaRotate(site)
+      }
+      if (name === "escape" || name === "n" || name === "q") return setConfirmRotate(false)
+      return
+    }
     if (name === "c") return setShowConnect(true)
+    if (name === "r" && isVanity && site && op?.status !== "running") return setConfirmRotate(true)
     if (name === "a" && site && op?.status !== "running") {
       if (!kumaConfigured) return setShowConnect(true) // monitors need a connection
       return startKumaSetup(site)
@@ -204,7 +219,15 @@ export function KumaSite() {
           <Field label="Kuma" value={kumaConfigured ? "connected · c to reconnect" : "not connected · c"} valueColor={kumaConfigured ? theme.good : theme.textFaint} />
           <Field label="Monitors" value={registered ? `registered${registered.pushId ? " (healthz + load push)" : ""}` : "not registered yet"} />
           <box style={{ height: 1 }} />
-          {op?.status === "running" ? (
+          {confirmRotate ? (
+            <>
+              <text content="Rotate this site's monitoring secrets?" fg={theme.warn} wrapMode="none" />
+              <text content="A new push URL and health key are minted; the old ones stop" fg={theme.textDim} wrapMode="none" />
+              <text content="working immediately. Kuma monitor history is kept." fg={theme.textDim} wrapMode="none" />
+              <box style={{ height: 1 }} />
+              <text content="y / ⏎ rotate · esc cancel" fg={theme.textFaint} wrapMode="none" />
+            </>
+          ) : op?.status === "running" ? (
             <box style={{ flexDirection: "row" }}>
               <Spinner />
               <text content={`  ${op.detail}`} fg={theme.textDim} wrapMode="none" />
@@ -225,6 +248,7 @@ export function KumaSite() {
                 fg={theme.textDim}
                 wrapMode="none"
               />
+              <text content="r — rotate secrets: new push URL + health key (old ones die)" fg={theme.textDim} wrapMode="none" />
             </>
           ) : (
             <text content={kumaConfigured ? "a — register a homepage monitor in Uptime Kuma" : "a — register a homepage monitor (connects Uptime Kuma first)"} fg={theme.textDim} wrapMode="none" />
@@ -236,9 +260,11 @@ export function KumaSite() {
 
   function hints() {
     if (connecting) return [{ key: "⏎", label: "next / connect" }, { key: "esc", label: "back" }]
+    if (confirmRotate) return [{ key: "y/⏎", label: "rotate" }, { key: "esc", label: "cancel" }]
     if (op?.status === "running") return [{ key: "esc", label: "background" }]
     const base: { key: string; label: string }[] = []
     if (isVanity) base.push({ key: "R", label: kumaConfigured ? "refresh page + monitors" : "refresh page" })
+    if (isVanity) base.push({ key: "r", label: "rotate secrets" })
     base.push({ key: "a", label: registered ? "repair monitors" : "add monitors" })
     base.push({ key: "c", label: kumaConfigured ? "reconnect Kuma" : "connect Kuma" })
     return [...base, { key: "esc", label: "close" }]

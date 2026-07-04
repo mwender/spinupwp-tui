@@ -41,7 +41,7 @@ import {
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
 import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, aRecordResolves, isVanityPair } from "../lib/vanitySite.ts"
-import { withKuma, KumaClient, registerMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
+import { withKuma, KumaClient, registerMonitors, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
@@ -523,6 +523,7 @@ interface StoreValue extends DataState {
   kumaMonitorFor: (domain: string) => KumaMonitorRef | null // monitors Spinup registered for a domain
   startKumaSetup: (site: Site, opts?: { reseed?: boolean }) => void
   startVanityReseed: (site: Site) => void // refresh an existing vanity page (no Kuma needed)
+  startKumaRotate: (site: Site) => void // rotate the push token + health key (vanity; old URLs die immediately)
   kumaStatus: Map<string, KumaDomainStatus> // live per-domain status, refreshed every minute
   // Clone a server to a new server (item 5). `cloneServer` opens the wizard; `cloneJob`
   // is the (Plan-draft then running) job whose heavy work lives in its `sites[]` vector.
@@ -2549,6 +2550,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return key
   }, [])
 
+  // Deliberately break the stable-key rule above: mint a NEW key (the rotate
+  // action's whole point — a key shown on a screencast must stop working).
+  // Callers re-seed the page and retarget key-bearing monitor URLs afterwards.
+  const rotateVanityHealthKey = useCallback((domain: string): { oldKey: string | null; newKey: string } => {
+    const keys = { ...cfgRef.current.vanityHealthKeys }
+    const oldKey = keys[domain] ?? null
+    const newKey = crypto.randomUUID().replace(/-/g, "")
+    keys[domain] = newKey
+    cfgRef.current.vanityHealthKeys = keys
+    void saveConfig({ vanityHealthKeys: keys })
+    return { oldKey, newKey }
+  }, [])
+
   // Keep the Kuma JWT fresh so later sessions log in by token (2FA-friendly).
   // The env-sourced connection is never overwritten.
   const persistKumaAuth = useCallback((conn: UptimeKumaConn, jwt: string) => {
@@ -3054,6 +3068,60 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void run()
     },
     [servers, reseedVanityPage, persistKumaAuth, persistKumaMonitors],
+  )
+
+  // Rotate a vanity site's monitoring secrets — the "clean up after a screencast"
+  // action. A new push token is edited into the EXISTING push monitor (same row:
+  // history, uptime stats and notifications survive), the heartbeat cron is
+  // rewritten to the new URL, a new health key is re-seeded into the page, and any
+  // monitor URL still carrying the old key is retargeted. Each old secret is dead
+  // the moment its step lands. Works without a Kuma connection too — then only
+  // the health key rotates (there's no push monitor to edit).
+  const startKumaRotate = useCallback(
+    (site: Site) => {
+      const server = servers.find((s) => s.id === site.server_id)
+      if (!server || !isVanityPair(site.domain, server.name)) return
+      const setOp = (op: KumaOp) => setKumaOps((prev) => new Map(prev).set(site.id, op))
+      if (!server.ip_address) {
+        setOp({ status: "error", detail: "", error: "The server has no IP address yet — wait for provisioning to finish." })
+        return
+      }
+      const conn = cfgRef.current.uptimeKuma
+      const domain = site.domain
+      const known = cfgRef.current.kumaMonitors[domain] ?? {}
+      const ssh = { host: server.ip_address ?? "", user: site.site_user ?? deriveSiteUser(domain), port: server.ssh_port ?? null }
+      const run = async () => {
+        try {
+          setOp({ status: "running", detail: "Minting a new health key + re-publishing the page…" })
+          const { oldKey, newKey } = rotateVanityHealthKey(domain)
+          const seed = await seedVanityIndex({ ...ssh, domain, publicFolder: site.public_folder, healthKey: newKey })
+          if (!seed.ok) throw new Error(seed.error || "Couldn't re-seed the page over SSH.")
+          if (!conn || isDevMode() || known.pushId == null) {
+            setOp({
+              status: "done",
+              detail: conn && !isDevMode() ? "Health key rotated (no push monitor registered — a adds one)." : "Health key rotated. Connect Uptime Kuma to rotate the push token too.",
+            })
+            return
+          }
+          setOp({ status: "running", detail: "Rotating the push token in Uptime Kuma…" })
+          const newToken = genPushToken()
+          const { result: retargeted, jwt } = await withKuma(conn, async (kuma) => {
+            await rotatePushToken(kuma, known.pushId!, newToken)
+            return oldKey ? retargetHealthKeyMonitors(kuma, oldKey, newKey) : 0
+          })
+          persistKumaAuth(conn, jwt)
+          persistKumaMonitors(domain, { ...known, pushToken: newToken })
+          setOp({ status: "running", detail: "Rewriting the heartbeat cron…" })
+          const cron = await seedVanityPushCron({ ...ssh, kumaUrl: conn.url, pushToken: newToken })
+          if (!cron.ok) throw new Error(cron.error || "Couldn't rewrite the heartbeat cron.")
+          setOp({ status: "done", detail: `Secrets rotated — the old push URL & health key are dead${retargeted ? ` (${retargeted} monitor URL${retargeted === 1 ? "" : "s"} re-keyed)` : ""}.` })
+        } catch (err) {
+          setOp({ status: "error", detail: "", error: (err as Error).message })
+        }
+      }
+      void run()
+    },
+    [servers, rotateVanityHealthKey, persistKumaAuth, persistKumaMonitors],
   )
 
   // ---- Clone a server to a new server (item 5) -----------------------------
@@ -3790,6 +3858,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     kumaMonitorFor,
     startKumaSetup,
     startVanityReseed,
+    startKumaRotate,
     kumaStatus,
     cloneServer,
     setCloneServer,
