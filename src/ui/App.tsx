@@ -94,6 +94,20 @@ export function App() {
     // Ctrl+C always quits, even while typing.
     if (key.ctrl && key.name === "c") return quit()
 
+    // Help/Explain must close even while a text field is focused (they can open
+    // a beat BEFORE a view's input grabs focus — e.g. `4` then typing a name
+    // containing `i` faster than Search mounts — and the inputMode gate below
+    // would otherwise deadlock them open, since the overlay also deactivates the
+    // view's own handler).
+    if (showHelp) {
+      if (key.name === "escape" || key.name === "q" || key.name === "?") setShowHelp(false)
+      return
+    }
+    if (showExplain) {
+      if (key.name === "escape" || key.name === "q" || key.name === "i") setShowExplain(false)
+      return
+    }
+
     // While a text field is focused, let it consume everything else.
     if (store.inputMode) return
 
@@ -159,16 +173,6 @@ export function App() {
 
     // The site-monitoring (Uptime Kuma) overlay owns the keyboard while open.
     if (store.kumaSite) return
-
-    if (showHelp) {
-      if (key.name === "escape" || key.name === "q" || key.name === "?") setShowHelp(false)
-      return
-    }
-
-    if (showExplain) {
-      if (key.name === "escape" || key.name === "q" || key.name === "i") setShowExplain(false)
-      return
-    }
 
     switch (key.name) {
       case "q":

@@ -109,6 +109,11 @@ export interface KumaMonitorRef {
   healthId?: number // HTTP monitor on /?healthz
   pushId?: number // push monitor fed by the server-side load cron
   pushToken?: string
+  fingerprintId?: number // keyword monitor asserting the front page serves its own template
+  // What fingerprint calibration derived (lib/siteFingerprint.ts) — shown in the
+  // overlay and kept so a recalibration can explain what it's replacing.
+  // `interval` is the check window in seconds.
+  fingerprint?: { keyword: string; kind: string; detail: string; interval: number; derivedAt: string }
 }
 
 // A long-running, fire-and-forget job persisted across restarts so the app can

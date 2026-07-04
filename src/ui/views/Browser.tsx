@@ -111,7 +111,10 @@ export function Browser({ rows }: { rows: number }) {
         if (focus === "sites" && sites[siteIndex]) setPurgeCacheSite(sites[siteIndex])
         return
       case "m":
+      case "M":
         // Uptime Kuma monitoring for the selected site (connect on first use).
+        // M is an alias: it's the binding Search/Stacks use (their lowercase m
+        // is taken), so the capital works everywhere.
         if (focus === "sites" && sites[siteIndex]) setKumaSite(sites[siteIndex])
         return
       case "K":
