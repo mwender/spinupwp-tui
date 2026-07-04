@@ -40,7 +40,7 @@ import {
 } from "../lib/providers.ts"
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
-import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, aRecordResolves, isVanityPair } from "../lib/vanitySite.ts"
+import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, probeServerRedis, aRecordResolves, isVanityPair } from "../lib/vanitySite.ts"
 import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, setMonitorNotifications, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
 import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
@@ -216,6 +216,9 @@ export interface KumaDomainStatus {
   // false means "answering 200 but serving the WRONG page" — a distinct, worse
   // signal than down, and it must not be averaged away by a healthy up/down beat.
   fingerprintUp: boolean | null
+  // The server's Redis sentinel (vanity domains only): false = the cron reports
+  // Redis unreachable while the server itself is beating fine.
+  redisUp: boolean | null
 }
 
 // Clone a server to a new server (backlog item 5). Five server-level steps wrapping
@@ -2939,7 +2942,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // very maintenance windows we create around reboots).
           const beatUp = (s: number) => s !== 0
           for (const [domain, ref] of Object.entries(cfgRef.current.kumaMonitors)) {
-            const status: KumaDomainStatus = { up: null, uptime24: null, responseBeats: [], loadBeats: [], lastLoad: null, fingerprintUp: null }
+            const status: KumaDomainStatus = { up: null, uptime24: null, responseBeats: [], loadBeats: [], lastLoad: null, fingerprintUp: null, redisUp: null }
             if (ref.healthId && byId.has(ref.healthId)) {
               const beats = kuma.beatsFor(ref.healthId)
               const last = beats[beats.length - 1]
@@ -2960,6 +2963,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               const beats = kuma.beatsFor(ref.fingerprintId)
               const last = beats[beats.length - 1]
               status.fingerprintUp = last ? beatUp(last.status) : null
+            }
+            if (ref.redisId && byId.has(ref.redisId)) {
+              const beats = kuma.beatsFor(ref.redisId)
+              const last = beats[beats.length - 1]
+              status.redisUp = last ? beatUp(last.status) : null
             }
             map.set(domain, status)
           }
@@ -3076,10 +3084,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const run = async () => {
         try {
           const domain = site.domain
+          const ssh = { host: server?.ip_address ?? "", user: site.site_user ?? deriveSiteUser(domain), port: server?.ssh_port ?? null }
           if (isVanity && opts.reseed && server) {
             setOp({ status: "running", detail: "Publishing the updated page…" })
             const seed = await reseedVanityPage(site, server)
             if (!seed.ok) throw new Error(seed.error || "Couldn't re-seed the page over SSH.")
+          }
+          // The Redis sentinel is server-wide, so it rides the vanity treatment.
+          // Probe redis-cli BEFORE creating its monitor: a box where Redis isn't
+          // answerable would otherwise get a monitor that's red forever.
+          let wantRedis = false
+          let redisNote: string | null = null
+          if (isVanity && server) {
+            setOp({ status: "running", detail: "Checking Redis on the server…" })
+            const probe = await probeServerRedis(ssh)
+            wantRedis = probe.ok
+            if (!probe.ok) redisNote = probe.error ?? "Redis sentinel skipped."
           }
           setOp({ status: "running", detail: "Registering monitors in Uptime Kuma…" })
           const known = cfgRef.current.kumaMonitors[domain] ?? {}
@@ -3087,16 +3107,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // on an http-only site would be permanently down.
           const proto = site.https?.enabled ? "https" : "http"
           const { result, jwt } = await withKuma(conn, (kuma) =>
-            registerMonitors(kuma, domain, { proto, healthzPath: isVanity ? "/?healthz" : "/", wantPush: isVanity, known }),
+            registerMonitors(kuma, domain, { proto, healthzPath: isVanity ? "/?healthz" : "/", wantPush: isVanity, wantRedis, known }),
           )
           persistKumaAuth(conn, jwt)
-          persistKumaMonitors(domain, { healthId: result.healthId, pushId: result.pushId ?? known.pushId, pushToken: result.pushToken ?? known.pushToken })
+          persistKumaMonitors(domain, {
+            ...known,
+            healthId: result.healthId,
+            pushId: result.pushId ?? known.pushId,
+            pushToken: result.pushToken ?? known.pushToken,
+            redisId: result.redisId ?? known.redisId,
+            redisToken: result.redisToken ?? known.redisToken,
+          })
           if (isVanity && result.pushId && result.pushToken && server) {
             setOp({ status: "running", detail: "Installing the heartbeat cron…" })
-            const cron = await seedVanityPushCron({ host: server.ip_address ?? "", user: site.site_user ?? deriveSiteUser(domain), port: server.ssh_port ?? null, kumaUrl: conn.url, pushToken: result.pushToken })
+            const cron = await seedVanityPushCron({ ...ssh, kumaUrl: conn.url, pushToken: result.pushToken, redisToken: result.redisId != null ? (result.redisToken ?? known.redisToken ?? null) : null })
             if (!cron.ok) throw new Error(cron.error || "Couldn't install the heartbeat cron.")
           }
-          setOp({ status: "done", detail: isVanity ? "Monitors live: healthz checks + load graph (cron beating every minute)." : "Monitor live: homepage checks + certificate-expiry alerts." })
+          setOp({
+            status: "done",
+            detail: isVanity
+              ? `Monitors live: healthz checks + load graph${result.redisId != null ? " + Redis sentinel" : ""} (cron beating every minute).${redisNote ? ` ${redisNote}` : ""}`
+              : "Monitor live: homepage checks + certificate-expiry alerts.",
+          })
         } catch (err) {
           setOp({ status: "error", detail: "", error: (err as Error).message })
         }
@@ -3247,14 +3279,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           setOp({ status: "running", detail: "Rotating the push token in Uptime Kuma…" })
           const newToken = genPushToken()
+          // The Redis sentinel has its own push URL — rotate it in the same pass
+          // so no cron-embedded secret survives the rotation.
+          const newRedisToken = known.redisId != null ? genPushToken() : null
           const { result: retargeted, jwt } = await withKuma(conn, async (kuma) => {
             await rotatePushToken(kuma, known.pushId!, newToken)
+            if (known.redisId != null && newRedisToken) await rotatePushToken(kuma, known.redisId, newRedisToken)
             return oldKey ? retargetHealthKeyMonitors(kuma, oldKey, newKey) : 0
           })
           persistKumaAuth(conn, jwt)
-          persistKumaMonitors(domain, { ...known, pushToken: newToken })
+          persistKumaMonitors(domain, { ...known, pushToken: newToken, redisToken: newRedisToken ?? known.redisToken })
           setOp({ status: "running", detail: "Rewriting the heartbeat cron…" })
-          const cron = await seedVanityPushCron({ ...ssh, kumaUrl: conn.url, pushToken: newToken })
+          const cron = await seedVanityPushCron({ ...ssh, kumaUrl: conn.url, pushToken: newToken, redisToken: newRedisToken })
           if (!cron.ok) throw new Error(cron.error || "Couldn't rewrite the heartbeat cron.")
           setOp({ status: "done", detail: `Secrets rotated — the old push URL & health key are dead${retargeted ? ` (${retargeted} monitor URL${retargeted === 1 ? "" : "s"} re-keyed)` : ""}.` })
         } catch (err) {

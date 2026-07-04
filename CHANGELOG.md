@@ -69,6 +69,20 @@ versions; such changes are called out here.
   or protect their login answer 401/403/404 and are reported as "can't judge",
   never false-alarmed. Both produce the `partial-outage` verdict with a runbook
   pointing at the site's error logs and the server's Redis monitor.
+- **Server-wide Redis sentinel — site monitoring Phase 3a.** The vanity
+  heartbeat cron gains a second marker-managed line: `redis-cli ping` every
+  minute, pushed to a new `{server} redis` monitor in Kuma that alerts
+  independently (and rides the `r` secret rotation like everything else).
+  Registered automatically by `a`/`R` on a vanity site — after probing that
+  Redis actually answers on that box, so a Redis-less server never gets a
+  permanently-red monitor. A red sentinel while the server beats fine surfaces
+  as `REDIS DOWN` on the server's Details row. Live-verified the full cycle on
+  the test box: stop redis → down beat within the minute → restart → recovery
+  beat. That test also surfaced why this matters more than expected: with
+  SpinupWP's default object-cache drop-in, Redis being down is **fatal (HTTP
+  500) for every request that misses the page cache** — cached pages keep
+  serving 200, so page-watching monitors sleep through a real partial outage
+  that this sentinel catches in a minute.
 
 ### Fixed
 - **The site-monitoring overlay no longer gets stuck on a finished op's
