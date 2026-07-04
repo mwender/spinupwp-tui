@@ -11,6 +11,33 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Front-page check (`f` in the site-monitoring overlay) — site monitoring
+  Phase 1.** Catches the failure plain up/down monitors sleep through: the page
+  cache serving the *wrong page* while HTTP stays 200 (two real incidents showed
+  a search-results template where the home page belonged). Instead of a
+  hand-picked headline keyword — which breaks the day someone edits the copy —
+  Spinup reads the live front page while it's healthy and derives a
+  *template-identity* fingerprint (WP's `body_class()` output: `home` /
+  `page-id-N` / `front-page`, falling back to the canonical link), validates it
+  against a throwaway search render to prove it actually discriminates, and
+  registers an Uptime Kuma keyword monitor asserting it. Check window is
+  selectable (5m default · 15m · 30m · 1h — the fetch is served straight from
+  the page cache, so even 5m costs the site nothing). Re-running `f`
+  recalibrates the *existing* monitor row in place (history and notification
+  wiring survive a redesign). A failing check surfaces as `WRONG PAGE SERVED`
+  in the site's Details pane and the overlay.
+- **`M` opens site monitoring from every site view.** Search and Stacks now bind
+  capital `M` (their lowercase `m` was taken by media fallback); the Servers tab
+  keeps `m` and gains `M` as an alias, so one muscle-memory key works everywhere.
+
+### Fixed
+- **Help/Explain overlays could deadlock open over a focused input.** Opening
+  `?` or `i` in the beat before a view's text input grabbed focus (easy to hit
+  by typing fast right after switching to Search) left an overlay that Esc
+  couldn't close — the global handler bailed on `inputMode` before reaching the
+  overlay's dismiss keys. Dismissal is now checked first.
+
 ## [0.15.0] - 2026-07-04
 
 ### Added

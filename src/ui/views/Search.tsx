@@ -34,7 +34,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -190,6 +190,11 @@ export function Search({ rows }: { rows: number }) {
           else setMediaFallbackSite(current.site)
         }
         return
+      case "M":
+        // Site monitoring (Uptime Kuma) — capital because lowercase m is media
+        // fallback here; M matches the same overlay's binding in Stacks.
+        if (current?.kind === "site") setKumaSite(current.site)
+        return
       case "n":
         // DNS inventory scoped to this site (its domains + records) — the migrate
         // lens for moving one site to another server.
@@ -256,6 +261,7 @@ export function Search({ rows }: { rows: number }) {
             { key: "d", label: "DB backup" },
             ...(localSync ? [{ key: "p", label: "pull to local" }] : []),
             ...(current?.kind === "site" && current.site.is_wordpress && localLinks.has(current.site.id) ? [{ key: "m", label: "media fallback" }] : []),
+            { key: "M", label: "monitoring" },
             { key: "a", label: "server actions" },
             { key: "←/esc", label: "back" },
           ]
@@ -395,6 +401,7 @@ function siteGroups(isWordpress: boolean, localSync: boolean): ActionGroup[] {
   remote.push(["u", "Upgrade PHP version"])
   remote.push(["H", "Enable/disable HTTPS"])
   remote.push(["P", "Purge page + object cache"])
+  remote.push(["M", "Monitoring (Uptime Kuma + front-page check)"])
   return [
     { title: "Open", items: [["o", "Open site in browser"], ["w", "Open in SpinupWP"]] },
     { title: "Remote", items: remote },

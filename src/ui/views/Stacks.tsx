@@ -49,7 +49,7 @@ const NONWP_SUBS: { kind: ProbeKind | null; label: string }[] = [
 
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite } =
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite, setKumaSite } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
@@ -177,6 +177,11 @@ export function Stacks({ rows }: { rows: number }) {
       case "P":
         // Purge page cache + object cache on the selected site (sites pane only).
         if (focus === "sites" && groupSites[siteIndex]) setPurgeCacheSite(groupSites[siteIndex])
+        return
+      case "M":
+        // Site monitoring (Uptime Kuma) — capital to match Search, where
+        // lowercase m means media fallback.
+        if (focus === "sites" && groupSites[siteIndex]) setKumaSite(groupSites[siteIndex])
         return
       case "t":
         // Open the selected site's local working copy in a terminal (inline; no

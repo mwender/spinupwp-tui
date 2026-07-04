@@ -117,16 +117,21 @@ export const SERVER_CONTROL: ActionGroup[] = [
 export function SiteDetail({ site, serverName }: { site: Site; serverName: string }) {
   const { probes, probingIds, isProbeStale, phpUpgrades, httpsToggles, purgeCacheProgress, localLinks, grantedKeyKinds, kumaStatus, kumaMonitorFor } = useStore()
   const kuma = kumaStatus.get(site.domain)
+  // The fingerprint check failing while HTTP is up means the site is answering
+  // 200 with the WRONG page (stale/corrupt page cache) — a distinct, worse state
+  // than down, so it outranks the plain up/down wording.
   const kumaValue = kuma
     ? kuma.up === false
       ? "DOWN"
-      : kuma.up
-        ? `up${kuma.uptime24 != null ? ` · ${(kuma.uptime24 * 100).toFixed(2)}% (24h)` : ""}`
-        : "no beats yet"
+      : kuma.fingerprintUp === false
+        ? "up · WRONG PAGE SERVED (M)"
+        : kuma.up
+          ? `up${kuma.uptime24 != null ? ` · ${(kuma.uptime24 * 100).toFixed(2)}% (24h)` : ""}`
+          : "no beats yet"
     : kumaMonitorFor(site.domain)
       ? "registered · awaiting poll"
-      : "not monitored · m (Servers)" // `m` means media fallback in Search — scope the teach
-  const kumaColor = kuma ? (kuma.up === false ? theme.bad : kuma.up ? theme.good : theme.textDim) : theme.textFaint
+      : "not monitored · M"
+  const kumaColor = kuma ? (kuma.up === false || kuma.fingerprintUp === false ? theme.bad : kuma.up ? theme.good : theme.textDim) : theme.textFaint
   const httpsProgress = httpsToggles.get(site.id)
   const purgeProgress = purgeCacheProgress.get(site.id)
   const updates = (site.wp_plugin_updates || 0) + (site.wp_theme_updates || 0) + (site.wp_core_update ? 1 : 0)

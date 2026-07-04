@@ -9,6 +9,11 @@
 //     + load push monitors and installs the heartbeat cron.
 //   - `a` registers monitors for this site (vanity: healthz + load push + cron;
 //     regular site: homepage monitor only — client site files are never touched).
+//   - `f` (regular sites) calibrates the front-page check: reads the live front
+//     page, derives a template fingerprint (body class / canonical — survives
+//     copy edits), and registers a Kuma keyword monitor asserting it at a chosen
+//     window. Catches "the cache is serving the wrong page" (HTTP stays 200).
+//     Re-running recalibrates in place (monitor history survives a redesign).
 //   - `r` (vanity, confirm-gated) rotates the monitoring secrets: new push token
 //     edited into the existing monitor (history kept), cron rewritten, new health
 //     key re-seeded — so secrets shown on a screencast can be killed right after.
@@ -29,8 +34,18 @@ const BASE_FIELDS = ["url", "username", "password"] as const
 // padEnd(10)), so 52 fills the row — roomy enough that long URLs stay visible.
 const INPUT_W = 52
 
+// Check windows for the front-page fingerprint monitor. The check is one GET
+// served straight from nginx's page cache (no PHP), so even 5m costs the site
+// nothing — the window is really "how long a wrong page may go unnoticed".
+const FP_WINDOWS = [
+  { label: "5m", sec: 300 },
+  { label: "15m", sec: 900 },
+  { label: "30m", sec: 1800 },
+  { label: "1h", sec: 3600 },
+] as const
+
 export function KumaSite() {
-  const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, servers, setInputMode } = useStore()
+  const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, kumaStatus, servers, setInputMode } = useStore()
 
   const [draft, setDraft] = useState({ url: "", username: "", password: "" })
   const [fieldIdx, setFieldIdx] = useState(0)
@@ -41,6 +56,9 @@ export function KumaSite() {
   // `r` arms a confirm (rotation kills the live push URL / health key the moment
   // it fires — never do that on a stray keypress); y/⏎ fires, Esc disarms.
   const [confirmRotate, setConfirmRotate] = useState(false)
+  // `f` opens the front-page check-window picker; ⏎ calibrates & registers.
+  const [fpPick, setFpPick] = useState(false)
+  const [fpIdx, setFpIdx] = useState(0)
   // 2FA: revealed only after Kuma answers `tokenRequired` to a correct password.
   // The code is used once — the stored JWT covers every later login.
   const [needsTwofa, setNeedsTwofa] = useState(false)
@@ -126,7 +144,26 @@ export function KumaSite() {
       if (name === "escape" || name === "n" || name === "q") return setConfirmRotate(false)
       return
     }
+    if (fpPick) {
+      if (name === "left" || name === "up" || name === "h" || name === "k") return setFpIdx((i) => Math.max(i - 1, 0))
+      if (name === "right" || name === "down" || name === "l" || name === "j" || name === "tab") return setFpIdx((i) => Math.min(i + 1, FP_WINDOWS.length - 1))
+      if (/^[1-4]$/.test(name)) return setFpIdx(Number(name) - 1)
+      if (name === "return" && site) {
+        setFpPick(false)
+        return startFingerprintSetup(site, FP_WINDOWS[fpIdx]!.sec)
+      }
+      if (name === "escape" || name === "q") return setFpPick(false)
+      return
+    }
     if (name === "c") return setShowConnect(true)
+    if (name === "f" && !isVanity && site && op?.status !== "running") {
+      if (!kumaConfigured) return setShowConnect(true) // the check lives in Kuma
+      // Preselect the stored window on recalibration so ⏎⏎ keeps it.
+      const storedSec = registered?.fingerprint?.interval
+      const idx = FP_WINDOWS.findIndex((w) => w.sec === storedSec)
+      setFpIdx(idx >= 0 ? idx : 0)
+      return setFpPick(true)
+    }
     if (name === "r" && isVanity && site && op?.status !== "running") return setConfirmRotate(true)
     if (name === "a" && site && op?.status !== "running") {
       if (!kumaConfigured) return setShowConnect(true) // monitors need a connection
@@ -205,6 +242,15 @@ export function KumaSite() {
   }
 
   function renderMonitor() {
+    const fp = registered?.fingerprint
+    const fpUp = site ? (kumaStatus.get(site.domain)?.fingerprintUp ?? null) : null
+    const win = (sec: number) => (sec % 3600 === 0 ? `${sec / 3600}h` : `${Math.round(sec / 60)}m`)
+    const fpValue = fp
+      ? `${fp.detail} · every ${win(fp.interval)}${fpUp === false ? " · WRONG PAGE SERVED" : fpUp === true ? " · ok" : ""}`
+      : registered?.fingerprintId
+        ? "registered (details unknown) · f recalibrates"
+        : "not calibrated · f"
+    const fpColor = fpUp === false ? theme.bad : fp ? (fpUp === true ? theme.good : theme.text) : theme.textFaint
     return (
       <Panel title=" Site monitoring " active>
         <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>
@@ -217,9 +263,35 @@ export function KumaSite() {
           <Field label="Site" value={site!.domain} />
           <Field label="Kind" value={isVanity ? "vanity page (full server monitoring)" : "site homepage (up/down + cert expiry)"} />
           <Field label="Kuma" value={kumaConfigured ? "connected · c to reconnect" : "not connected · c"} valueColor={kumaConfigured ? theme.good : theme.textFaint} />
-          <Field label="Monitors" value={registered ? `registered${registered.pushId ? " (healthz + load push)" : ""}` : "not registered yet"} />
+          <Field
+            label="Monitors"
+            value={
+              registered?.healthId
+                ? `registered${registered.pushId ? " (healthz + load push)" : ""}`
+                : registered?.fingerprintId
+                  ? "front-page check only · a adds the up/down monitor"
+                  : "not registered yet"
+            }
+          />
+          {!isVanity && <Field label="Front page" value={fpValue} valueColor={fpColor} />}
           <box style={{ height: 1 }} />
-          {confirmRotate ? (
+          {fpPick ? (
+            <>
+              <text content="Front-page check — alerts when the wrong page is served." fg={theme.text} wrapMode="none" />
+              <text content="Reads the live page now (while it's healthy), derives a template" fg={theme.textDim} wrapMode="none" />
+              <text content="fingerprint (body class / canonical — survives copy edits), and" fg={theme.textDim} wrapMode="none" />
+              <text content="registers a Kuma keyword monitor asserting it." fg={theme.textDim} wrapMode="none" />
+              <box style={{ height: 1 }} />
+              <box style={{ flexDirection: "row" }}>
+                <text content="Check window:" fg={theme.textDim} style={{ flexShrink: 0 }} />
+                {FP_WINDOWS.map((w, i) => (
+                  <text key={w.label} content={i === fpIdx ? `  ▸${w.label}` : `   ${w.label}`} fg={i === fpIdx ? theme.brand : theme.textFaint} style={{ flexShrink: 0 }} />
+                ))}
+              </box>
+              <box style={{ height: 1 }} />
+              <text content="←/→ or 1-4 window · ⏎ calibrate & register · esc cancel" fg={theme.textFaint} wrapMode="none" />
+            </>
+          ) : confirmRotate ? (
             <>
               <text content="Rotate this site's monitoring secrets?" fg={theme.warn} wrapMode="none" />
               <text content="A new push URL and health key are minted; the old ones stop" fg={theme.textDim} wrapMode="none" />
@@ -251,7 +323,14 @@ export function KumaSite() {
               <text content="r — rotate secrets: new push URL + health key (old ones die)" fg={theme.textDim} wrapMode="none" />
             </>
           ) : (
-            <text content={kumaConfigured ? "a — register a homepage monitor in Uptime Kuma" : "a — register a homepage monitor (connects Uptime Kuma first)"} fg={theme.textDim} wrapMode="none" />
+            <>
+              <text content={kumaConfigured ? "a — register a homepage monitor in Uptime Kuma" : "a — register a homepage monitor (connects Uptime Kuma first)"} fg={theme.textDim} wrapMode="none" />
+              <text
+                content={registered?.fingerprintId ? "f — recalibrate the front-page check (e.g. after a redesign)" : "f — front-page check: alert when the wrong page is served"}
+                fg={theme.textDim}
+                wrapMode="none"
+              />
+            </>
           )}
         </box>
       </Panel>
@@ -261,11 +340,13 @@ export function KumaSite() {
   function hints() {
     if (connecting) return [{ key: "⏎", label: "next / connect" }, { key: "esc", label: "back" }]
     if (confirmRotate) return [{ key: "y/⏎", label: "rotate" }, { key: "esc", label: "cancel" }]
+    if (fpPick) return [{ key: "←/→", label: "window" }, { key: "⏎", label: "calibrate" }, { key: "esc", label: "cancel" }]
     if (op?.status === "running") return [{ key: "esc", label: "background" }]
     const base: { key: string; label: string }[] = []
     if (isVanity) base.push({ key: "R", label: kumaConfigured ? "refresh page + monitors" : "refresh page" })
     if (isVanity) base.push({ key: "r", label: "rotate secrets" })
     base.push({ key: "a", label: registered ? "repair monitors" : "add monitors" })
+    if (!isVanity) base.push({ key: "f", label: registered?.fingerprintId ? "recalibrate front page" : "front-page check" })
     base.push({ key: "c", label: kumaConfigured ? "reconnect Kuma" : "connect Kuma" })
     return [...base, { key: "esc", label: "close" }]
   }

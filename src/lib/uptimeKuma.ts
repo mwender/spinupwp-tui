@@ -349,6 +349,56 @@ export function loadPushMonitorPayload(name: string, pushToken: string): Record<
   }
 }
 
+// The front-page fingerprint monitor (site monitoring Phase 1): a `keyword`
+// monitor asserting the front page still carries the template-identity string
+// calibration derived (lib/siteFingerprint.ts). Catches "the page cache is
+// serving the wrong template" — a failure plain up/down monitors sleep through
+// (the real incidents answered 200 throughout). `interval` is the user-chosen
+// check window; the fetch is served straight from nginx's page cache, so even
+// the tightest window costs the site nothing.
+export function fingerprintMonitorPayload(name: string, url: string, keyword: string, interval: number): Record<string, unknown> {
+  return {
+    type: "keyword",
+    name,
+    url,
+    keyword,
+    method: "GET",
+    interval,
+    retryInterval: 60, // once suspect, confirm quickly regardless of the window
+    resendInterval: 0,
+    maxretries: 2, // two confirming failures before alerting — ride out one flaky fetch
+    timeout: 48,
+    accepted_statuscodes: ["200-299"],
+    expiryNotification: false, // the plain health monitor already owns cert expiry
+    ignoreTls: false,
+    upsideDown: false,
+    maxredirects: 10,
+  }
+}
+
+// Adopt-or-EDIT-or-create the fingerprint monitor for a domain. Unlike
+// registerMonitors (adopt-or-create only), an existing row is edited in place:
+// recalibrating after a redesign updates keyword/interval while the monitor id,
+// heartbeat history and notification wiring all survive (same philosophy as
+// rotatePushToken).
+export async function registerFingerprintMonitor(
+  kuma: KumaClient,
+  domain: string,
+  opts: { proto: "http" | "https"; keyword: string; interval: number; knownId?: number | null },
+): Promise<number> {
+  const name = `${domain} front page`
+  const url = `${opts.proto}://${domain}/`
+  const monitors = await kuma.getMonitors()
+  const byId = new Map(monitors.map((m) => [m.id, m]))
+  const existingId = (opts.knownId != null && byId.has(opts.knownId) ? opts.knownId : undefined) ?? monitors.find((m) => m.name === name)?.id
+  if (existingId != null) {
+    const full = await kuma.getMonitor(existingId)
+    await kuma.editMonitor({ ...full, type: "keyword", url, keyword: opts.keyword, interval: opts.interval })
+    return existingId
+  }
+  return kuma.addMonitor(fingerprintMonitorPayload(name, url, opts.keyword, opts.interval))
+}
+
 // Adopt-or-create the monitors for one domain — THE single implementation shared
 // by the vanity wizard's monitor step and the `m` overlay's add/repair, so the
 // two paths cannot drift. Rules:

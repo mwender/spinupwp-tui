@@ -41,7 +41,8 @@ import {
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
 import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, aRecordResolves, isVanityPair } from "../lib/vanitySite.ts"
-import { withKuma, KumaClient, registerMonitors, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
+import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
+import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
@@ -201,6 +202,10 @@ export interface KumaDomainStatus {
   responseBeats: number[]
   loadBeats: number[]
   lastLoad: number | null
+  // The front-page fingerprint monitor's last beat. Kept separate from `up`:
+  // false means "answering 200 but serving the WRONG page" — a distinct, worse
+  // signal than down, and it must not be averaged away by a healthy up/down beat.
+  fingerprintUp: boolean | null
 }
 
 // Clone a server to a new server (backlog item 5). Five server-level steps wrapping
@@ -524,6 +529,7 @@ interface StoreValue extends DataState {
   startKumaSetup: (site: Site, opts?: { reseed?: boolean }) => void
   startVanityReseed: (site: Site) => void // refresh an existing vanity page (no Kuma needed)
   startKumaRotate: (site: Site) => void // rotate the push token + health key (vanity; old URLs die immediately)
+  startFingerprintSetup: (site: Site, intervalSec: number) => void // calibrate + register the front-page fingerprint monitor
   kumaStatus: Map<string, KumaDomainStatus> // live per-domain status, refreshed every minute
   // Clone a server to a new server (item 5). `cloneServer` opens the wizard; `cloneJob`
   // is the (Plan-draft then running) job whose heavy work lives in its `sites[]` vector.
@@ -2920,7 +2926,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // very maintenance windows we create around reboots).
           const beatUp = (s: number) => s !== 0
           for (const [domain, ref] of Object.entries(cfgRef.current.kumaMonitors)) {
-            const status: KumaDomainStatus = { up: null, uptime24: null, responseBeats: [], loadBeats: [], lastLoad: null }
+            const status: KumaDomainStatus = { up: null, uptime24: null, responseBeats: [], loadBeats: [], lastLoad: null, fingerprintUp: null }
             if (ref.healthId && byId.has(ref.healthId)) {
               const beats = kuma.beatsFor(ref.healthId)
               const last = beats[beats.length - 1]
@@ -2936,6 +2942,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               const last = beats[beats.length - 1]
               status.lastLoad = last?.ping != null ? Number(last.ping) / LOAD_PUSH_SCALE : null
               if (status.up === null && last) status.up = beatUp(last.status)
+            }
+            if (ref.fingerprintId && byId.has(ref.fingerprintId)) {
+              const beats = kuma.beatsFor(ref.fingerprintId)
+              const last = beats[beats.length - 1]
+              status.fingerprintUp = last ? beatUp(last.status) : null
             }
             map.set(domain, status)
           }
@@ -3068,6 +3079,49 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void run()
     },
     [servers, reseedVanityPage, persistKumaAuth, persistKumaMonitors],
+  )
+
+  // Calibrate + register the front-page fingerprint monitor (site monitoring
+  // Phase 1). Reads the LIVE front page — presumed healthy right now — derives a
+  // template-identity keyword (body class / canonical; survives copy edits,
+  // unlike hand-picked headline keywords), and registers a Kuma keyword monitor
+  // asserting it at the chosen check window. Re-running recalibrates: the
+  // existing monitor row is edited in place, so its history survives a redesign.
+  const startFingerprintSetup = useCallback(
+    (site: Site, intervalSec: number) => {
+      const conn = cfgRef.current.uptimeKuma
+      if (!conn || isDevMode()) return
+      const setOp = (op: KumaOp) => setKumaOps((prev) => new Map(prev).set(site.id, op))
+      const run = async () => {
+        try {
+          const domain = site.domain
+          const proto = site.https?.enabled ? "https" : "http"
+          setOp({ status: "running", detail: "Reading the live front page…" })
+          const derived = await deriveFingerprint(`${proto}://${domain}/`)
+          if (!derived.ok) throw new Error(derived.error)
+          setOp({ status: "running", detail: "Registering the front-page monitor…" })
+          const known = cfgRef.current.kumaMonitors[domain] ?? {}
+          const { result: fingerprintId, jwt } = await withKuma(conn, (kuma) =>
+            registerFingerprintMonitor(kuma, domain, { proto, keyword: derived.fingerprint.keyword, interval: intervalSec, knownId: known.fingerprintId }),
+          )
+          persistKumaAuth(conn, jwt)
+          persistKumaMonitors(domain, {
+            ...known,
+            fingerprintId,
+            fingerprint: { ...derived.fingerprint, interval: intervalSec, derivedAt: new Date().toISOString() },
+          })
+          const win = intervalSec % 3600 === 0 ? `${intervalSec / 3600}h` : `${Math.round(intervalSec / 60)}m`
+          setOp({
+            status: "done",
+            detail: `Front-page check live — asserts ${derived.fingerprint.detail} every ${win}${derived.validated ? "" : ` (${derived.note ?? "unvalidated"})`}.`,
+          })
+        } catch (err) {
+          setOp({ status: "error", detail: "", error: (err as Error).message })
+        }
+      }
+      void run()
+    },
+    [persistKumaAuth, persistKumaMonitors],
   )
 
   // Rotate a vanity site's monitoring secrets — the "clean up after a screencast"
@@ -3859,6 +3913,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     startKumaSetup,
     startVanityReseed,
     startKumaRotate,
+    startFingerprintSetup,
     kumaStatus,
     cloneServer,
     setCloneServer,
