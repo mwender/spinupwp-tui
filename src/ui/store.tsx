@@ -41,7 +41,7 @@ import {
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
 import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, aRecordResolves, isVanityPair } from "../lib/vanitySite.ts"
-import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
+import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, setMonitorNotifications, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
 import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
@@ -191,6 +191,16 @@ export interface KumaOp {
   status: "running" | "done" | "error"
   detail: string
   error?: string
+}
+
+// One notification provider (Settings → Notifications in Kuma) + whether it's
+// attached to a given site's Spinup monitors — the `n` overlay's row model.
+export interface KumaAlertProvider {
+  id: number
+  name: string
+  active: boolean // paused providers exist in Kuma but never fire
+  attachedAll: boolean // attached to every one of this site's monitors
+  attachedAny: boolean // attached to at least one (partial wiring)
 }
 
 // One domain's live status as Kuma sees it, refreshed by the store's poll loop.
@@ -530,6 +540,8 @@ interface StoreValue extends DataState {
   startVanityReseed: (site: Site) => void // refresh an existing vanity page (no Kuma needed)
   startKumaRotate: (site: Site) => void // rotate the push token + health key (vanity; old URLs die immediately)
   startFingerprintSetup: (site: Site, intervalSec: number) => void // calibrate + register the front-page fingerprint monitor
+  fetchKumaAlerts: (site: Site) => Promise<{ ok: true; providers: KumaAlertProvider[]; monitorIds: number[] } | { ok: false; error: string }> // live read of provider/attachment state
+  toggleKumaAlert: (site: Site, providerId: number, on: boolean, monitorIds: number[]) => Promise<{ ok: true } | { ok: false; error: string }>
   kumaStatus: Map<string, KumaDomainStatus> // live per-domain status, refreshed every minute
   // Clone a server to a new server (item 5). `cloneServer` opens the wizard; `cloneJob`
   // is the (Plan-draft then running) job whose heavy work lives in its `sites[]` vector.
@@ -3124,6 +3136,69 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [persistKumaAuth, persistKumaMonitors],
   )
 
+  // Load the alert wiring for one site: every notification provider configured
+  // in Kuma, and whether each is attached to this site's Spinup monitors. The
+  // view calls this on demand (`n` in the overlay) — it's a live read, not
+  // cached state, so what's shown always reflects Kuma right now.
+  const fetchKumaAlerts = useCallback(
+    async (site: Site): Promise<{ ok: true; providers: KumaAlertProvider[]; monitorIds: number[] } | { ok: false; error: string }> => {
+      const conn = cfgRef.current.uptimeKuma
+      if (isDevMode()) return { ok: false, error: "Dev Mode never talks to a real Uptime Kuma." }
+      if (!conn) return { ok: false, error: "Connect Uptime Kuma first (c)." }
+      const ref = cfgRef.current.kumaMonitors[site.domain] ?? {}
+      const candidates = [ref.healthId, ref.pushId, ref.fingerprintId].filter((n): n is number => n != null)
+      if (candidates.length === 0) return { ok: false, error: "No monitors registered for this site yet — a or f adds one." }
+      try {
+        const { result, jwt } = await withKuma(conn, async (kuma) => {
+          const monitors = await kuma.getMonitors()
+          const byId = new Map(monitors.map((m) => [m.id, m]))
+          const ids = candidates.filter((id) => byId.has(id))
+          if (ids.length === 0) throw new Error("The recorded monitors no longer exist in Kuma — a or f re-creates them.")
+          const notifs = await kuma.getNotifications()
+          const attachCount = new Map<number, number>()
+          for (const id of ids) {
+            const full = await kuma.getMonitor(id)
+            const list = (full.notificationIDList as Record<string, boolean> | undefined) ?? {}
+            for (const [pid, on] of Object.entries(list)) {
+              if (on) attachCount.set(Number(pid), (attachCount.get(Number(pid)) ?? 0) + 1)
+            }
+          }
+          const providers: KumaAlertProvider[] = notifs.map((n) => ({
+            id: n.id,
+            name: n.name,
+            active: n.active,
+            attachedAll: (attachCount.get(n.id) ?? 0) === ids.length,
+            attachedAny: (attachCount.get(n.id) ?? 0) > 0,
+          }))
+          return { providers, monitorIds: ids }
+        })
+        persistKumaAuth(conn, jwt)
+        return { ok: true, ...result }
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    },
+    [persistKumaAuth],
+  )
+
+  // Attach/detach one provider across all of a site's Spinup monitors — the
+  // write half of the `n` overlay step. Edit-in-place per monitor (history,
+  // tags and other notification wiring survive).
+  const toggleKumaAlert = useCallback(
+    async (site: Site, providerId: number, on: boolean, monitorIds: number[]): Promise<{ ok: true } | { ok: false; error: string }> => {
+      const conn = cfgRef.current.uptimeKuma
+      if (!conn || isDevMode()) return { ok: false, error: "Connect Uptime Kuma first (c)." }
+      try {
+        const { jwt } = await withKuma(conn, (kuma) => setMonitorNotifications(kuma, monitorIds, providerId, on))
+        persistKumaAuth(conn, jwt)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: (err as Error).message }
+      }
+    },
+    [persistKumaAuth],
+  )
+
   // Rotate a vanity site's monitoring secrets — the "clean up after a screencast"
   // action. A new push token is edited into the EXISTING push monitor (same row:
   // history, uptime stats and notifications survive), the heartbeat cron is
@@ -3914,6 +3989,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     startVanityReseed,
     startKumaRotate,
     startFingerprintSetup,
+    fetchKumaAlerts,
+    toggleKumaAlert,
     kumaStatus,
     cloneServer,
     setCloneServer,
