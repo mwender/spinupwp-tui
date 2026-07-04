@@ -53,7 +53,7 @@ async function fetchHtml(url: string): Promise<{ ok: true; html: string } | { ok
   }
 }
 
-function bodyClassOf(html: string): { quote: string; tokens: string[] } | null {
+export function bodyClassOf(html: string): { quote: string; tokens: string[] } | null {
   const body = html.match(/<body[^>]*>/i)?.[0]
   if (!body) return null
   const cls = body.match(/class\s*=\s*(?:"([^"]*)"|'([^']*)')/i)

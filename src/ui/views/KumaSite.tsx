@@ -32,6 +32,8 @@ import { Panel, Centered, Field, SecretInput, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore, type KumaAlertProvider } from "../store.tsx"
 import { isVanityPair } from "../../lib/vanitySite.ts"
+import { runSiteDoctor, type DoctorReport } from "../../lib/siteDoctor.ts"
+import { classifyStack } from "../../lib/stack.ts"
 
 const BASE_FIELDS = ["url", "username", "password"] as const
 // Fixed input width: the panel body is 66 wide, the label gutter is 12 ("❯ " +
@@ -73,6 +75,8 @@ export function KumaSite() {
   // `n` opens the alerts step — a live read of Kuma's notification providers and
   // which are attached to this site's monitors; ⏎ toggles the selected one.
   const [alerts, setAlerts] = useState<AlertsState>(null)
+  // `d` runs the doctor — read-only HTTP diagnosis (works without Kuma).
+  const [doctor, setDoctor] = useState<null | { kind: "loading" } | { kind: "ready"; report: DoctorReport }>(null)
   // 2FA: revealed only after Kuma answers `tokenRequired` to a correct password.
   // The code is used once — the stored JWT covers every later login.
   const [needsTwofa, setNeedsTwofa] = useState(false)
@@ -94,6 +98,21 @@ export function KumaSite() {
     setInputMode(connecting)
     return () => setInputMode(false)
   }, [connecting, setInputMode])
+
+  const runDoctor = () => {
+    if (!site) return
+    setDoctor({ kind: "loading" })
+    const proto = site.https?.enabled ? "https" : "http"
+    void runSiteDoctor({
+      url: `${proto}://${site.domain}/`,
+      expectedKeyword: registered?.fingerprint?.keyword ?? null,
+      pageCacheEnabled: site.page_cache?.enabled ?? null,
+      sshTarget: site.site_user && server ? `${site.site_user}@${server.name}` : null,
+      isWordPress: !!site.is_wordpress,
+      // Bedrock relocates the login under /wp/ — aim the door probe there.
+      loginPath: classifyStack(site) === "Bedrock" ? "/wp/wp-login.php" : "/wp-login.php",
+    }).then((report) => setDoctor((prev) => (prev ? { kind: "ready", report } : prev)))
+  }
 
   const close = () => {
     // A settled result was seen — forget it so the overlay opens fresh next
@@ -161,6 +180,20 @@ export function KumaSite() {
       if (name === "escape" || name === "n" || name === "q") return setConfirmRotate(false)
       return
     }
+    if (doctor) {
+      if (name === "escape" || name === "q") return setDoctor(null)
+      if (doctor.kind !== "ready") return
+      if (name === "d") return runDoctor()
+      if (name === "f" && !isVanity && doctor.report.verdict === "recalibrate") {
+        // The doctor's own suggestion — jump straight into recalibration.
+        setDoctor(null)
+        const storedSec = registered?.fingerprint?.interval
+        const idx = FP_WINDOWS.findIndex((w) => w.sec === storedSec)
+        setFpIdx(idx >= 0 ? idx : 0)
+        return setFpPick(true)
+      }
+      return
+    }
     if (alerts) {
       if (alerts.kind === "ready" && alerts.busy) return // a toggle is mid-flight
       if (name === "escape" || name === "q") return setAlerts(null)
@@ -203,6 +236,10 @@ export function KumaSite() {
       const idx = FP_WINDOWS.findIndex((w) => w.sec === storedSec)
       setFpIdx(idx >= 0 ? idx : 0)
       return setFpPick(true)
+    }
+    if (name === "d" && !isVanity && site && op?.status !== "running") {
+      // Pure HTTP — deliberately NOT gated on a Kuma connection.
+      return runDoctor()
     }
     if (name === "n" && site && op?.status !== "running") {
       if (!kumaConfigured) return setShowConnect(true) // alert wiring lives in Kuma
@@ -323,7 +360,9 @@ export function KumaSite() {
           />
           {!isVanity && <Field label="Front page" value={fpValue} valueColor={fpColor} />}
           <box style={{ height: 1 }} />
-          {alerts ? (
+          {doctor ? (
+            renderDoctor()
+          ) : alerts ? (
             renderAlerts()
           ) : fpPick ? (
             <>
@@ -404,10 +443,49 @@ export function KumaSite() {
                 wrapMode="none"
               />
               <text content="n — alerts: choose where this site's checks notify" fg={theme.textDim} wrapMode="none" />
+              <text content="d — doctor: prove whether the cache is serving the wrong page" fg={theme.textDim} wrapMode="none" />
             </>
           )}
         </box>
       </Panel>
+    )
+  }
+
+  function renderDoctor() {
+    if (!doctor) return null
+    if (doctor.kind === "loading") {
+      return (
+        <box style={{ flexDirection: "row" }}>
+          <Spinner />
+          <text content="  Examining the live site (cached vs fresh render)…" fg={theme.textDim} wrapMode="none" />
+        </box>
+      )
+    }
+    const r = doctor.report
+    const glyph = { ok: "✓", warn: "!", bad: "✕", info: "·" } as const
+    const gColor = { ok: theme.good, warn: theme.warn, bad: theme.bad, info: theme.textFaint } as const
+    const vColor = r.verdict === "healthy" ? theme.good : r.verdict === "stale-cache" || r.verdict === "down" || r.verdict === "partial-outage" ? theme.bad : theme.warn
+    return (
+      <>
+        {r.checks.map((c, i) => (
+          <box key={i} style={{ flexDirection: "row" }}>
+            <text content={`${glyph[c.status]} ${c.label.padEnd(13)}`} fg={gColor[c.status]} style={{ flexShrink: 0 }} />
+            <text content={c.detail} fg={c.status === "bad" ? theme.bad : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+          </box>
+        ))}
+        <box style={{ height: 1 }} />
+        <text content={r.summary} fg={vColor} wrapMode="none" />
+        {r.runbook.length > 0 && (
+          <>
+            <box style={{ height: 1 }} />
+            {r.runbook.map((line, i) => (
+              <text key={i} content={`  ${line}`} fg={line.startsWith("#") ? theme.textFaint : theme.text} wrapMode="none" />
+            ))}
+          </>
+        )}
+        <box style={{ height: 1 }} />
+        <text content={`d re-run${r.verdict === "recalibrate" ? " · f recalibrate" : ""} · esc back`} fg={theme.textFaint} wrapMode="none" />
+      </>
     )
   }
 
@@ -476,6 +554,7 @@ export function KumaSite() {
   function hints() {
     if (connecting) return [{ key: "⏎", label: "next / connect" }, { key: "esc", label: "back" }]
     if (confirmRotate) return [{ key: "y/⏎", label: "rotate" }, { key: "esc", label: "cancel" }]
+    if (doctor) return doctor.kind === "ready" ? [{ key: "d", label: "re-run" }, { key: "esc", label: "back" }] : [{ key: "esc", label: "back" }]
     if (alerts) return alerts.kind === "ready" && alerts.providers.length > 0 ? [{ key: "↑↓", label: "select" }, { key: "⏎", label: "toggle" }, { key: "esc", label: "done" }] : [{ key: "esc", label: "back" }]
     if (fpPick) return [{ key: "←/→", label: "window" }, { key: "⏎", label: "calibrate" }, { key: "esc", label: "cancel" }]
     if (op?.status === "running") return [{ key: "esc", label: "background" }]
@@ -484,6 +563,7 @@ export function KumaSite() {
     if (isVanity) base.push({ key: "r", label: "rotate secrets" })
     base.push({ key: "a", label: registered ? "repair monitors" : "add monitors" })
     if (!isVanity) base.push({ key: "f", label: registered?.fingerprintId ? "recalibrate front page" : "front-page check" })
+    if (!isVanity) base.push({ key: "d", label: "doctor" })
     base.push({ key: "n", label: "alerts" })
     base.push({ key: "c", label: kumaConfigured ? "reconnect Kuma" : "connect Kuma" })
     return [...base, { key: "esc", label: "close" }]

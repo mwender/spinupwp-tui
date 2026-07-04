@@ -42,6 +42,34 @@ versions; such changes are called out here.
   Kuma → Settings → Notifications — creating the provider itself (bot tokens
   etc.) is the one step that stays in Kuma.
 
+- **The site doctor (`d` in the site-monitoring overlay) — site monitoring
+  Phase 2.** A read-only, zero-setup diagnosis of the "200 OK but wrong page"
+  failure class, built on the cache differential: the page is fetched twice —
+  once normally (cache-eligible) and once with the default
+  `wordpress_no_cache` bypass cookie — and WP's template identity is compared
+  between the two. SpinupWP's `fastcgi-cache: HIT/BYPASS` headers prove which
+  layer answered each request, so a mismatch is *proof* the page cache is
+  serving a different template than PHP renders (the purge-fixable condition),
+  not a guess. Verdicts: healthy · stale-cache (with a copyable runbook —
+  `wp elementor flush_css` appears only when Elementor is positively detected
+  in the served markup, and that one command also purges SpinupWP's caches via
+  the plugin's compat hook) · recalibrate (the page changed, not the cache —
+  `f` jumps straight there) · **partial-outage** · down · inconclusive. Works
+  without a Kuma connection, degrades honestly when the page cache is off, and
+  never writes anything — diagnosis ends at the runbook by design.
+- **The doctor catches partial outages cached-page monitors sleep through.**
+  Two probes, two real failure shapes: (1) cached page 200 but a **fresh render
+  throws 5xx** — verified live: with SpinupWP's default object-cache drop-in a
+  dead Redis is *fatal* on every page-cache miss, and a plugin/theme fatal
+  looks identical, so visitors see cached pages while admins, logged-in users
+  and everything uncached fails; (2) the **wp-admin door probe** — the "site
+  serves fine but wp-admin shows the critical-error screen" incident shape —
+  fetches the login page (never page-cached; Bedrock's relocated `/wp/` login
+  handled), where a 5xx means an admin-facing fatal. Hardened sites that hide
+  or protect their login answer 401/403/404 and are reported as "can't judge",
+  never false-alarmed. Both produce the `partial-outage` verdict with a runbook
+  pointing at the site's error logs and the server's Redis monitor.
+
 ### Fixed
 - **The site-monitoring overlay no longer gets stuck on a finished op's
   message.** A completed action's `✓`/`✕` result used to replace the action
