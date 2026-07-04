@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-04
+
 ### Added
 - **Front-page check (`f` in the site-monitoring overlay) — site monitoring
   Phase 1.** Catches the failure plain up/down monitors sleep through: the page
@@ -31,7 +33,6 @@ versions; such changes are called out here.
   capital `M` (their lowercase `m` was taken by media fallback); the Servers tab
   keeps `m` and gains `M` as an alias, so one muscle-memory key works everywhere.
 
-### Added (unreleased, continued)
 - **Alert wiring from inside Spinup (`n` in the site-monitoring overlay).**
   Lists the notification providers actually configured in your Uptime Kuma —
   detected by name (e.g. "Telegram Alerts"), not assumed — and shows whether
@@ -821,7 +822,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/mwender/spinupwp-tui/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/mwender/spinupwp-tui/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/mwender/spinupwp-tui/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/mwender/spinupwp-tui/compare/v0.12.0...v0.13.0

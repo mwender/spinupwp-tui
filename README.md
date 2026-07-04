@@ -134,6 +134,22 @@ Once you're in, the dashboard looks like this:
   monitor (and its history) survives. Vanity sites are marked `⌂` in the
   Servers tab so they never hide among domain-named servers' sites.
   (See `docs/uptime-kuma.md` for recipes.)
+- **Site monitoring: fingerprints, a doctor, and a Redis sentinel** — press `M`
+  on any site (Servers / Stacks / Search) for the monitoring overlay. `f`
+  calibrates a **front-page check**: Spinup reads your healthy front page,
+  derives a template-identity fingerprint from what WordPress itself stamps
+  into the markup (not a headline someone might edit), proves it discriminates,
+  and registers a Kuma keyword monitor at your chosen window (5m–1h) — catching
+  "the cache is serving the wrong page while HTTP stays 200". `d` runs the
+  **site doctor**: a read-only cache differential (cached vs. bypassed render,
+  proven by the server's own `fastcgi-cache` headers) plus a wp-admin door
+  probe, diagnosing stale caches and **partial outages** — cached pages fine
+  while everything uncached throws 500 (a dead Redis does exactly this) — and
+  ending in a copyable runbook. `n` wires **alerts**: Spinup detects the
+  notification providers configured in Kuma by name and toggles them per site.
+  And servers get a **Redis sentinel**: the heartbeat cron pings Redis every
+  minute and reports up/down to its own `{server} redis` monitor.
+  (See "Site monitoring" below.)
 - **Completion toasts** — background writes that take a while (a PHP upgrade, a
   server reboot/restart, resolving your fleet's DNS) raise a non-focus-stealing
   toast when they finish, so you're not left guessing after you've moved on.
@@ -288,7 +304,8 @@ These can be set in `config.json` or via an environment variable:
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `H` | Enable / disable HTTPS on a site (Servers / Stacks / Search; needs a Read/Write token) |
 | `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
-| `m` | Site monitoring via Uptime Kuma — connect, add monitors, refresh a vanity page, rotate secrets (Servers tab, sites pane) |
+| `m` | Site monitoring via Uptime Kuma (Servers tab, sites pane — same overlay as `M`) |
+| `M` | Site monitoring overlay — add monitors, `f` front-page check, `d` site doctor, `n` alert wiring, vanity refresh/rotation (Servers / Stacks / Search) |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
 | `V` | Add a vanity site at the server's own hostname — DNS + site + HTTPS + SSH-key handoff (Servers tab; offered when no hostname site exists; needs a Read/Write token) |
@@ -399,6 +416,54 @@ server's row keeps a spinner).
 - **A toast on completion.** A reboot can take minutes; when it (or a restart)
   finishes, a non-focus-stealing toast tells you (`example.com rebooted` /
   `Nginx restarted on example.com`), so you don't have to keep checking.
+
+## Site monitoring
+
+Everything hangs off one overlay: press `M` on a site in any view (the Servers
+tab also keeps its original `m`). It talks to your own
+[Uptime Kuma](https://github.com/louislam/uptime-kuma) — Kuma watches 24/7 and
+sends the alerts; Spinup creates the monitors *correctly* and diagnoses on
+demand.
+
+- **`a` — uptime monitors.** Regular sites get a homepage monitor (up/down +
+  cert-expiry). Vanity sites get the full server treatment: healthz + load
+  push + a **Redis sentinel** — the heartbeat cron runs `redis-cli ping` every
+  minute and reports up/down to a `{server} redis` monitor (registered only
+  after probing that Redis actually answers on that box). Why it matters: with
+  SpinupWP's default object-cache drop-in, a dead Redis is **fatal (HTTP 500)
+  for every request that misses the page cache** — cached pages keep serving
+  200, so only the sentinel notices, within a minute.
+- **`f` — the front-page check.** Spinup reads your *healthy* front page,
+  derives a template-identity fingerprint from WordPress's own `body_class()`
+  output (`class="home`, `page-id-N`, …, falling back to the canonical link),
+  validates it against a throwaway search render to prove it discriminates,
+  and registers a Kuma keyword monitor at your chosen window (5m default —
+  the check is served straight from the page cache, so it costs the site
+  nothing). A red check means "answering 200 but serving the WRONG page" —
+  the stale/corrupt-page-cache incident — and shows as `WRONG PAGE SERVED` in
+  Details. Re-running `f` recalibrates the same monitor in place (history
+  survives a redesign).
+- **`d` — the site doctor.** Read-only, zero setup, works without Kuma. It
+  fetches the page twice — once normally, once with the cache-bypass cookie —
+  and lets the server's `fastcgi-cache: HIT/BYPASS` headers prove which layer
+  answered each request, then compares template identity between the two. It
+  also knocks on the wp-admin door (the login page — never cached; Bedrock's
+  relocated `/wp/` login handled). Verdicts: healthy · stale-cache (with a
+  copyable runbook; the Elementor one-command flush is suggested only when
+  Elementor is detected in the served markup) · **partial-outage** (cached
+  pages 200, fresh renders or wp-admin 5xx — Redis or a PHP fatal; visitors
+  look fine, admins are broken) · recalibrate (`f` jumps straight there) ·
+  down · inconclusive.
+- **`n` — alert wiring.** Spinup detects the notification providers configured
+  in your Kuma (by name — Telegram, email, whatever you've set up) and shows
+  whether each is attached to this site's monitors (`✓` all / `◐` some / `○`
+  none); `⏎` toggles a provider across all of the site's checks at once.
+  Creating the provider (bot tokens etc.) is the one step that stays in Kuma.
+
+The design principle across all of it: **the page cache makes sites look
+healthy while things break behind it** — every check watches either *through*
+the cache on purpose (is the right thing being served?) or deliberately
+*around* it (is the machinery behind it alive?).
 
 ## Creating & connecting servers
 
