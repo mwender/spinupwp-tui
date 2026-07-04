@@ -56,7 +56,7 @@ type AlertsState =
   | { kind: "ready"; providers: KumaAlertProvider[]; monitorIds: number[]; idx: number; busy: boolean; flash: string | null }
 
 export function KumaSite() {
-  const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, fetchKumaAlerts, toggleKumaAlert, kumaStatus, servers, setInputMode } = useStore()
+  const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, fetchKumaAlerts, toggleKumaAlert, clearKumaOp, kumaStatus, servers, setInputMode } = useStore()
 
   const [draft, setDraft] = useState({ url: "", username: "", password: "" })
   const [fieldIdx, setFieldIdx] = useState(0)
@@ -96,6 +96,9 @@ export function KumaSite() {
   }, [connecting, setInputMode])
 
   const close = () => {
+    // A settled result was seen — forget it so the overlay opens fresh next
+    // time (a RUNNING op stays: esc deliberately backgrounds it).
+    if (site && op && op.status !== "running") clearKumaOp(site.id)
     setInputMode(false)
     setKumaSite(null)
   }
@@ -351,12 +354,22 @@ export function KumaSite() {
               <Spinner />
               <text content={`  ${op.detail}`} fg={theme.textDim} wrapMode="none" />
             </box>
-          ) : op?.status === "error" ? (
-            <text content={`✕ ${op.error}`} fg={theme.bad} />
-          ) : op?.status === "done" ? (
-            <text content={`✓ ${op.detail}`} fg={theme.good} />
           ) : isVanity ? (
             <>
+              {/* A settled result shows ABOVE the actions, never instead of them —
+                  the overlay must always offer its next moves. */}
+              {op?.status === "error" && (
+                <>
+                  <text content={`✕ ${op.error}`} fg={theme.bad} />
+                  <box style={{ height: 1 }} />
+                </>
+              )}
+              {op?.status === "done" && (
+                <>
+                  <text content={`✓ ${op.detail}`} fg={theme.good} />
+                  <box style={{ height: 1 }} />
+                </>
+              )}
               <text
                 content={kumaConfigured ? "R — re-publish the page, register monitors & install the cron" : "R — re-publish the page (current version, health endpoints)"}
                 fg={theme.textDim}
@@ -372,6 +385,18 @@ export function KumaSite() {
             </>
           ) : (
             <>
+              {op?.status === "error" && (
+                <>
+                  <text content={`✕ ${op.error}`} fg={theme.bad} />
+                  <box style={{ height: 1 }} />
+                </>
+              )}
+              {op?.status === "done" && (
+                <>
+                  <text content={`✓ ${op.detail}`} fg={theme.good} />
+                  <box style={{ height: 1 }} />
+                </>
+              )}
               <text content={kumaConfigured ? "a — register a homepage monitor in Uptime Kuma" : "a — register a homepage monitor (connects Uptime Kuma first)"} fg={theme.textDim} wrapMode="none" />
               <text
                 content={registered?.fingerprintId ? "f — recalibrate the front-page check (e.g. after a redesign)" : "f — front-page check: alert when the wrong page is served"}

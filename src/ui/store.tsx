@@ -542,6 +542,7 @@ interface StoreValue extends DataState {
   startFingerprintSetup: (site: Site, intervalSec: number) => void // calibrate + register the front-page fingerprint monitor
   fetchKumaAlerts: (site: Site) => Promise<{ ok: true; providers: KumaAlertProvider[]; monitorIds: number[] } | { ok: false; error: string }> // live read of provider/attachment state
   toggleKumaAlert: (site: Site, providerId: number, on: boolean, monitorIds: number[]) => Promise<{ ok: true } | { ok: false; error: string }>
+  clearKumaOp: (siteId: number) => void // forget a settled op so the overlay opens fresh
   kumaStatus: Map<string, KumaDomainStatus> // live per-domain status, refreshed every minute
   // Clone a server to a new server (item 5). `cloneServer` opens the wizard; `cloneJob`
   // is the (Plan-draft then running) job whose heavy work lives in its `sites[]` vector.
@@ -3009,6 +3010,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const kumaMonitorFor = useCallback((domain: string) => cfgRef.current.kumaMonitors[domain] ?? null, [])
 
+  // Drop a site's settled (done/error) op so the overlay opens fresh next time —
+  // without this, a finished op's message replaces the action menu forever.
+  // Callers must not clear RUNNING ops (esc backgrounds those deliberately).
+  const clearKumaOp = useCallback((siteId: number) => {
+    setKumaOps((prev) => {
+      if (!prev.has(siteId)) return prev
+      const next = new Map(prev)
+      next.delete(siteId)
+      return next
+    })
+  }, [])
+
   // Push the current embedded page (with its health-endpoint modes) into an
   // existing vanity site's docroot, minting/reusing the domain's stable health
   // key. Shared by the standalone refresh and the Kuma setup's reseed option.
@@ -3991,6 +4004,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     startFingerprintSetup,
     fetchKumaAlerts,
     toggleKumaAlert,
+    clearKumaOp,
     kumaStatus,
     cloneServer,
     setCloneServer,

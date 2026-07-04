@@ -43,6 +43,12 @@ versions; such changes are called out here.
   etc.) is the one step that stays in Kuma.
 
 ### Fixed
+- **The site-monitoring overlay no longer gets stuck on a finished op's
+  message.** A completed action's `✓`/`✕` result used to replace the action
+  menu for the rest of the session — reopening the overlay showed only the old
+  message, hiding `a`/`f`/`n` (the keys still worked, invisibly). Results now
+  render above the menu, and a settled result is forgotten when the overlay
+  closes, so it always reopens fresh.
 - **Help/Explain overlays could deadlock open over a focused input.** Opening
   `?` or `i` in the beat before a view's text input grabbed focus (easy to hit
   by typing fast right after switching to Search) left an overlay that Esc
