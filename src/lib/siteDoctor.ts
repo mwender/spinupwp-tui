@@ -14,11 +14,11 @@
 // rather than guessed. The headers tell us which layer answered each request,
 // so the differential asserts its own validity instead of assuming it.
 //
-// Verdict precedence: down > stale-cache > recalibrate > healthy, with
-// "inconclusive" when the evidence doesn't support any of them. The doctor
-// ends at diagnosis + a copyable runbook — deliberately no auto-heal (the
-// operator does the surgery; builder-specific lines appear only on positive
-// evidence in the served markup).
+// Verdict precedence: down > partial-outage > stale-cache > recalibrate >
+// healthy, with "inconclusive" when the evidence doesn't support any of them.
+// The doctor ends at diagnosis + a copyable runbook — deliberately no auto-heal
+// (the operator does the surgery; builder-specific lines appear only on
+// positive evidence in the served markup).
 
 import { bodyClassOf } from "./siteFingerprint.ts"
 
@@ -28,7 +28,14 @@ export interface DoctorCheck {
   detail: string
 }
 
-export type DoctorVerdict = "healthy" | "stale-cache" | "recalibrate" | "down" | "inconclusive"
+// "partial-outage" is the nastiest verdict: cached pages serve 200 while fresh
+// renders (or the wp-admin door) throw 5xx — anonymous visitors look fine, but
+// admins, logged-in users and everything uncached is failing. Verified real:
+// SpinupWP's default object-cache drop-in makes a dead Redis FATAL on every
+// page-cache miss, and a plugin/theme fatal produces the same signature.
+// Page-watching monitors sleep straight through it; this is where the doctor
+// catches it.
+export type DoctorVerdict = "healthy" | "stale-cache" | "recalibrate" | "partial-outage" | "down" | "inconclusive"
 
 export interface DoctorReport {
   verdict: DoctorVerdict
@@ -94,9 +101,18 @@ export async function runSiteDoctor(opts: {
   expectedKeyword?: string | null // the calibrated fingerprint, when one exists
   pageCacheEnabled?: boolean | null // from the SpinupWP API; null = unknown
   sshTarget?: string | null // "site_user@host" for the runbook's ssh line
+  isWordPress?: boolean // enables the wp-login.php door probe
+  loginPath?: string // where the login lives (Bedrock relocates it to /wp/wp-login.php)
 }): Promise<DoctorReport> {
   const checks: DoctorCheck[] = []
   const runbook: string[] = []
+
+  const partialOutageRunbook = (why: string) => {
+    if (opts.sshTarget) runbook.push(`ssh ${opts.sshTarget}`)
+    runbook.push("tail -n 50 ~/logs/*error*.log   # the fatal will be here")
+    runbook.push(`# ${why}`)
+    runbook.push("# front pages are cached, so visitors look fine — admins and logged-in users are not")
+  }
 
   const cached = await probe(opts.url)
   if (!cached.ok) {
@@ -129,8 +145,20 @@ export async function runSiteDoctor(opts: {
     checks.push({ label: "bypass", status: "info", detail: "page cache off — every render is already fresh" })
   } else if (fresh.ok) {
     checks.push({ label: "bypass", status: "warn", detail: `couldn't confirm a fresh render (${fresh.cache ?? "no cache header"}) — differential unverified` })
+  } else if (fresh.status >= 500 || fresh.status === 0) {
+    // Cached 200 + fresh 5xx IS the partial outage (verified live: a dead Redis
+    // is fatal on cache misses with SpinupWP's default drop-in; a plugin/theme
+    // fatal looks identical). Nothing further is measurable — diagnose and stop.
+    checks.push({ label: "fresh render", status: "bad", detail: fresh.error ?? `PHP fails when the cache is bypassed (HTTP ${fresh.status})` })
+    partialOutageRunbook("if the server's redis monitor is red, Redis is the cause; otherwise it's a PHP fatal")
+    return {
+      verdict: "partial-outage",
+      summary: "Cached pages serve fine, but fresh renders are failing — a partial outage the cached-page monitors can't see.",
+      checks,
+      runbook,
+    }
   } else {
-    checks.push({ label: "bypass", status: "warn", detail: fresh.error ?? `bypass request answered ${fresh.status}` })
+    checks.push({ label: "bypass", status: "warn", detail: `bypass request answered ${fresh.status} — differential unverified` })
   }
 
   // The differential: cached template identity vs freshly rendered identity.
@@ -166,6 +194,35 @@ export async function runSiteDoctor(opts: {
     }
   }
 
+  // The wp-admin door. A fatal confined to admin-facing code produces "site
+  // serves fine, wp-admin shows the critical-error screen" — a real incident
+  // shape. /wp-login.php is never page-cached (default `wp-.*.php` path
+  // exclusion) and renders through a full WP load, so a 5xx here is unambiguous.
+  // Anything else non-200 (basic auth, relocated login, hardening) is normal
+  // protection — report it, judge nothing.
+  let loginFatal = false
+  if (opts.isWordPress) {
+    let loginUrl: string | null = null
+    try {
+      loginUrl = new URL(opts.loginPath ?? "/wp-login.php", opts.url).toString()
+    } catch {
+      // Unparseable base URL — skip the probe.
+    }
+    if (loginUrl) {
+      const login = await probe(loginUrl)
+      if (login.ok) {
+        checks.push({ label: "wp-admin door", status: "ok", detail: `login page renders (${login.ms}ms)` })
+      } else if (login.status >= 500) {
+        loginFatal = true
+        checks.push({ label: "wp-admin door", status: "bad", detail: `login page throws HTTP ${login.status} — admin-facing fatal` })
+      } else if (login.status > 0) {
+        checks.push({ label: "wp-admin door", status: "info", detail: `answered ${login.status} — protected or relocated; can't judge` })
+      } else {
+        checks.push({ label: "wp-admin door", status: "warn", detail: login.error ?? "login probe failed" })
+      }
+    }
+  }
+
   if (fresh.ok) {
     checks.push({
       label: "timing",
@@ -174,6 +231,15 @@ export async function runSiteDoctor(opts: {
     })
   }
 
+  if (loginFatal) {
+    partialOutageRunbook("the front end renders fine — the fatal is in admin-facing code (a plugin's admin hooks, most likely)")
+    return {
+      verdict: "partial-outage",
+      summary: "The site serves fine, but wp-admin is throwing a fatal — visitors won't notice; you can't log in.",
+      checks,
+      runbook,
+    }
+  }
   if (staleCache) {
     // Builder-specific runbook lines only on positive evidence in the markup.
     const elementor = /wp-content\/plugins\/elementor\/|elementor-kit-\d/.test(fresh.ok ? fresh.html : cached.html)

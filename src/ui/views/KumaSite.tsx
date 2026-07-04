@@ -33,6 +33,7 @@ import { StatusBar } from "../StatusBar.tsx"
 import { useStore, type KumaAlertProvider } from "../store.tsx"
 import { isVanityPair } from "../../lib/vanitySite.ts"
 import { runSiteDoctor, type DoctorReport } from "../../lib/siteDoctor.ts"
+import { classifyStack } from "../../lib/stack.ts"
 
 const BASE_FIELDS = ["url", "username", "password"] as const
 // Fixed input width: the panel body is 66 wide, the label gutter is 12 ("❯ " +
@@ -107,6 +108,9 @@ export function KumaSite() {
       expectedKeyword: registered?.fingerprint?.keyword ?? null,
       pageCacheEnabled: site.page_cache?.enabled ?? null,
       sshTarget: site.site_user && server ? `${site.site_user}@${server.name}` : null,
+      isWordPress: !!site.is_wordpress,
+      // Bedrock relocates the login under /wp/ — aim the door probe there.
+      loginPath: classifyStack(site) === "Bedrock" ? "/wp/wp-login.php" : "/wp-login.php",
     }).then((report) => setDoctor((prev) => (prev ? { kind: "ready", report } : prev)))
   }
 
@@ -460,7 +464,7 @@ export function KumaSite() {
     const r = doctor.report
     const glyph = { ok: "✓", warn: "!", bad: "✕", info: "·" } as const
     const gColor = { ok: theme.good, warn: theme.warn, bad: theme.bad, info: theme.textFaint } as const
-    const vColor = r.verdict === "healthy" ? theme.good : r.verdict === "stale-cache" || r.verdict === "down" ? theme.bad : theme.warn
+    const vColor = r.verdict === "healthy" ? theme.good : r.verdict === "stale-cache" || r.verdict === "down" || r.verdict === "partial-outage" ? theme.bad : theme.warn
     return (
       <>
         {r.checks.map((c, i) => (
