@@ -14,6 +14,10 @@
 //     copy edits), and registers a Kuma keyword monitor asserting it at a chosen
 //     window. Catches "the cache is serving the wrong page" (HTTP stays 200).
 //     Re-running recalibrates in place (monitor history survives a redesign).
+//   - `n` (alerts) lists Kuma's notification providers by name (Telegram, email,
+//     …) and toggles them per site across all of the site's Spinup monitors —
+//     detection is real (providers ride the post-login event burst), only the
+//     provider's own setup (bot token etc.) stays in Kuma's settings.
 //   - `r` (vanity, confirm-gated) rotates the monitoring secrets: new push token
 //     edited into the existing monitor (history kept), cron rewritten, new health
 //     key re-seeded — so secrets shown on a screencast can be killed right after.
@@ -26,7 +30,7 @@ import { useKeyboard } from "@opentui/react"
 import { theme } from "../../lib/theme.ts"
 import { Panel, Centered, Field, SecretInput, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
-import { useStore } from "../store.tsx"
+import { useStore, type KumaAlertProvider } from "../store.tsx"
 import { isVanityPair } from "../../lib/vanitySite.ts"
 
 const BASE_FIELDS = ["url", "username", "password"] as const
@@ -44,8 +48,15 @@ const FP_WINDOWS = [
   { label: "1h", sec: 3600 },
 ] as const
 
+// The `n` (alerts) step's state machine: load → list providers → toggle.
+type AlertsState =
+  | null
+  | { kind: "loading" }
+  | { kind: "error"; error: string }
+  | { kind: "ready"; providers: KumaAlertProvider[]; monitorIds: number[]; idx: number; busy: boolean; flash: string | null }
+
 export function KumaSite() {
-  const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, kumaStatus, servers, setInputMode } = useStore()
+  const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, fetchKumaAlerts, toggleKumaAlert, clearKumaOp, kumaStatus, servers, setInputMode } = useStore()
 
   const [draft, setDraft] = useState({ url: "", username: "", password: "" })
   const [fieldIdx, setFieldIdx] = useState(0)
@@ -59,6 +70,9 @@ export function KumaSite() {
   // `f` opens the front-page check-window picker; ⏎ calibrates & registers.
   const [fpPick, setFpPick] = useState(false)
   const [fpIdx, setFpIdx] = useState(0)
+  // `n` opens the alerts step — a live read of Kuma's notification providers and
+  // which are attached to this site's monitors; ⏎ toggles the selected one.
+  const [alerts, setAlerts] = useState<AlertsState>(null)
   // 2FA: revealed only after Kuma answers `tokenRequired` to a correct password.
   // The code is used once — the stored JWT covers every later login.
   const [needsTwofa, setNeedsTwofa] = useState(false)
@@ -82,6 +96,9 @@ export function KumaSite() {
   }, [connecting, setInputMode])
 
   const close = () => {
+    // A settled result was seen — forget it so the overlay opens fresh next
+    // time (a RUNNING op stays: esc deliberately backgrounds it).
+    if (site && op && op.status !== "running") clearKumaOp(site.id)
     setInputMode(false)
     setKumaSite(null)
   }
@@ -144,6 +161,29 @@ export function KumaSite() {
       if (name === "escape" || name === "n" || name === "q") return setConfirmRotate(false)
       return
     }
+    if (alerts) {
+      if (alerts.kind === "ready" && alerts.busy) return // a toggle is mid-flight
+      if (name === "escape" || name === "q") return setAlerts(null)
+      if (alerts.kind !== "ready") return
+      if (name === "up" || name === "k") return setAlerts({ ...alerts, idx: Math.max(alerts.idx - 1, 0), flash: null })
+      if (name === "down" || name === "j") return setAlerts({ ...alerts, idx: Math.min(alerts.idx + 1, alerts.providers.length - 1), flash: null })
+      if ((name === "return" || name === "space" || name === " ") && site && alerts.providers.length > 0) {
+        const p = alerts.providers[alerts.idx]!
+        const on = !p.attachedAll
+        setAlerts({ ...alerts, busy: true, flash: null })
+        void toggleKumaAlert(site, p.id, on, alerts.monitorIds).then((r) => {
+          setAlerts((prev) => {
+            if (!prev || prev.kind !== "ready") return prev
+            if (!r.ok) return { ...prev, busy: false, flash: `✕ ${r.error}` }
+            const providers = prev.providers.map((q) => (q.id === p.id ? { ...q, attachedAll: on, attachedAny: on } : q))
+            const n = prev.monitorIds.length
+            return { ...prev, providers, busy: false, flash: `✓ ${p.name} ${on ? "now alerts" : "no longer alerts"} for ${n} monitor${n === 1 ? "" : "s"}` }
+          })
+        })
+        return
+      }
+      return
+    }
     if (fpPick) {
       if (name === "left" || name === "up" || name === "h" || name === "k") return setFpIdx((i) => Math.max(i - 1, 0))
       if (name === "right" || name === "down" || name === "l" || name === "j" || name === "tab") return setFpIdx((i) => Math.min(i + 1, FP_WINDOWS.length - 1))
@@ -163,6 +203,14 @@ export function KumaSite() {
       const idx = FP_WINDOWS.findIndex((w) => w.sec === storedSec)
       setFpIdx(idx >= 0 ? idx : 0)
       return setFpPick(true)
+    }
+    if (name === "n" && site && op?.status !== "running") {
+      if (!kumaConfigured) return setShowConnect(true) // alert wiring lives in Kuma
+      setAlerts({ kind: "loading" })
+      void fetchKumaAlerts(site).then((r) => {
+        setAlerts(r.ok ? { kind: "ready", providers: r.providers, monitorIds: r.monitorIds, idx: 0, busy: false, flash: null } : { kind: "error", error: r.error })
+      })
+      return
     }
     if (name === "r" && isVanity && site && op?.status !== "running") return setConfirmRotate(true)
     if (name === "a" && site && op?.status !== "running") {
@@ -275,7 +323,9 @@ export function KumaSite() {
           />
           {!isVanity && <Field label="Front page" value={fpValue} valueColor={fpColor} />}
           <box style={{ height: 1 }} />
-          {fpPick ? (
+          {alerts ? (
+            renderAlerts()
+          ) : fpPick ? (
             <>
               <text content="Front-page check — alerts when the wrong page is served." fg={theme.text} wrapMode="none" />
               <text content="Reads the live page now (while it's healthy), derives a template" fg={theme.textDim} wrapMode="none" />
@@ -304,12 +354,22 @@ export function KumaSite() {
               <Spinner />
               <text content={`  ${op.detail}`} fg={theme.textDim} wrapMode="none" />
             </box>
-          ) : op?.status === "error" ? (
-            <text content={`✕ ${op.error}`} fg={theme.bad} />
-          ) : op?.status === "done" ? (
-            <text content={`✓ ${op.detail}`} fg={theme.good} />
           ) : isVanity ? (
             <>
+              {/* A settled result shows ABOVE the actions, never instead of them —
+                  the overlay must always offer its next moves. */}
+              {op?.status === "error" && (
+                <>
+                  <text content={`✕ ${op.error}`} fg={theme.bad} />
+                  <box style={{ height: 1 }} />
+                </>
+              )}
+              {op?.status === "done" && (
+                <>
+                  <text content={`✓ ${op.detail}`} fg={theme.good} />
+                  <box style={{ height: 1 }} />
+                </>
+              )}
               <text
                 content={kumaConfigured ? "R — re-publish the page, register monitors & install the cron" : "R — re-publish the page (current version, health endpoints)"}
                 fg={theme.textDim}
@@ -321,15 +381,29 @@ export function KumaSite() {
                 wrapMode="none"
               />
               <text content="r — rotate secrets: new push URL + health key (old ones die)" fg={theme.textDim} wrapMode="none" />
+              <text content="n — alerts: choose where this server's checks notify" fg={theme.textDim} wrapMode="none" />
             </>
           ) : (
             <>
+              {op?.status === "error" && (
+                <>
+                  <text content={`✕ ${op.error}`} fg={theme.bad} />
+                  <box style={{ height: 1 }} />
+                </>
+              )}
+              {op?.status === "done" && (
+                <>
+                  <text content={`✓ ${op.detail}`} fg={theme.good} />
+                  <box style={{ height: 1 }} />
+                </>
+              )}
               <text content={kumaConfigured ? "a — register a homepage monitor in Uptime Kuma" : "a — register a homepage monitor (connects Uptime Kuma first)"} fg={theme.textDim} wrapMode="none" />
               <text
                 content={registered?.fingerprintId ? "f — recalibrate the front-page check (e.g. after a redesign)" : "f — front-page check: alert when the wrong page is served"}
                 fg={theme.textDim}
                 wrapMode="none"
               />
+              <text content="n — alerts: choose where this site's checks notify" fg={theme.textDim} wrapMode="none" />
             </>
           )}
         </box>
@@ -337,9 +411,72 @@ export function KumaSite() {
     )
   }
 
+  function renderAlerts() {
+    if (!alerts) return null
+    if (alerts.kind === "loading") {
+      return (
+        <box style={{ flexDirection: "row" }}>
+          <Spinner />
+          <text content="  Reading notification providers from Kuma…" fg={theme.textDim} wrapMode="none" />
+        </box>
+      )
+    }
+    if (alerts.kind === "error") {
+      return (
+        <>
+          <text content={`✕ ${alerts.error}`} fg={theme.bad} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          <text content="esc back" fg={theme.textFaint} wrapMode="none" />
+        </>
+      )
+    }
+    if (alerts.providers.length === 0) {
+      return (
+        <>
+          <text content="No notification providers in Uptime Kuma yet." fg={theme.text} wrapMode="none" />
+          <text content="Add one in Kuma → Settings → Notifications (Telegram, email, …)," fg={theme.textDim} wrapMode="none" />
+          <text content="then press n again — Spinup wires it to this site's checks." fg={theme.textDim} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          <text content="esc back" fg={theme.textFaint} wrapMode="none" />
+        </>
+      )
+    }
+    const n = alerts.monitorIds.length
+    return (
+      <>
+        <text content={`Alerts — where this site's ${n} check${n === 1 ? "" : "s"} notify:`} fg={theme.text} wrapMode="none" />
+        <box style={{ height: 1 }} />
+        {alerts.providers.map((p, i) => {
+          const glyph = p.attachedAll ? "✓" : p.attachedAny ? "◐" : "○"
+          const glyphColor = p.attachedAll ? theme.good : p.attachedAny ? theme.warn : theme.textFaint
+          const suffix = p.attachedAny && !p.attachedAll ? " (some monitors only — ⏎ attaches to all)" : !p.active ? " (paused in Kuma)" : ""
+          return (
+            <box key={p.id} style={{ flexDirection: "row" }}>
+              <text content={i === alerts.idx ? "❯ " : "  "} fg={theme.brand} style={{ flexShrink: 0 }} />
+              <text content={glyph} fg={glyphColor} style={{ flexShrink: 0 }} />
+              <text content={` ${p.name}${suffix}`} fg={i === alerts.idx ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+            </box>
+          )
+        })}
+        <box style={{ height: 1 }} />
+        {alerts.busy ? (
+          <box style={{ flexDirection: "row" }}>
+            <Spinner />
+            <text content="  Rewiring…" fg={theme.textDim} wrapMode="none" />
+          </box>
+        ) : alerts.flash ? (
+          <text content={alerts.flash} fg={alerts.flash.startsWith("✓") ? theme.good : theme.bad} wrapMode="none" />
+        ) : (
+          <text content="↑↓ select · ⏎ toggle on/off · esc done" fg={theme.textFaint} wrapMode="none" />
+        )}
+      </>
+    )
+  }
+
   function hints() {
     if (connecting) return [{ key: "⏎", label: "next / connect" }, { key: "esc", label: "back" }]
     if (confirmRotate) return [{ key: "y/⏎", label: "rotate" }, { key: "esc", label: "cancel" }]
+    if (alerts) return alerts.kind === "ready" && alerts.providers.length > 0 ? [{ key: "↑↓", label: "select" }, { key: "⏎", label: "toggle" }, { key: "esc", label: "done" }] : [{ key: "esc", label: "back" }]
     if (fpPick) return [{ key: "←/→", label: "window" }, { key: "⏎", label: "calibrate" }, { key: "esc", label: "cancel" }]
     if (op?.status === "running") return [{ key: "esc", label: "background" }]
     const base: { key: string; label: string }[] = []
@@ -347,6 +484,7 @@ export function KumaSite() {
     if (isVanity) base.push({ key: "r", label: "rotate secrets" })
     base.push({ key: "a", label: registered ? "repair monitors" : "add monitors" })
     if (!isVanity) base.push({ key: "f", label: registered?.fingerprintId ? "recalibrate front page" : "front-page check" })
+    base.push({ key: "n", label: "alerts" })
     base.push({ key: "c", label: kumaConfigured ? "reconnect Kuma" : "connect Kuma" })
     return [...base, { key: "esc", label: "close" }]
   }

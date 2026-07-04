@@ -31,7 +31,24 @@ versions; such changes are called out here.
   capital `M` (their lowercase `m` was taken by media fallback); the Servers tab
   keeps `m` and gains `M` as an alias, so one muscle-memory key works everywhere.
 
+### Added (unreleased, continued)
+- **Alert wiring from inside Spinup (`n` in the site-monitoring overlay).**
+  Lists the notification providers actually configured in your Uptime Kuma —
+  detected by name (e.g. "Telegram Alerts"), not assumed — and shows whether
+  each is attached to this site's Spinup monitors (`✓` all / `◐` some / `○`
+  none). `⏎` toggles a provider across all of the site's checks at once,
+  editing each monitor in place (history, tags and other notification wiring
+  survive). If Kuma has no providers yet, the overlay says so and points to
+  Kuma → Settings → Notifications — creating the provider itself (bot tokens
+  etc.) is the one step that stays in Kuma.
+
 ### Fixed
+- **The site-monitoring overlay no longer gets stuck on a finished op's
+  message.** A completed action's `✓`/`✕` result used to replace the action
+  menu for the rest of the session — reopening the overlay showed only the old
+  message, hiding `a`/`f`/`n` (the keys still worked, invisibly). Results now
+  render above the menu, and a settled result is forgotten when the overlay
+  closes, so it always reopens fresh.
 - **Help/Explain overlays could deadlock open over a focused input.** Opening
   `?` or `i` in the beat before a view's text input grabbed focus (easy to hit
   by typing fast right after switching to Search) left an overlay that Esc

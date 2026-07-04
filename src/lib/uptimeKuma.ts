@@ -43,6 +43,15 @@ export interface KumaBeat {
   ping?: number | null
 }
 
+// A notification provider as configured in Kuma (Settings → Notifications) —
+// e.g. a Telegram bot. Kuma keeps the display name inside the config JSON.
+export interface KumaNotificationInfo {
+  id: number
+  name: string
+  active: boolean
+  isDefault: boolean // Kuma auto-attaches these to monitors its UI creates (we mirror that in addMonitor)
+}
+
 interface Ack {
   ok: boolean
   msg?: string
@@ -77,6 +86,10 @@ export class KumaClient {
   // Kuma pushes these as events (not ack payloads) right after login and on change.
   private monitorList: Record<string, KumaMonitor> | null = null
   private notificationList: { id: number; isDefault?: boolean; active?: boolean; config?: string }[] = []
+  // notificationList is pushed in the post-login burst (there's no request event
+  // for it) — track arrival so getNotifications can tell "none configured" apart
+  // from "hasn't landed yet".
+  private notificationsArrived = false
 
   // Kuma pushes each monitor's recent beats + uptime percentages as events right
   // after login (it's how its own dashboard populates) — capture them so one
@@ -94,6 +107,7 @@ export class KumaClient {
     })
     socket.on("notificationList", (list: typeof this.notificationList) => {
       this.notificationList = list ?? []
+      this.notificationsArrived = true
     })
     socket.on("heartbeatList", (monitorID: number | string, beats: KumaBeat[], overwrite?: boolean) => {
       const id = Number(monitorID)
@@ -214,6 +228,28 @@ export class KumaClient {
       if (!this.monitorList) await wait
     }
     return Object.values(this.monitorList ?? {})
+  }
+
+  // The notification providers configured in Kuma, with display names parsed out
+  // of the config JSON. Waits briefly for the post-login burst so an immediate
+  // call after login doesn't misread "not arrived yet" as "none configured".
+  async getNotifications(ms = 2000): Promise<KumaNotificationInfo[]> {
+    const deadline = Date.now() + ms
+    while (!this.notificationsArrived && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    return this.notificationList.map((n) => {
+      let name = `notification #${n.id}`
+      let isDefault = !!n.isDefault
+      try {
+        const cfg = n.config ? (JSON.parse(n.config) as { name?: string; isDefault?: boolean }) : {}
+        if (cfg.name) name = cfg.name
+        if (cfg.isDefault) isDefault = true
+      } catch {
+        // Unparseable config — keep the fallback name.
+      }
+      return { id: n.id, name, active: n.active !== false, isDefault }
+    })
   }
 
   // Notifications flagged "Default enabled" in Kuma — the UI auto-attaches these
@@ -430,6 +466,17 @@ export async function registerMonitors(
     })(),
   ])
   return { healthId, pushId, pushToken: opts.wantPush ? pushToken : undefined }
+}
+
+// Attach/detach one notification provider on a set of monitors, editing each
+// row in place (getMonitor → editMonitor, Kuma's own edit-dialog round-trip) so
+// history, tags and the rest of the notification wiring survive untouched.
+export async function setMonitorNotifications(kuma: KumaClient, monitorIds: number[], providerId: number, on: boolean): Promise<void> {
+  for (const id of monitorIds) {
+    const full = await kuma.getMonitor(id)
+    const list = { ...((full.notificationIDList as Record<string, boolean> | undefined) ?? {}), [String(providerId)]: on }
+    await kuma.editMonitor({ ...full, notificationIDList: list })
+  }
 }
 
 // Swap a push monitor's token in place — the old push URL stops accepting beats
