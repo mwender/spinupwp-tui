@@ -246,9 +246,25 @@ export interface PushCronTarget {
   port: number | null
   kumaUrl: string // Uptime Kuma base URL
   pushToken: string
+  // When set, a second marker-managed cron line feeds the server's Redis
+  // sentinel monitor (`{server} redis`): redis-cli ping → status=up/down.
+  // Unlike the load heartbeat (dead-man's switch), this line ACTIVELY reports
+  // down — Redis being dead while the server is fine is exactly the state it
+  // exists to catch. Server dead ⇒ both monitors go silent anyway.
+  redisToken?: string | null
 }
 
 const PUSH_CRON_MARKER = "spinup-kuma-push"
+const REDIS_CRON_MARKER = "spinup-kuma-redis"
+
+// Is Redis answerable from this box's shell? Run BEFORE creating the sentinel
+// monitor: a server without redis-cli (or with auth in the way) would otherwise
+// get a monitor that's red forever. Fail loudly at setup time instead.
+export async function probeServerRedis(t: { host: string; user: string; port: number | null }): Promise<{ ok: boolean; error?: string }> {
+  const r = await runProcess(["ssh", ...SSH_OPTS, ...sshPort(t.port), `${t.user}@${t.host}`, `[ "$(redis-cli ping 2>/dev/null)" = "PONG" ]`], 30_000)
+  if (r.code === 0) return { ok: true }
+  return { ok: false, error: "redis-cli didn't answer PONG on the server — Redis sentinel skipped." }
+}
 
 // Install (or refresh) the once-a-minute heartbeat cron that feeds the Kuma push
 // monitor: status=up plus the 1-min load in `ping`, which Kuma graphs. The beat
@@ -264,11 +280,17 @@ const PUSH_CRON_MARKER = "spinup-kuma-push"
 // treats a bare % as newline (which also rules out awk printf here).
 export async function seedVanityPushCron(t: PushCronTarget): Promise<{ ok: boolean; error?: string }> {
   const push = pushUrl(t.kumaUrl, t.pushToken)
-  const line = `* * * * * curl -fsS --max-time 20 '${push}?status=up&msg=ok&ping='$(awk '{print int($1*${LOAD_PUSH_SCALE})}' /proc/loadavg) >/dev/null 2>&1 # ${PUSH_CRON_MARKER}`
-  // The line contains quotes of both kinds once cron expands it, so ship it
+  const lines = [`* * * * * curl -fsS --max-time 20 '${push}?status=up&msg=ok&ping='$(awk '{print int($1*${LOAD_PUSH_SCALE})}' /proc/loadavg) >/dev/null 2>&1 # ${PUSH_CRON_MARKER}`]
+  if (t.redisToken) {
+    const redisPush = pushUrl(t.kumaUrl, t.redisToken)
+    lines.push(`* * * * * s=down; [ "$(redis-cli ping 2>/dev/null)" = "PONG" ] && s=up; curl -fsS --max-time 20 "${redisPush}?status=$s&msg=redis-$s&ping=" >/dev/null 2>&1 # ${REDIS_CRON_MARKER}`)
+  }
+  // The lines contain quotes of both kinds once cron expands them, so ship them
   // base64'd (same trick as the index.php seed) instead of fighting nesting.
-  const b64 = Buffer.from(line + "\n", "utf8").toString("base64")
-  const remote = `( crontab -l 2>/dev/null | grep -v '${PUSH_CRON_MARKER}' ; printf '%s' '${b64}' | base64 -d ) | crontab -`
+  // Both markers are always stripped first, so seeding WITHOUT a redisToken also
+  // removes a previously installed sentinel line (idempotent uninstall).
+  const b64 = Buffer.from(lines.join("\n") + "\n", "utf8").toString("base64")
+  const remote = `( crontab -l 2>/dev/null | grep -v -e '${PUSH_CRON_MARKER}' -e '${REDIS_CRON_MARKER}' ; printf '%s' '${b64}' | base64 -d ) | crontab -`
   const r = await runProcess(["ssh", ...SSH_OPTS, ...sshPort(t.port), `${t.user}@${t.host}`, remote], 60_000)
   if (r.code !== 0) return { ok: false, error: meaningfulError(r.stderr, "Couldn't install the heartbeat cron over SSH.") }
   return { ok: true }

@@ -385,6 +385,24 @@ export function loadPushMonitorPayload(name: string, pushToken: string): Record<
   }
 }
 
+// The server-wide Redis sentinel: the same heartbeat cron runs `redis-cli ping`
+// once a minute and pushes status=up/down here. One per SERVER (Redis is one
+// daemon per box), not per site — the per-site silent-fallback story is the
+// Phase-3b health endpoint's job.
+export function redisPushMonitorPayload(name: string, pushToken: string): Record<string, unknown> {
+  return {
+    type: "push",
+    name,
+    pushToken,
+    description: "Server-wide Redis sentinel: Spinup's heartbeat cron pings Redis every minute and reports up/down. Silence = the server (not Redis) is the problem.",
+    interval: 60,
+    retryInterval: 60,
+    maxretries: 2,
+    upsideDown: false,
+    accepted_statuscodes: ["200-299"],
+  }
+}
+
 // The front-page fingerprint monitor (site monitoring Phase 1): a `keyword`
 // monitor asserting the front page still carries the template-identity string
 // calibration derived (lib/siteFingerprint.ts). Catches "the page cache is
@@ -446,8 +464,8 @@ export async function registerFingerprintMonitor(
 export async function registerMonitors(
   kuma: KumaClient,
   domain: string,
-  opts: { proto: "http" | "https"; healthzPath: string; wantPush: boolean; known?: KumaMonitorRef | null; pushToken?: string | null },
-): Promise<{ healthId: number; pushId?: number; pushToken?: string }> {
+  opts: { proto: "http" | "https"; healthzPath: string; wantPush: boolean; wantRedis?: boolean; known?: KumaMonitorRef | null; pushToken?: string | null },
+): Promise<{ healthId: number; pushId?: number; pushToken?: string; redisId?: number; redisToken?: string }> {
   const monitors = await kuma.getMonitors()
   const byId = new Map(monitors.map((m) => [m.id, m]))
   const byName = new Map(monitors.map((m) => [m.name, m]))
@@ -458,14 +476,30 @@ export async function registerMonitors(
   const existingPush = opts.wantPush && live(known.pushId) == null ? byName.get(`${domain} load`) : undefined
   if (existingPush?.pushToken) pushToken = existingPush.pushToken
 
-  const [healthId, pushId] = await Promise.all([
+  // The Redis sentinel gets its OWN token — the cron feeds two distinct push
+  // URLs so the monitors alert independently.
+  let redisToken = known.redisToken ?? genPushToken()
+  const existingRedis = opts.wantRedis && live(known.redisId) == null ? byName.get(`${domain} redis`) : undefined
+  if (existingRedis?.pushToken) redisToken = existingRedis.pushToken
+
+  const [healthId, pushId, redisId] = await Promise.all([
     (async () => live(known.healthId) ?? byName.get(domain)?.id ?? (await kuma.addMonitor(healthMonitorPayload(domain, `${opts.proto}://${domain}${opts.healthzPath}`))))(),
     (async () => {
       if (!opts.wantPush) return undefined
       return live(known.pushId) ?? existingPush?.id ?? (await kuma.addMonitor(loadPushMonitorPayload(`${domain} load`, pushToken)))
     })(),
+    (async () => {
+      if (!opts.wantRedis) return undefined
+      return live(known.redisId) ?? existingRedis?.id ?? (await kuma.addMonitor(redisPushMonitorPayload(`${domain} redis`, redisToken)))
+    })(),
   ])
-  return { healthId, pushId, pushToken: opts.wantPush ? pushToken : undefined }
+  return {
+    healthId,
+    pushId,
+    pushToken: opts.wantPush ? pushToken : undefined,
+    redisId,
+    redisToken: opts.wantRedis ? redisToken : undefined,
+  }
 }
 
 // Attach/detach one notification provider on a set of monitors, editing each

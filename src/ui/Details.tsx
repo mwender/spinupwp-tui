@@ -125,13 +125,15 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       ? "DOWN"
       : kuma.fingerprintUp === false
         ? "up · WRONG PAGE SERVED (M)"
-        : kuma.up
-          ? `up${kuma.uptime24 != null ? ` · ${(kuma.uptime24 * 100).toFixed(2)}% (24h)` : ""}`
-          : "no beats yet"
+        : kuma.redisUp === false
+          ? "up · REDIS DOWN (M)"
+          : kuma.up
+            ? `up${kuma.uptime24 != null ? ` · ${(kuma.uptime24 * 100).toFixed(2)}% (24h)` : ""}`
+            : "no beats yet"
     : kumaMonitorFor(site.domain)
       ? "registered · awaiting poll"
       : "not monitored · M"
-  const kumaColor = kuma ? (kuma.up === false || kuma.fingerprintUp === false ? theme.bad : kuma.up ? theme.good : theme.textDim) : theme.textFaint
+  const kumaColor = kuma ? (kuma.up === false || kuma.fingerprintUp === false || kuma.redisUp === false ? theme.bad : kuma.up ? theme.good : theme.textDim) : theme.textFaint
   const httpsProgress = httpsToggles.get(site.id)
   const purgeProgress = purgeCacheProgress.get(site.id)
   const updates = (site.wp_plugin_updates || 0) + (site.wp_theme_updates || 0) + (site.wp_core_update ? 1 : 0)
