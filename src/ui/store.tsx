@@ -2773,7 +2773,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }),
           )
           persistKumaAuth(conn, jwt)
-          persistKumaMonitors(j.hostname, { healthId: result.healthId, pushId: result.pushId ?? known.pushId, pushToken: result.pushToken ?? known.pushToken })
+          persistKumaMonitors(j.hostname, { ...known, healthId: result.healthId, pushId: result.pushId ?? known.pushId, pushToken: result.pushToken ?? known.pushToken })
           void doCron({ ...j, step: "cron", kumaPushToken: result.pushToken ?? known.pushToken })
         } catch (err) {
           fail(j, "monitor", (err as Error).message)
@@ -3191,7 +3191,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (isDevMode()) return { ok: false, error: "Dev Mode never talks to a real Uptime Kuma." }
       if (!conn) return { ok: false, error: "Connect Uptime Kuma first (c)." }
       const ref = cfgRef.current.kumaMonitors[site.domain] ?? {}
-      const candidates = [ref.healthId, ref.pushId, ref.fingerprintId].filter((n): n is number => n != null)
+      // Every monitor registered for this site: any numeric `*Id` field on the
+      // ref (healthId, pushId, redisId, fingerprintId, …). Collected by
+      // convention rather than by name so new monitor kinds are alert-wired
+      // automatically — see the KumaMonitorRef note in config.ts.
+      const candidates = Object.entries(ref)
+        .filter((e): e is [string, number] => e[0].endsWith("Id") && typeof e[1] === "number")
+        .map(([, id]) => id)
       if (candidates.length === 0) return { ok: false, error: "No monitors registered for this site yet — a or f adds one." }
       try {
         const { result, jwt } = await withKuma(conn, async (kuma) => {

@@ -11,6 +11,18 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Alert wiring (`n`) now really covers *all* of a site's monitors.** The
+  toggle attached/detached providers on a hardcoded list (healthz, load push,
+  front-page check) that predated the Redis sentinel, so `⏎` silently skipped
+  the `{server} redis` monitor. The site's monitors are now collected by
+  convention from the saved monitor refs, so the Redis sentinel — and any
+  monitor kind added in the future — is wired automatically. If you toggled a
+  provider on before this fix, open `n` again: it shows `◐ some monitors only`
+  and one `⏎` attaches it to the rest.
+- The server-create wizard's monitor step no longer drops previously saved
+  Redis/front-page monitor references from the config when re-run.
+
 ## [0.16.0] - 2026-07-04
 
 ### Added

@@ -105,6 +105,11 @@ export interface UptimeKumaConn {
   env?: boolean // creds came from the environment — read-only in the UI
 }
 
+// CONVENTION: every numeric field ending in `Id` is a Kuma monitor id belonging
+// to this site, and the alert wiring (`n` in the monitoring overlay) attaches/
+// detaches notification providers across ALL of them by that naming rule — a
+// new monitor kind only needs a `fooId?: number` field here to be included.
+// Don't add a numeric `*Id` field that isn't a monitor id.
 export interface KumaMonitorRef {
   healthId?: number // HTTP monitor on /?healthz
   pushId?: number // push monitor fed by the server-side load cron
