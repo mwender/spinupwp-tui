@@ -48,7 +48,7 @@ import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureS
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
-import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, type RepoHost } from "../lib/gitDeployKey.ts"
+import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
 import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
@@ -226,8 +226,12 @@ export interface KumaDomainStatus {
 // per-site roster. See docs/2026-06-24_clone-to-server-spec.md. (Slice 2 = shell +
 // Plan; server/trust/clone/cutover orchestration land in later slices.)
 export type CloneStep = "plan" | "server" | "trust" | "gitaccess" | "clone" | "cutover" | "done" | "error"
-// Deploy-key onboarding state for one repo (git-native Bedrock dest). The dest server's
-// key must be a read-only deploy key on the repo before the `git` create can clone it.
+// Deploy-key onboarding state for one repo (git-native Bedrock dest). Each repo gets
+// its OWN locally-generated keypair — GitHub attaches a deploy key to exactly ONE repo
+// account-wide, so the server-wide git_publickey can never cover a second repo on the
+// same server (verified 2026-07-06). The public half must be on the repo before the
+// `git` create; the pair rides the create payload (git.deploy_key_enabled) so SpinupWP
+// installs it as the site's git identity.
 export type RepoKeyStatus = "checking" | "present" | "missing" | "adding" | "added" | "manual" | "error"
 export interface RepoKeyState {
   repo: string // raw source git.repo (the map key)
@@ -238,6 +242,8 @@ export interface RepoKeyState {
   settingsUrl: string | null // where to add a deploy key by hand (manual fallback)
   status: RepoKeyStatus
   auto: boolean // gh+GitHub available → we can detect/add automatically
+  publicKey?: string // the generated per-repo keypair — memory only, never logged
+  privateKey?: string
   error?: string
 }
 export type CloneSiteStep = "queued" | "create" | "pull" | "config" | "deploy" | "verify" | "done" | "error"
@@ -252,6 +258,7 @@ export interface CloneSiteState {
   stack: "wp" | "bedrock" | "files" // git repo → bedrock; is_wordpress → wp; else files-only (redirect shells, static/PHP sites)
   gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
   gitBranch?: string // source git.branch
+  gitDeployKey?: { privateKey: string; publicKey: string } // unique per-site key (stamped leaving gitaccess) → create payload
   additionalDomains?: string[] // extra domains served by the site → extra cutover records
   additionalDomainConfigs?: AdditionalDomain[] // full source configs (redirects) — re-created on the dest
   excludeUploads: boolean // per-site opt-out (default false = sync uploads/)
@@ -3410,21 +3417,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setCloneJob((j) => (j ? { ...j, repoKeys: j.repoKeys?.map((k) => (k.repo === repo ? fn(k) : k)) } : j))
   }, [])
 
-  // Detect, for each distinct Bedrock repo, whether the dest server's deploy key is on
-  // it. GitHub + `gh` authed → auto-check (present/missing); anything else → manual.
+  // Prepare per-repo deploy keys: generate a UNIQUE keypair for each distinct Bedrock
+  // repo (a GitHub deploy key fits exactly one repo, so the server-wide git_publickey
+  // only ever worked for the FIRST repo per server — hit live on a 2026-07-06
+  // production clone). GitHub + `gh` authed → auto-check/add; anything else → manual
+  // (the pane shows the generated public key). Keypairs survive re-entry (r / back).
   const cloneDetectRepoKeys = useCallback(async () => {
     const j = cloneJob
     if (!j || j.destServerId == null) return
-    const destSrv = servers.find((s) => s.id === j.destServerId)
-    const pub = destSrv?.git_publickey ?? ""
     const repos = Array.from(new Set(j.sites.filter((s) => s.selected && s.stack === "bedrock" && s.gitRepo).map((s) => s.gitRepo as string)))
     if (repos.length === 0) return
     const gh = await ghAvailable()
+    const existing = new Map((j.repoKeys ?? []).map((k) => [k.repo, k]))
     setCloneJob((cur) =>
       cur
         ? {
             ...cur,
             repoKeys: repos.map((repo) => {
+              const prev = existing.get(repo)
               const p = parseRepo(repo)
               const auto = gh && p?.kind === "github"
               return {
@@ -3435,6 +3445,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 kind: p?.kind ?? ("other" as RepoHost),
                 settingsUrl: p ? deployKeysSettingsUrl(p) : null,
                 auto,
+                publicKey: prev?.publicKey,
+                privateKey: prev?.privateKey,
                 status: auto ? ("checking" as RepoKeyStatus) : ("manual" as RepoKeyStatus),
               }
             }),
@@ -3443,7 +3455,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     )
     for (const repo of repos) {
       const p = parseRepo(repo)
-      if (!(gh && p?.kind === "github")) continue
+      const prev = existing.get(repo)
+      let pub = prev?.publicKey
+      if (!pub || !prev?.privateKey) {
+        const site = j.sites.find((s) => s.selected && s.gitRepo === repo)
+        const gen = await generateDeployKeypair(`spinup-${site?.domain ?? p?.name ?? "site"}@${j.destServerName}`)
+        if (!gen.ok) {
+          setRepoKey(repo, (k) => ({ ...k, status: "error", error: gen.error }))
+          continue
+        }
+        pub = gen.key.publicKey
+        setRepoKey(repo, (k) => ({ ...k, publicKey: gen.key.publicKey, privateKey: gen.key.privateKey }))
+      }
+      if (!(gh && p?.kind === "github")) continue // manual — the pane shows the key to add by hand
       try {
         const present = await ghDeployKeyPresent(p, pub)
         setRepoKey(repo, (k) => ({ ...k, status: present ? "present" : "missing" }))
@@ -3451,28 +3475,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setRepoKey(repo, (k) => ({ ...k, status: "error", error: (err as Error).message }))
       }
     }
-  }, [cloneJob, servers, setRepoKey])
+  }, [cloneJob, setRepoKey])
 
-  // Add the dest server's key as a read-only deploy key on one repo (gh path).
+  // Add the repo's generated key as a read-only deploy key on it (gh path).
   const cloneAddRepoKey = useCallback(
     async (repo: string) => {
       const j = cloneJob
-      if (!j || j.destServerId == null) return
-      const destSrv = servers.find((s) => s.id === j.destServerId)
-      const pub = destSrv?.git_publickey ?? ""
+      if (!j) return
+      const k = j.repoKeys?.find((x) => x.repo === repo)
       const p = parseRepo(repo)
-      if (!p || !pub) return
-      setRepoKey(repo, (k) => ({ ...k, status: "adding", error: undefined }))
-      const title = `spinup-${destSrv?.name ?? "dest"}`
-      const res = await ghAddDeployKey(p, pub, title)
-      setRepoKey(repo, (k) => ({ ...k, status: res.ok ? "added" : "error", error: res.ok ? undefined : res.error }))
+      if (!p || !k?.publicKey) return
+      setRepoKey(repo, (kk) => ({ ...kk, status: "adding", error: undefined }))
+      const site = j.sites.find((s) => s.selected && s.gitRepo === repo)
+      const title = `spinup-${site?.domain ?? p.name}@${j.destServerName}`
+      const res = await ghAddDeployKey(p, k.publicKey, title)
+      setRepoKey(repo, (kk) => ({ ...kk, status: res.ok ? "added" : "error", error: res.ok ? undefined : res.error }))
     },
-    [cloneJob, servers, setRepoKey],
+    [cloneJob, setRepoKey],
   )
 
-  // Advance gitaccess → clone (the wizard gates on no auto repo still "missing").
+  // Advance gitaccess → clone (the wizard gates on no auto repo still "missing"),
+  // stamping each Bedrock site with its repo's keypair for the create payload.
   const cloneGitAccessContinue = useCallback(() => {
-    setCloneJob((j) => (j && j.step === "gitaccess" ? { ...j, step: "clone" } : j))
+    setCloneJob((j) => {
+      if (!j || j.step !== "gitaccess") return j
+      const byRepo = new Map((j.repoKeys ?? []).map((k) => [k.repo, k]))
+      return {
+        ...j,
+        step: "clone",
+        sites: j.sites.map((s) => {
+          const k = s.gitRepo ? byRepo.get(s.gitRepo) : undefined
+          return k?.privateKey && k.publicKey ? { ...s, gitDeployKey: { privateKey: k.privateKey, publicKey: k.publicKey } } : s
+        }),
+      }
+    })
   }, [])
   const clearClone = useCallback(() => {
     setCloneServer(null)
@@ -3536,6 +3572,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const dbName = site.destDbName ?? site.siteUser
         const dbPw = site.destDbPassword ?? randomToken(28)
         if (site.stack !== "files") logger?.redact(dbPw)
+        if (site.gitDeployKey) logger?.redact(site.gitDeployKey.privateKey)
         logger?.log({ event: "site-start", domain: site.domain, stack: site.stack, publicFolder: site.publicFolder, tablePrefix: site.tablePrefix, reusedDestSiteId: site.destSiteId })
         if (site.stack !== "files") set((s) => ({ ...s, destDbName: dbName, destDbPassword: dbPw }))
         // Reuse only within THIS job (destSiteId already captured = retry/resume).
@@ -3560,7 +3597,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                     // source's stored value has a known typo) for future push-to-deploy —
                     // we composer install over SSH regardless (git/deploy won't run it).
                     deploy_script: "composer install -o --no-dev",
-                    git: { repo: site.gitRepo!, branch: site.gitBranch ?? "main", push_to_deploy: true },
+                    git: {
+                      repo: site.gitRepo!,
+                      branch: site.gitBranch ?? "main",
+                      push_to_deploy: true,
+                      // unique per-site key (gitaccess step) — the server-wide
+                      // git_publickey fits only ONE GitHub repo, so it can't be
+                      // reused; SpinupWP installs this pair as the site's git identity.
+                      ...(site.gitDeployKey ? { deploy_key_enabled: true, deploy_key: { privatekey: site.gitDeployKey.privateKey, publickey: site.gitDeployKey.publicKey } } : {}),
+                    },
                   }
                 : site.stack === "files"
                   ? {

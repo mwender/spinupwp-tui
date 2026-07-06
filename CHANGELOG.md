@@ -11,6 +11,21 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Changed
+- **Clone wizard: every Bedrock site now gets its own read-only deploy key.** The
+  Git-access step generates a unique keypair per repo locally (held in memory only,
+  redacted from job logs), puts the public half on the repo (auto via `gh`, or
+  manually — `o` opens the repo's deploy-key settings, `y` copies the key), and
+  sends the pair with the site create so SpinupWP installs it as the new site's
+  git identity. Verified live end to end against a private repo.
+
+### Fixed
+- **Adding deploy keys for a second Bedrock repo no longer fails.** The wizard
+  previously reused the destination server's single deploy key, but GitHub allows
+  a deploy key on only **one** repository account-wide — the first Bedrock repo
+  cloned to a server claimed it, and every later repo's add failed with
+  "key is already in use". Per-site keys remove the limit entirely.
+
 ## [0.16.1] - 2026-07-05
 
 ### Fixed

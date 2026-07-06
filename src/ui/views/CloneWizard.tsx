@@ -279,6 +279,12 @@ export function CloneWizard() {
         if (url) return openUrl(url)
         return
       }
+      // y — copy a generated public key (first manual repo, else first repo).
+      if (name === "y") {
+        const k = keys.find((x) => !x.auto && x.publicKey) ?? keys.find((x) => x.publicKey)
+        if (k?.publicKey) copyToClipboard(k.publicKey)
+        return
+      }
       // ⏎ — continue once no auto repo is still missing/in-flight (create verifies the rest).
       if (name === "return") {
         const blocked = keys.some((k) => k.status === "checking" || k.status === "adding" || (k.auto && k.status === "missing"))
@@ -518,10 +524,10 @@ export function CloneWizard() {
   }
 
   // Git-access step — deploy-key onboarding for Bedrock dests (hybrid: gh auto-add
-  // when possible, manual key + settings link otherwise).
+  // when possible, manual key + settings link otherwise). Each repo gets its OWN
+  // generated keypair — a GitHub deploy key fits exactly one repo, so the server-wide
+  // key can never cover a second repo on the same server.
   function gitAccessPane() {
-    const destServer = job!.destServerId != null ? servers.find((s) => s.id === job!.destServerId) ?? null : null
-    const pub = destServer?.git_publickey ?? ""
     const keys = job!.repoKeys ?? []
     const anyManual = keys.some((k) => !k.auto)
     const blocked = keys.some((k) => k.status === "checking" || k.status === "adding" || (k.auto && k.status === "missing"))
@@ -562,8 +568,8 @@ export function CloneWizard() {
     return (
       <Panel title=" Git access — authorize the new server to pull your repos " active>
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-          <text content="A Bedrock dest is cloned from git at create time using the new" fg={theme.textFaint} wrapMode="none" />
-          <text content="server's deploy key — it must be a read-only key on each repo." fg={theme.textFaint} wrapMode="none" />
+          <text content="A Bedrock dest is cloned from git at create time. Each repo gets its" fg={theme.textFaint} wrapMode="none" />
+          <text content="own read-only deploy key (generated here; installed on the new site)." fg={theme.textFaint} wrapMode="none" />
           <box style={{ height: 1 }} />
           {keys.length === 0 ? <text content="Checking repositories…" fg={theme.textDim} wrapMode="none" /> : null}
           {keys.map((k) => {
@@ -577,11 +583,18 @@ export function CloneWizard() {
               </box>
             )
           })}
-          {anyManual && pub ? (
+          {anyManual ? (
             <>
               <box style={{ height: 1 }} />
-              <text content="Add this read-only deploy key in each repo's settings (o opens it):" fg={theme.textFaint} wrapMode="none" />
-              <text content={pub} fg={theme.textDim} wrapMode="none" />
+              <text content="Add each repo's generated key in its settings (o opens it, y copies it):" fg={theme.textFaint} wrapMode="none" />
+              {keys
+                .filter((k) => !k.auto && k.publicKey)
+                .map((k) => (
+                  <box key={`pub-${k.repo}`} style={{ flexDirection: "row", height: 1 }}>
+                    <text content={`${k.owner}/${k.name} `} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+                    <text content={k.publicKey!} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+                  </box>
+                ))}
             </>
           ) : null}
           <box style={{ flexGrow: 1 }} />

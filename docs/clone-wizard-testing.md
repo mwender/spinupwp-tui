@@ -68,6 +68,16 @@ The whole arc, live in the app (multiple runs): Standard-WP clone, Bedrock pull,
 drill-down, DNS cutover, background/reopen. `runStandardWpPull` is also independently
 proven (HTTP 200, clean source-key revoke); `blank`+`database` create; Plan sizing.
 
+**Per-site deploy keys (2026-07-06, strict test):** the gitaccess step generates a
+unique keypair per repo and the create sends `git.deploy_key_enabled` + the pair.
+Verified with `mwender/bedrock-spinuptui` made temporarily PRIVATE so only the fresh
+key could grant access — SpinupWP used it for the create-time clone (GitHub `last_used`)
+and the full Bedrock clone passed. **`-m PEM` in `generateDeployKeypair` is load-bearing:**
+SpinupWP trims the private key's trailing newline on install, which breaks OpenSSH-format
+keys ("error in libcrypto") but not classic PEM. To re-run the strict test: flip the repo
+private, remove all deploy keys except web1's `spinupwp-*` key, delete the dest site
+(with `delete_database=true`) — and flip the repo back to public afterwards.
+
 ## Hard-won lessons baked into the code (don't relearn)
 
 - **The webroot is DETECTED, never assumed.** The 2026-07-02 web2→mercury production
