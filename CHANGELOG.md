@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-06
+
 ### Changed
 - **Clone wizard: every Bedrock site now gets its own read-only deploy key.** The
   Git-access step generates a unique keypair per repo locally (held in memory only,
@@ -851,7 +853,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/mwender/spinupwp-tui/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/mwender/spinupwp-tui/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/mwender/spinupwp-tui/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/mwender/spinupwp-tui/compare/v0.14.0...v0.15.0
