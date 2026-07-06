@@ -558,7 +558,15 @@ over SSH). The steps:
    **pull**: the destination pulls each site directly from the source over SSH (no
    bytes routed through your laptop), authenticating with a key granted onto the source
    for the job and **revoked when it's done**.
-4. **Clone sites** — a live roster runs the sites concurrently, each advancing
+4. **Git access** (only when a Bedrock site is selected) — each repo gets its **own
+   read-only deploy key**, generated locally and never persisted: the public half
+   goes on the repo (added for you via `gh` when it's installed and authed, or shown
+   for a manual add — `o` opens the repo's deploy-key settings, `y` copies the key),
+   and the pair rides the site create so SpinupWP installs it as the new site's git
+   identity. Per-site keys are what let any number of Bedrock repos land on one
+   server — GitHub allows a deploy key on only **one** repository account-wide, so a
+   shared server key stops working at the second repo.
+5. **Clone sites** — a live roster runs the sites concurrently, each advancing
    `create → pull → config → verify → done` with **live transfer progress** (bytes,
    rate, elapsed; database pulls show a true percent). Three stacks are handled:
    **Standard WP** (files + database, with `wp-config` re-stamped for the
@@ -570,10 +578,10 @@ over SSH). The steps:
    preserved, and mid-move layouts are normalized on the destination. **Additional
    domains carry over** automatically (with their redirect settings), so the clone
    answers for every hostname the source did.
-5. **Verify** — drill into any cloned site for a source-vs-clone comparison (wp-cli
+6. **Verify** — drill into any cloned site for a source-vs-clone comparison (wp-cli
    facts + an HTTP check that hits the **new** server while DNS still points at the old
    one; files-only sites compare file count, size, and HTTP instead).
-6. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
+7. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
    settles, then repoints `A` records across each site's domains (apex + additional)
    to the new server in one batched, partial-aware pass; `↑↓`/`space` include or
    exclude individual records first. `www`-style records that follow the apex are
