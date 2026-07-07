@@ -4,7 +4,7 @@ import { useEffect } from "react"
 import { theme, statusColor, diskColor } from "../lib/theme.ts"
 import { formatBytes, diskUsedPct, bar, formatDate, timeAgo, truncate } from "../lib/format.ts"
 import { Field, StatusBadge, ControlPanel, type ActionGroup } from "./components.tsx"
-import { classifyStack, stackColor } from "../lib/stack.ts"
+import { effectiveStack, stackColor } from "../lib/stack.ts"
 import { probeKindColor } from "../lib/probe.ts"
 import { resolveLocalLink } from "../lib/local.ts"
 import { normalizeDomain } from "../lib/dns.ts"
@@ -137,8 +137,12 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
   const httpsProgress = httpsToggles.get(site.id)
   const purgeProgress = purgeCacheProgress.get(site.id)
   const updates = (site.wp_plugin_updates || 0) + (site.wp_theme_updates || 0) + (site.wp_core_update ? 1 : 0)
-  const stack = classifyStack(site)
   const probe = probes.get(site.id)
+  // Prefer the DETECTED stack over SpinupWP's is_wordpress/git shape, which
+  // misclassifies some sites (a /public/ WP install shows as "Generic", Bedrock
+  // git sites report is_wordpress:false). Falls back to the API when unprobed.
+  const stack = effectiveStack(site, probe?.result.kind)
+  const isWordPress = stack !== "Non-WP"
   const probing = probingIds.has(site.id)
   const upgrade = phpUpgrades.get(site.id)
   const link = localLinks.get(site.id)
@@ -173,7 +177,7 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
         value={probing ? "identifying…" : probe ? probe.result.label + (isProbeStale(site) ? " (stale)" : "") : "not identified · d"}
         valueColor={probing ? theme.textDim : probe ? probeKindColor(probe.result.kind) : theme.textFaint}
       />
-      <Field label="Type" value={site.is_wordpress ? "WordPress" : "Generic"} valueColor={site.is_wordpress ? theme.brand : theme.textDim} />
+      <Field label="Type" value={isWordPress ? "WordPress" : "Generic"} valueColor={isWordPress ? theme.brand : theme.textDim} />
       <Field
         label="PHP"
         value={

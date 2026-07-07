@@ -37,7 +37,10 @@ Once you're in, the dashboard looks like this:
   attention" list pointing at the clone wizard (`C`).
 - **Server & site browser** — a three-pane navigator. Pick a server, see its
   sites, drill into full details (PHP version, HTTPS, page cache, backups, Git
-  deployment, WP updates, and more).
+  deployment, WP updates, and more). Each site row carries an at-a-glance **status
+  column** — `👤🔑` granted SSH keys, `H` HTTPS, `C` page cache, `B` backups (lit
+  when on, faint `·` when off), plus `◆` linked and `↑N` pending updates — aligned
+  into columns across every row, with a compact key in the Sites panel title.
 - **Stack detection & fleet composition** — the Stacks tab classifies every site
   as Standard WP, Bedrock, or Non-WP, with a fleet-wide PHP version breakdown
   (EOL versions flagged). Press `d` to SSH-probe a site's actual stack — naming
@@ -51,6 +54,13 @@ Once you're in, the dashboard looks like this:
 - **Live server health** — press `h` on any server for a real-time view over
   SSH: CPU (aggregate + per-core + sparkline), load, memory/swap, disk mounts,
   and top processes. Polls every few seconds. (See "Server health" below.)
+- **Installed plugins & themes** — press `p` on a site for its real `wp plugin
+  list` / `wp theme list` over SSH: every plugin and theme with its status,
+  current version, and available update — the detail the API only exposes as bare
+  counts. Read-only, combined scrollable list with per-section update badges.
+  Detects the WordPress directory itself, so it works on `/public/` and Bedrock
+  installs alike (even sites SpinupWP misclassifies as non-WordPress). (See
+  "Installed plugins & themes" below.)
 - **Open in browser** — press `o` on any site to open it in your default browser.
 - **Link local working copies** — press `L` on a site to link its local checkout
   (a path plus the local URL where you serve it), then open it with `t` (a
@@ -297,6 +307,7 @@ These can be set in `config.json` or via an environment variable:
 | `n` | DNS migration view for a site — its records + TTLs (`⏎` edits a TTL; `p` repoints the record; `a` shows the whole server) |
 | `N` | DNS migration view for the whole server |
 | `h` | Live server health (CPU/mem/disk over SSH) |
+| `p` | List a site's installed plugins & themes over SSH — version + updates (Servers tab, sites pane) |
 | `d` | Detect a site's stack via SSH (Servers / Stacks tabs) |
 | `D` | Detect every site in the selected stack (Stacks tab) |
 | `S` | Auto-discover & batch-link local copies (Stacks tab) |
@@ -365,6 +376,25 @@ Probes reuse the same SSH access as the health view (`site_user@ip`, your local
 keys, `BatchMode`) and are **read-only**. Results are cached to
 `~/.config/spinupwp-tui/stack-cache.json`, hydrated at startup, so detections
 survive restarts without re-running SSH.
+
+## Installed plugins & themes
+
+Press `p` on a site (Servers tab, sites pane) to list its installed plugins and
+themes over SSH — the `wp plugin list` / `wp theme list` detail the SpinupWP API
+never exposes (it only gives you *counts* of pending updates). You see every
+plugin and theme with its **status** (active / inactive / must-use / dropin),
+**current version**, and the **new version** when an update is available (`→ 1.2.3`
+in gold; `✓ current` otherwise), grouped into `PLUGINS` and `THEMES` sections each
+with an update badge.
+
+It's strictly **read-only**: it runs wp-cli as the site user using your local SSH
+keys (the same non-interactive auth the health view uses), and **detects the real
+WordPress directory itself** rather than trusting the `public_folder` setting — so
+it works on standard `/public/` installs and Bedrock (`web/wp`) alike, and even on
+sites SpinupWP misclassifies as non-WordPress (it finds WordPress core over SSH).
+Non-WordPress sites get a clear "no WordPress core found" message.
+
+`↑↓` / `jk` scroll, `r` re-reads over SSH, `Esc` / `q` / `p` closes.
 
 ## Upgrading PHP
 

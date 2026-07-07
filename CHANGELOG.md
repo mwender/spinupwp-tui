@@ -11,6 +11,31 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-07
+
+### Added
+- **At-a-glance status column in the Servers list.** Each site row now carries a
+  fixed-width capability strip — `👤🔑` granted SSH keys, `H` HTTPS, `C` page cache,
+  `B` backups (lit when on, faint `·` when off), plus `◆` linked and `↑N` pending
+  updates — aligned into clean columns across every row (the site stack tag is now
+  fixed-width so nothing jitters). A compact key sits in the Sites panel title.
+- **Installed plugins & themes (`p`).** Press `p` on a site to list its real
+  `wp plugin list` / `wp theme list` over SSH: every plugin and theme with its
+  status, current version, and available update (`→ 1.2.3`) — the detail the API
+  only exposes as bare counts. Read-only, combined scrollable list with per-section
+  update badges. Detects the WordPress directory itself, so it works on `/public/`
+  and Bedrock installs alike. (See "Installed plugins & themes" in the README.)
+
+### Fixed
+- **Site stack & type now follow the `d`-identify probe, not SpinupWP's flag.**
+  SpinupWP's `is_wordpress` is unreliable — false for Bedrock/git sites and for
+  Standard-WP `/public/` installs it imported as "Generic" — so a real WordPress
+  site could show as `app` in the Servers list, and its Details "Type" as Generic,
+  even after `d` detected WordPress. The row stack tag and the Details "Stack" /
+  "Type" fields now reflect the **detected** stack, and the plugins/themes view no
+  longer refuses a misclassified WordPress site (it confirms WordPress core over
+  SSH instead of trusting the flag).
+
 ## [0.17.0] - 2026-07-06
 
 ### Changed
@@ -853,7 +878,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/mwender/spinupwp-tui/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/mwender/spinupwp-tui/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/mwender/spinupwp-tui/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/mwender/spinupwp-tui/compare/v0.15.0...v0.16.0

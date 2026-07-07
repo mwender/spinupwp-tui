@@ -8,9 +8,9 @@
 import { useEffect, useMemo, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
-import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
+import { effectiveStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel, PhpVersionCell, Spinner, SiteMetaCell } from "../components.tsx"
+import { Panel, PhpVersionCell, Spinner, SiteStatusColumn } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { ServerDetail, SiteDetail, SiteContextStrip, SITE_CONTEXT_STRIP_HEIGHT } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
@@ -23,7 +23,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, runProbe, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -152,6 +152,10 @@ export function Browser({ rows }: { rows: number }) {
         // DNS inventory scoped to the selected site (its domains + records).
         if (focus === "sites" && sites[siteIndex] && server) setDnsInventoryServer(server, sites[siteIndex].id)
         return
+      case "p":
+        // Plugins & themes (wp-cli over SSH) for the selected site.
+        if (focus === "sites" && sites[siteIndex]) setWpInventorySite(sites[siteIndex])
+        return
       case "N":
         // Server-wide DNS inventory — every site on the server.
         if (server) setDnsInventoryServer(server)
@@ -236,6 +240,7 @@ export function Browser({ rows }: { rows: number }) {
           { key: "u", label: "change PHP" },
           { key: "m", label: "monitoring" },
           { key: "K", label: "grant key" },
+          { key: "p", label: "plugins" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
           { key: "s", label: "ssh" },
@@ -285,7 +290,15 @@ export function Browser({ rows }: { rows: number }) {
         </Panel>
 
         {/* Sites pane */}
-        <Panel title={server ? ` Sites · ${truncate(server.name, 20)} (${sites.length}) ` : " Sites "} active={focus === "sites"} flexGrow={1}>
+        <Panel
+          title={
+            server
+              ? ` Sites · ${truncate(server.name, 20)} (${sites.length})   👤🔑 keys · H·C·B https/cache/backup `
+              : " Sites "
+          }
+          active={focus === "sites"}
+          flexGrow={1}
+        >
           <List
             items={sites}
             selectedIndex={siteIndex}
@@ -295,7 +308,11 @@ export function Browser({ rows }: { rows: number }) {
             emptyText="No sites yet — press V to create a vanity site and connect this server"
             renderRow={(s, selected) => {
               const updates = (s.wp_plugin_updates || 0) + (s.wp_theme_updates || 0) + (s.wp_core_update ? 1 : 0)
-              const stack = classifyStack(s)
+              // Use the DETECTED stack (probe result) so the tag reflects `d identify`
+              // — SpinupWP's is_wordpress/git shape misclassifies some sites (e.g. a
+              // /public/ WP install shown as "app" until probed). Falls back to the
+              // API classification when unprobed. Matches the Stacks / Forgotten views.
+              const stack = effectiveStack(s, probes.get(s.id)?.result.kind)
               const keyKinds = grantedKeyKinds(s.id)
               // The server's own vanity/health page blends in perfectly when servers
               // are named like domains — mark it (⌂ + brand tint) so it can't hide.
@@ -309,8 +326,20 @@ export function Browser({ rows }: { rows: number }) {
                     wrapMode="none"
                     style={{ flexGrow: 1, flexShrink: 1 }}
                   />
-                  <SiteMetaCell linked={localLinks.has(s.id)} updates={updates} personalKey={keyKinds.personal > 0} machineKey={keyKinds.machine > 0} selected={selected} />
-                  <text content={stackTag(stack) + " "} fg={stackColor(stack, selected)} style={{ flexShrink: 0 }} />
+                  <SiteStatusColumn
+                    linked={localLinks.has(s.id)}
+                    personalKey={keyKinds.personal > 0}
+                    machineKey={keyKinds.machine > 0}
+                    https={!!s.https?.enabled}
+                    cache={!!s.page_cache?.enabled}
+                    backup={!!(s.backups?.files || s.backups?.database)}
+                    updates={updates}
+                    selected={selected}
+                  />
+                  {/* Fixed-width stack column (widest tag = "bedrock" = 7) so the
+                      icon columns to its left, and the PHP column to its right,
+                      stay vertically aligned across every row regardless of tag. */}
+                  <text content={stackTag(stack).padEnd(7) + " "} fg={stackColor(stack, selected)} wrapMode="none" style={{ flexShrink: 0 }} />
                   <PhpVersionCell version={s.php_version} upgrade={phpUpgrades.get(s.id)} selected={selected} />
                 </>
               )

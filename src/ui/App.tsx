@@ -32,6 +32,7 @@ import { LocalLinkOverlay } from "./views/LocalLink.tsx"
 import { Discover } from "./views/Discover.tsx"
 import { Forgotten } from "./views/Forgotten.tsx"
 import { DnsInventory } from "./views/DnsInventory.tsx"
+import { WpInventory } from "./views/WpInventory.tsx"
 import { ProviderConnect } from "./views/ProviderConnect.tsx"
 import { DnsRecords } from "./views/DnsRecords.tsx"
 import { KumaSite } from "./views/KumaSite.tsx"
@@ -58,6 +59,7 @@ export function App() {
     showExplain ||
     store.releaseNotesInfo !== null ||
     store.healthServer !== null ||
+    store.wpInventorySite !== null ||
     store.phpUpgradeSite !== null ||
     store.httpsToggleSite !== null ||
     store.purgeCacheSite !== null ||
@@ -116,6 +118,9 @@ export function App() {
 
     // The health overlay owns the keyboard while open (it handles Esc/q/r/h).
     if (store.healthServer) return
+
+    // The plugins/themes overlay owns the keyboard while open.
+    if (store.wpInventorySite) return
 
     // The PHP-upgrade overlay owns the keyboard while open.
     if (store.phpUpgradeSite) return
@@ -231,6 +236,7 @@ export function App() {
       {showExplain && <ExplainOverlay route={store.route} />}
       {store.releaseNotesInfo && <ReleaseNotes />}
       {store.healthServer && <Health />}
+      {store.wpInventorySite && <WpInventory />}
       {store.phpUpgradeSite && <PhpUpgrade />}
       {store.httpsToggleSite && <HttpsToggle />}
       {store.purgeCacheSite && <PurgeCache />}
