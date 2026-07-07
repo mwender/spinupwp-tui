@@ -228,6 +228,61 @@ export function SiteMetaCell({
   )
 }
 
+// The main Sites-row status column: a FIXED-slot capability strip so the stack /
+// PHP columns after it line up across every row (unlike SiteMetaCell, whose
+// present-or-absent marks shove later columns around). Each slot reserves the
+// same width whether or not the capability is on — a lit letter when on, a faint
+// "·" when off — giving a scannable H/C/B matrix down the list:
+//   ◆   local working copy linked
+//   👤🔑 personal / machine SSH key on the site (2-emoji-wide slot, always)
+//   H   HTTPS enabled   C  page cache enabled   B  backups (files or db) enabled
+//   ↑N  N pending WordPress updates
+// Detail (which keys, backup schedule, etc.) lives in the Details pane / context
+// strip; this strip is glance-only.
+export function SiteStatusColumn({
+  linked,
+  personalKey = false,
+  machineKey = false,
+  https,
+  cache,
+  backup,
+  updates,
+  selected = false,
+}: {
+  linked: boolean
+  personalKey?: boolean
+  machineKey?: boolean
+  https: boolean
+  cache: boolean
+  backup: boolean
+  updates: number
+  selected?: boolean
+}) {
+  const onColor = selected ? theme.text : theme.good
+  const offColor = selected ? theme.textDim : theme.textFaint
+  // A fixed-width toggle slot: the letter when on, a faint dot when off.
+  const flag = (label: string, on: boolean) => (
+    <text content={`${on ? label : "·"} `} fg={on ? onColor : offColor} wrapMode="none" style={{ flexShrink: 0 }} />
+  )
+  // Key slot is always two emoji-cells wide (pad the empties) so H/C/B never shift.
+  const keyCell = (personalKey ? "👤" : "  ") + (machineKey ? "🔑" : "  ")
+  return (
+    <box style={{ flexDirection: "row", flexShrink: 0 }}>
+      <text content={`${linked ? "◆" : " "} `} fg={selected ? theme.text : theme.good} wrapMode="none" style={{ flexShrink: 0 }} />
+      <text content={`${keyCell} `} wrapMode="none" style={{ flexShrink: 0 }} />
+      {flag("H", https)}
+      {flag("C", cache)}
+      {flag("B", backup)}
+      <text
+        content={updates > 0 ? `↑${updates} `.padEnd(4) : "    "}
+        fg={selected ? theme.text : theme.warn}
+        wrapMode="none"
+        style={{ flexShrink: 0 }}
+      />
+    </box>
+  )
+}
+
 // A masked text field for secrets/tokens. OpenTUI's <input> keeps its own editor
 // buffer and has no masking/password mode, so a controlled "show dots" value
 // fights that buffer (the secret flashes, then the field clears). Instead this

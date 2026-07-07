@@ -473,6 +473,9 @@ interface StoreValue extends DataState {
   // The server whose live health view is open, or null. Set by the Browser.
   healthServer: Server | null
   setHealthServer: (s: Server | null) => void
+  // The site whose plugins/themes (wp-cli) view is open, or null. Set by site views.
+  wpInventorySite: Site | null
+  setWpInventorySite: (s: Site | null) => void
   // The site whose PHP-upgrade overlay is open, or null. Set by site views.
   phpUpgradeSite: Site | null
   setPhpUpgradeSite: (s: Site | null) => void
@@ -920,6 +923,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [inputMode, setInputMode] = useState(false)
   const [overlayOpen, setOverlayOpen] = useState(false)
   const [healthServer, setHealthServer] = useState<Server | null>(null)
+  const [wpInventorySite, setWpInventorySite] = useState<Site | null>(null)
   const [phpUpgradeSite, setPhpUpgradeSite] = useState<Site | null>(null)
   const [phpUpgrades, setPhpUpgrades] = useState<Map<number, PhpUpgradeProgress>>(new Map())
   const [httpsToggleSite, setHttpsToggleSite] = useState<Site | null>(null)
@@ -4040,6 +4044,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setOverlayOpen,
     healthServer,
     setHealthServer,
+    wpInventorySite,
+    setWpInventorySite,
     phpUpgradeSite,
     setPhpUpgradeSite,
     phpUpgrades,
