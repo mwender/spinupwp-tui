@@ -12,6 +12,16 @@ versions; such changes are called out here.
 ## [Unreleased]
 
 ### Fixed
+- **The clone wizard no longer routes git-deployed non-WordPress sites through
+  a Bedrock pull.** `cloneStackFor` trusted `git.repo` alone as "this is
+  Bedrock" — true often enough (`is_wordpress` is unreliable for git sites),
+  but a git-deployed **static** site (confirmed live: a client's static site,
+  repo literally named `*-static-site`) would be routed through
+  `composer install`/wp-cli anyway, which it can't survive. A conclusive
+  non-WordPress probe (`whmcs`/`laravel`/`static`) now overrides `git.repo`;
+  a probe saying `bedrock`/`wordpress`, or no probe at all, still trusts it
+  (same "probe the site (`d`) before cloning" caveat as the sibling fix
+  above).
 - **The clone wizard no longer silently skips the database for API-mislabeled
   WordPress sites.** Its stack picker read `is_wordpress` straight from the
   API, unlike every other view (Stacks, Browser), which corrects that flag

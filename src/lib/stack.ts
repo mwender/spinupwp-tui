@@ -51,15 +51,24 @@ export function effectiveStack(site: Site, probeKind?: ProbeKind | null): Stack 
 
 // Which pull the clone wizard runs for a site — the SAME effectiveStack a
 // probe corrects elsewhere (Stacks tab, Browser), so an API-mislabeled site
-// (is_wordpress=false but really WordPress — e.g. lp.anchoredconstructiontn.com,
-// northcoastmodern.com, verified live 2026-07-08) gets a real database pull
-// once probed, instead of silently defaulting to a files-only copy. git.repo
-// still takes precedence for Bedrock detection (the pull needs the repo URL,
-// which a probe alone can't supply) — a probe saying "bedrock" without a
-// connected repo can't actually be pulled as Bedrock, so it falls back to
-// files-only rather than a wrong wp-stack pull.
+// (is_wordpress=false but really WordPress — confirmed live against real
+// client sites, 2026-07-08) gets a real database pull once probed, instead
+// of silently defaulting to a files-only copy. git.repo still takes
+// precedence for Bedrock detection (the pull needs the repo URL, which a
+// probe alone can't supply) — is_wordpress is unreliable for git sites, so
+// absent a probe (or a WP-family one) git.repo remains the best available
+// signal. But git.repo alone only proves "deployed via git," not "is
+// Bedrock" — a git-deployed STATIC site (confirmed live, 2026-07-09: a
+// client's git-deployed static site, repo literally named
+// "*-static-site") would otherwise be routed through a Bedrock pull
+// (composer install, wp-cli) it can't survive. A CONCLUSIVE non-WordPress
+// probe (whmcs/laravel/static) overrides git.repo; a probe saying
+// "bedrock"/"wordpress", or no probe at all, still trusts git.repo.
 export function cloneStackFor(site: Site, probeKind?: ProbeKind | null): "wp" | "bedrock" | "files" {
-  if (site.git?.repo) return "bedrock"
+  if (site.git?.repo) {
+    if (probeKind === "whmcs" || probeKind === "laravel" || probeKind === "static") return "files"
+    return "bedrock"
+  }
   return effectiveStack(site, probeKind) === "Standard WP" ? "wp" : "files"
 }
 
