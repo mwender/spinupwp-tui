@@ -28,6 +28,19 @@ versions; such changes are called out here.
   the `bun update -g spinuptui` one-liner, while a git checkout keeps the
   in-place `u` (git pull) updater.
 
+### Fixed
+- **Clone wizard no longer falsely fails a site when SpinupWP is slow to run its
+  add-domain event.** SpinupWP serializes events per server, so under a concurrent
+  clone an additional-domain add can sit queued for minutes behind site-creates.
+  The wizard's poll gave up after a flat 3 minutes and reported "failed on
+  SpinupWP" — aborting the site before any files were copied — even when the event
+  went on to succeed seconds later (2026-07-07 post-mortem, event 40454437). The
+  poll now waits out queueing with a generous 30-minute backstop, takes one final
+  look at the event before giving up, and when it does time out it says so
+  honestly ("gave up waiting … retry the site to re-check") instead of blaming
+  SpinupWP — a per-site retry safely resumes, since already-added domains are
+  skipped.
+
 ## [0.18.0] - 2026-07-07
 
 ### Added
