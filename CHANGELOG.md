@@ -29,6 +29,14 @@ versions; such changes are called out here.
   in-place `u` (git pull) updater.
 
 ### Fixed
+- **The header no longer shows a perpetual "Connecting {server}…" spinner when a
+  vanity-site build is just waiting for you.** The connect flow's SSH-key step is
+  manual by design (add your key, confirm in the overlay), but the resumable job
+  surfaced it with the same animated spinner as active work — so a build parked
+  at that step looked stuck-connecting on every launch, with no hint of what it
+  wanted. That state now gets its own badge: `○ {server} needs your SSH key —
+  press V`. The active "Connecting…" badge also gained the "press V" pointer the
+  clone badge always had.
 - **Clone wizard no longer falsely fails a site when SpinupWP is slow to run its
   add-domain event.** SpinupWP serializes events per server, so under a concurrent
   clone an additional-domain add can sit queued for minutes behind site-creates.
