@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/banner.png" alt="SpinupWP TUI" width="100%">
+  <img src=".github/assets/banner.png" alt="SpinupTUI" width="100%">
 </p>
 
 <h1 align="center">SpinupTUI</h1>

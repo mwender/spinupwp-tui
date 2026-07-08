@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" font-family="'SFMono-Regular','SF Mono','Menlo','DejaVu Sans Mono','Liberation Mono',monospace">
   <defs>
-    <linearGradient id="logoGrad" gradientUnits="userSpaceOnUse" x1="112" y1="178" x2="1168" y2="338">
+    <linearGradient id="logoGrad" gradientUnits="userSpaceOnUse" x1="126" y1="195" x2="1155" y2="300">
       <stop offset="0" stop-color="#00d18f"/>
       <stop offset="1" stop-color="#5ec8ff"/>
     </linearGradient>
@@ -21,89 +21,120 @@
     <circle cx="33" cy="25" r="8" fill="#f85149"/>
     <circle cx="59" cy="25" r="8" fill="#d29922"/>
     <circle cx="85" cy="25" r="8" fill="#3fb950"/>
-    <text x="109" y="31.12" font-size="17" fill="#8b949e">spinup — SpinupWP control center</text>
+    <text x="109" y="31.12" font-size="17" fill="#8b949e">spinuptui — SpinupWP control center</text>
 
     <!-- logo (vector block font) -->
-    <rect x="112" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="144" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="176" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="208" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="240" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="112" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="112" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="144" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="176" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="208" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="240" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="240" y="274" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="112" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="144" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="176" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="208" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="240" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="304" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="336" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="368" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="400" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="432" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="304" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="432" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="304" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="336" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="368" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="400" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="432" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="304" y="274" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="304" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="496" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="528" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="560" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="528" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="528" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="528" y="274" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="496" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="528" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="560" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="624" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="752" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="624" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="656" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="752" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="624" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="688" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="752" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="624" y="274" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="720" y="274" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="752" y="274" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="624" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="752" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="816" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="944" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="816" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="944" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="816" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="944" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="816" y="274" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="944" y="274" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="816" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="848" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="880" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="912" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="944" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1008" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1040" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1072" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1104" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1136" y="178" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1008" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1136" y="210" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1008" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1040" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1072" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1104" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1136" y="242" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1008" y="274" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
-    <rect x="1008" y="306" width="32" height="32" rx="2" fill="url(#logoGrad)"/>
+    <rect x="126" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="147" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="168" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="189" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="210" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="126" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="126" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="147" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="168" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="189" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="210" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="210" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="126" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="147" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="168" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="189" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="210" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="252" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="273" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="294" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="315" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="336" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="252" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="336" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="252" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="273" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="294" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="315" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="336" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="252" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="252" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="378" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="399" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="420" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="399" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="399" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="399" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="378" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="399" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="420" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="462" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="546" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="462" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="483" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="546" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="462" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="504" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="546" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="462" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="525" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="546" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="462" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="546" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="588" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="672" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="588" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="672" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="588" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="672" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="588" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="672" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="588" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="609" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="630" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="651" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="672" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="714" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="735" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="756" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="777" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="798" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="714" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="798" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="714" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="735" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="756" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="777" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="798" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="714" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="714" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="840" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="861" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="882" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="903" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="924" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="882" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="882" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="882" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="882" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="966" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1050" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="966" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1050" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="966" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1050" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="966" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1050" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="966" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="987" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1008" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1029" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1050" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1092" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1113" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1134" y="195" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1113" y="216" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1113" y="237" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1113" y="258" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1092" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1113" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
+    <rect x="1134" y="279" width="21" height="21" rx="2" fill="url(#logoGrad)"/>
 
     <!-- tagline + pulse -->
     <text x="640" y="420" font-size="26" text-anchor="middle" fill="#e6edf3">Terminal control center for your SpinupWP fleet</text>
@@ -113,7 +144,7 @@
     <!-- faux status bar (mirrors the real app chrome) -->
     <rect x="0" y="596" width="1280" height="44" fill="#161b22"/>
     <line x1="0" y1="596" x2="1280" y2="596" stroke="#232b36"/>
-    <text x="20" y="625" font-size="18" xml:space="preserve"><tspan fill="#00d18f">◆ SpinupWP</tspan><tspan fill="#8b949e">     1 Dashboard    2 Servers    3 Search    4 Events</tspan></text>
+    <text x="20" y="625" font-size="18" xml:space="preserve"><tspan fill="#00d18f">◆ SpinupTUI</tspan><tspan fill="#8b949e">   1 Dashboard   2 Servers   3 Stacks   4 Search   5 Events</tspan></text>
     <text x="1260" y="625" font-size="18" text-anchor="end" fill="#8b949e">20 servers · 171 sites</text>
   </g>
 </svg>

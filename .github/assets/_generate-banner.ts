@@ -35,8 +35,9 @@ const GLYPHS: Record<string, string[]> = {
   I: ["111", "010", "010", "010", "111"],
   N: ["10001", "11001", "10101", "10011", "10001"],
   U: ["10001", "10001", "10001", "10001", "11111"],
+  T: ["11111", "00100", "00100", "00100", "00100"],
 }
-const WORD = "SPINUP"
+const WORD = "SPINUPTUI"
 const ROWS = 5
 const LETTER_GAP = 1 // cells between letters
 const MONO = "'SFMono-Regular','SF Mono','Menlo','DejaVu Sans Mono','Liberation Mono',monospace"
@@ -118,7 +119,7 @@ function build(o: BuildOpts): string {
     <circle cx="${dotX}" cy="${titleH / 2}" r="${dotR}" fill="${C.bad}"/>
     <circle cx="${dotX + dotGap}" cy="${titleH / 2}" r="${dotR}" fill="${C.warn}"/>
     <circle cx="${dotX + dotGap * 2}" cy="${titleH / 2}" r="${dotR}" fill="${C.good}"/>
-    <text x="${titleTextX}" y="${titleH / 2 + titleFont * 0.36}" font-size="${titleFont}" fill="${C.textDim}">spinup — SpinupWP control center</text>
+    <text x="${titleTextX}" y="${titleH / 2 + titleFont * 0.36}" font-size="${titleFont}" fill="${C.textDim}">spinuptui — SpinupWP control center</text>
 
     <!-- logo (vector block font) -->
     ${logoRects(cell, logoX, o.logoY)}
@@ -131,7 +132,7 @@ function build(o: BuildOpts): string {
     <!-- faux status bar (mirrors the real app chrome) -->
     <rect x="0" y="${H - statusH}" width="${W}" height="${statusH}" fill="${C.bgAlt}"/>
     <line x1="0" y1="${H - statusH}" x2="${W}" y2="${H - statusH}" stroke="${C.border}"/>
-    <text x="20" y="${statusY}" font-size="${statusFont}" xml:space="preserve"><tspan fill="${C.brand}">◆ SpinupWP</tspan><tspan fill="${C.textDim}">     1 Dashboard    2 Servers    3 Search    4 Events</tspan></text>
+    <text x="20" y="${statusY}" font-size="${statusFont}" xml:space="preserve"><tspan fill="${C.brand}">◆ SpinupTUI</tspan><tspan fill="${C.textDim}">   1 Dashboard   2 Servers   3 Stacks   4 Search   5 Events</tspan></text>
     <text x="${W - 20}" y="${statusY}" font-size="${statusFont}" text-anchor="end" fill="${C.textDim}">20 servers · 171 sites</text>
   </g>
 </svg>
@@ -141,7 +142,7 @@ function build(o: BuildOpts): string {
 // README banner — wide and compact.
 await Bun.write(
   new URL("./banner.svg", import.meta.url),
-  build({ W: 1000, H: 360, cell: 22, titleH: 40, statusH: 30, logoY: 84, taglineY: 248, taglineSize: 17, pulseY: 272 }),
+  build({ W: 1000, H: 360, cell: 16, titleH: 40, statusH: 30, logoY: 92, taglineY: 248, taglineSize: 17, pulseY: 272 }),
 )
 
 // GitHub social preview — 2:1, more vertical room + a feature line.
@@ -150,10 +151,10 @@ await Bun.write(
   build({
     W: 1280,
     H: 640,
-    cell: 32,
+    cell: 21,
     titleH: 50,
     statusH: 44,
-    logoY: 178,
+    logoY: 195,
     taglineY: 420,
     taglineSize: 26,
     pulseY: 460,
