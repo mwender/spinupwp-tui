@@ -16,10 +16,32 @@ versions; such changes are called out here.
   WordPress sites.** Its stack picker read `is_wordpress` straight from the
   API, unlike every other view (Stacks, Browser), which corrects that flag
   against a `d` probe result. A site the API wrongly reports as non-WordPress
-  (confirmed live against two real client sites) would default to a files-only pull — filesystem copied, database never
-  touched, so the "clone" wasn't a working WordPress site. The wizard now
-  consults the same probe-corrected classification: **probe the site (`d`)
-  before cloning** so the wizard picks it up as WordPress.
+  (confirmed live against two real client sites) would default to a
+  files-only pull — filesystem copied, database never touched, so the
+  "clone" wasn't a working WordPress site. The wizard now consults the same
+  probe-corrected classification: **probe the site (`d`) before cloning** so
+  the wizard picks it up as WordPress.
+- **wp-cli reads now use the site's own configured PHP version, not the
+  server's system default.** wp-cli's installed binary shebangs
+  `#!/usr/bin/env php`, which resolves through `PATH` to whichever PHP a
+  server's `update-alternatives` currently calls default — independent of
+  any individual site's configured version, and it can be missing extensions
+  that version's CLI never got configured with. Confirmed live: a site
+  configured for PHP 8.1 silently ran its wp-cli reads under the server's
+  default 8.4, whose CLI was missing `mysqli` — every WordPress-content read
+  (posts, pages, users, active plugins, site/home URL) failed silently,
+  while file-only or native-MySQL-client commands (`core version`, `db
+  export`/`import`/`check`) were unaffected. This broke the clone wizard's
+  **Verify** step (`v`) and the **installed plugins & themes** view (`p`) for
+  any site whose configured PHP differs from the server's system default —
+  both now pin wp-cli to the site's own PHP-CLI binary, falling back to the
+  system default only if that specific version isn't installed.
+- **Verify now tells the difference between "the clone actually differs" and
+  "wp-cli couldn't read one side's database."** If `core version` succeeds
+  (a file read, no DB) but every database-backed fact comes back empty, that's
+  the missing-extension failure above, not a real content difference — Verify
+  now reports it plainly instead of a wall of misleading ✕ rows implying data
+  loss.
 
 ## [0.19.1] - 2026-07-08
 
