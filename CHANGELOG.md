@@ -11,6 +11,16 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **The clone wizard no longer silently skips the database for API-mislabeled
+  WordPress sites.** Its stack picker read `is_wordpress` straight from the
+  API, unlike every other view (Stacks, Browser), which corrects that flag
+  against a `d` probe result. A site the API wrongly reports as non-WordPress
+  (confirmed live against two real client sites) would default to a files-only pull — filesystem copied, database never
+  touched, so the "clone" wasn't a working WordPress site. The wizard now
+  consults the same probe-corrected classification: **probe the site (`d`)
+  before cloning** so the wizard picks it up as WordPress.
+
 ## [0.19.1] - 2026-07-08
 
 ### Fixed

@@ -17,7 +17,7 @@ import { APP_VERSION } from "../version.ts"
 import { cachedUpdateInfo, refreshUpdateInfo, type UpdateInfo } from "../lib/appUpdate.ts"
 import { fetchReleaseNotes, type ReleaseNotesInfo } from "../lib/releaseNotes.ts"
 import { resolveLocalLink, expandPath, normalizeLink, type LocalLink } from "../lib/local.ts"
-import type { Stack } from "../lib/stack.ts"
+import { cloneStackFor, type Stack } from "../lib/stack.ts"
 import { openTerminalAt, openUrl, openSshSession } from "../lib/open.ts"
 import { gitDrift, type Drift } from "../lib/gitStatus.ts"
 import { probeSite } from "../lib/probe.ts"
@@ -343,12 +343,6 @@ export function cloneNeedsGitAccess(j: CloneJob): boolean {
 }
 export function isCloneInFlight(j: CloneJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
-}
-// Detect a site's stack the way the clone branches: a git repo → Bedrock
-// (is_wordpress is unreliable for git sites — see the API findings doc);
-// is_wordpress → Standard WP; anything else → files-only (no DB, no wp-cli).
-export function cloneStackFor(site: Site): "wp" | "bedrock" | "files" {
-  return site.git?.repo ? "bedrock" : site.is_wordpress ? "wp" : "files"
 }
 // Alphanumeric token for generated dest DB passwords (never printed/persisted).
 function randomToken(n: number): string {
@@ -3335,8 +3329,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       const srcSites = sitesForServer(server.id)
       const sites: CloneSiteState[] = srcSites.map((s) => {
-        const stack = cloneStackFor(s)
-        const isWordPress = s.is_wordpress
+        // Probe-corrected: an API-mislabeled site (is_wordpress=false but really
+        // WordPress) gets a real database pull once probed (`d`), instead of
+        // silently defaulting to a files-only copy — see cloneStackFor's comment.
+        const stack = cloneStackFor(s, probes.get(s.id)?.result.kind)
+        const isWordPress = stack !== "files"
         return {
           sourceSiteId: s.id,
           domain: s.domain,
@@ -3371,7 +3368,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setCloneServer(server)
       setCloneJob(draft)
     },
-    [cloneJob, sitesForServer, servers],
+    [cloneJob, sitesForServer, servers, probes],
   )
 
   // Background an in-flight clone: hide the wizard but KEEP the job running (the

@@ -49,6 +49,20 @@ export function effectiveStack(site: Site, probeKind?: ProbeKind | null): Stack 
   }
 }
 
+// Which pull the clone wizard runs for a site — the SAME effectiveStack a
+// probe corrects elsewhere (Stacks tab, Browser), so an API-mislabeled site
+// (is_wordpress=false but really WordPress — e.g. lp.anchoredconstructiontn.com,
+// northcoastmodern.com, verified live 2026-07-08) gets a real database pull
+// once probed, instead of silently defaulting to a files-only copy. git.repo
+// still takes precedence for Bedrock detection (the pull needs the repo URL,
+// which a probe alone can't supply) — a probe saying "bedrock" without a
+// connected repo can't actually be pulled as Bedrock, so it falls back to
+// files-only rather than a wrong wp-stack pull.
+export function cloneStackFor(site: Site, probeKind?: ProbeKind | null): "wp" | "bedrock" | "files" {
+  if (site.git?.repo) return "bedrock"
+  return effectiveStack(site, probeKind) === "Standard WP" ? "wp" : "files"
+}
+
 // `onSelection` brightens the colors that read poorly on the focused
 // (bright-green) selection background (green-on-green Bedrock, the faint grey).
 export function stackColor(stack: Stack, onSelection = false): string {
