@@ -29,7 +29,7 @@ export function copyToClipboard(text: string): void {
 // macOS has no registered "default terminal" role (unlike the default browser),
 // so we can't ask LaunchServices which terminal to use. The best proxy is
 // $TERM_PROGRAM — the terminal that launched this process sets it — which works
-// well because the app is normally started via the `spinup` command from the
+// well because the app is normally started via the `spinuptui` command from the
 // user's terminal of choice. This maps those values to the app name `open -a`
 // expects. Unknown/unset → Terminal.
 const TERM_PROGRAM_APP: Record<string, string> = {

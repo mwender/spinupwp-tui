@@ -44,7 +44,7 @@ export function Onboarding({ onComplete }: { onComplete: () => void }) {
         backgroundColor: theme.bg,
       }}
     >
-      <ascii-font text="SPINUP" font="block" color={[theme.brand, theme.accent]} />
+      <ascii-font text="SPINUPTUI" font="block" color={[theme.brand, theme.accent]} />
       <box style={{ height: 1 }} />
       <box
         title=" Welcome "

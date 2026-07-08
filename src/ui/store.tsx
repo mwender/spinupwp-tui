@@ -1468,7 +1468,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (monitorIds.length) {
             try {
               const { result } = await withKuma(kumaConn, async (kuma) => {
-                const id = await kuma.addManualMaintenance(`Reboot ${server.name}`, "Planned reboot fired from Spinup")
+                const id = await kuma.addManualMaintenance(`Reboot ${server.name}`, "Planned reboot fired from SpinupTUI")
                 try {
                   await kuma.setMaintenanceMonitors(id, monitorIds)
                 } catch (err) {

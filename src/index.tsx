@@ -18,17 +18,18 @@ const command = args.find((a) => !a.startsWith("-"))
 
 if (args.includes("-h") || args.includes("--help") || command === "help") {
   const cfg = loadConfig()
-  console.log(`Spinup v${pkg.version} — terminal dashboard for your SpinupWP account
+  console.log(`SpinupTUI v${pkg.version} — terminal dashboard for your SpinupWP account
 
 Usage:
-  spinup            Launch the dashboard
-  spinup login      Set or update your saved API token
-  spinup where      Print the config file path and token source
-  spinup --version  Print the version
-  spinup --help     Show this help
+  spinuptui            Launch the dashboard
+  spinuptui login      Set or update your saved API token
+  spinuptui where      Print the config file path and token source
+  spinuptui --version  Print the version
+  spinuptui --help     Show this help
 
 Token resolution: SPINUPWP_ACCESS_TOKEN (env / .env) first, then the config
-file. Run \`spinup login\` once to save a token so \`spinup\` works from anywhere.
+file. Run \`spinuptui login\` once to save a token so \`spinuptui\` works from
+anywhere.
 
 Config file: ${configPath()}
 Token source: ${cfg.tokenSource}`)
@@ -47,7 +48,7 @@ if (command === "where") {
   process.exit(0)
 }
 
-// `spinup login` forces the onboarding wizard even when a token already exists,
+// `spinuptui login` forces the onboarding wizard even when a token already exists,
 // so the token can be (re)saved to the config file for global use.
 const forceLogin = command === "login"
 

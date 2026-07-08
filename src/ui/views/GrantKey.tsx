@@ -262,7 +262,7 @@ export function GrantKey() {
             <box style={{ height: 1 }} />
             <text content="Why: each site runs as its own Linux user, and its SSH" fg={theme.textDim} wrapMode="none" />
             <text content="keys live in that user's authorized_keys. Writing another" fg={theme.textDim} wrapMode="none" />
-            <text content="user's file needs root — so Spinup logs in as the server's" fg={theme.textDim} wrapMode="none" />
+            <text content="user's file needs root — so SpinupTUI logs in as the server's" fg={theme.textDim} wrapMode="none" />
             <text content="sudo user. (The SpinupWP API can't manage SSH keys.)" fg={theme.textDim} wrapMode="none" />
             <box style={{ height: 1 }} />
             <text content="Press s to connect sudo now (or S on the server), then" fg={theme.textFaint} wrapMode="none" />
@@ -317,7 +317,7 @@ export function GrantKey() {
             ) : (
               <>
                 <text content="Personal keys log you in as yourself; the machine key is" fg={theme.textFaint} wrapMode="none" />
-                <text content="Spinup's own identity for unattended automation." fg={theme.textFaint} wrapMode="none" />
+                <text content="SpinupTUI's own identity for unattended automation." fg={theme.textFaint} wrapMode="none" />
               </>
             )}
           </box>
@@ -389,7 +389,7 @@ export function GrantKey() {
               <text content={`The same idempotent ${revoke ? "removal" : "append"} runs on each of the ${n} sites.`} fg={theme.textFaint} wrapMode="none" />
             )}
             <box style={{ height: 1 }} />
-            <text content={revoke ? "This removes SSH access for those keys. Press y to continue." : "This is Spinup's most powerful write. Press y to continue."} fg={theme.warn} wrapMode="none" />
+            <text content={revoke ? "This removes SSH access for those keys. Press y to continue." : "This is SpinupTUI's most powerful write. Press y to continue."} fg={theme.warn} wrapMode="none" />
             <text content="y confirm · ← back · Esc cancel" fg={theme.textFaint} wrapMode="none" />
           </box>
         </Panel>

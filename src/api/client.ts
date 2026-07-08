@@ -180,7 +180,7 @@ export class SpinupWPClient implements SpinupWPClientLike {
     }
     if (res.status === 403) {
       throw new ApiError(
-        "Your token is read-only — this action needs a Read/Write token. Run `spinup login` to set one.",
+        "Your token is read-only — this action needs a Read/Write token. Run `spinuptui login` to set one.",
         403,
       )
     }

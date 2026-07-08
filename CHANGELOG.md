@@ -11,6 +11,23 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Changed
+- **The app is now "SpinupTUI", and the command is `spinuptui`.** The rename
+  distinguishes the app from the SpinupWP service it talks to (and `spinup` was
+  already taken on npm). Everything else is unchanged — the config file stays at
+  `~/.config/spinupwp-tui/config.json`, and no settings move. **Source-checkout
+  users:** re-run `bun run link-global` to get the `spinuptui` command (and
+  `bun unlink` the old `spinup` link if you had one).
+
+### Added
+- **Installable from npm.** `bun install -g spinuptui` installs the global
+  `spinuptui` command; update any time with `bun update -g spinuptui`. The
+  package runs from source under Bun (OpenTUI needs Bun's FFI) — running the
+  bin under Node prints a friendly "install Bun" pointer instead of a crash.
+  The in-app update notice is now channel-aware: a package install is shown
+  the `bun update -g spinuptui` one-liner, while a git checkout keeps the
+  in-place `u` (git pull) updater.
+
 ### Fixed
 - **Clone wizard no longer falsely fails a site when SpinupWP is slow to run its
   add-domain event.** SpinupWP serializes events per server, so under a concurrent

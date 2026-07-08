@@ -208,7 +208,7 @@ export function VanityNewSite() {
         <Panel title=" Connect this server with a vanity site " active>
           <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
             <text content="A tiny placeholder site at the server's own hostname — so there's" fg={theme.textDim} />
-            <text content="a site user to hold your SSH key and Spinup can work with it." fg={theme.textDim} />
+            <text content="a site user to hold your SSH key and SpinupTUI can work with it." fg={theme.textDim} />
             <box style={{ height: 1 }} />
             <Field label="Domain" value={server!.name} />
             <Field label="Points to" value={server!.ip_address ?? "—"} />
@@ -300,7 +300,7 @@ export function VanityNewSite() {
           <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>
             <Steps rows={stepRows()} />
             <box style={{ height: 1 }} />
-            <text content="The site exists, but Spinup can't SSH in until your key is on the" fg={theme.textDim} wrapMode="none" />
+            <text content="The site exists, but SpinupTUI can't SSH in until your key is on the" fg={theme.textDim} wrapMode="none" />
             <text content="site user." fg={theme.textDim} wrapMode="none" />
             <box style={{ height: 1 }} />
             {granting ? (
@@ -329,7 +329,7 @@ export function VanityNewSite() {
               </>
             ) : (
               <>
-                <text content="Connect sudo and Spinup adds your key for you — or add it in" fg={theme.textDim} wrapMode="none" />
+                <text content="Connect sudo and SpinupTUI adds your key for you — or add it in" fg={theme.textDim} wrapMode="none" />
                 <text content="SpinupWP (the site's SFTP & SSH → Site User), then come back." fg={theme.textFaint} wrapMode="none" />
                 <box style={{ height: 1 }} />
                 <text content="❯ Press S to connect sudo" fg={theme.brand} wrapMode="none" />

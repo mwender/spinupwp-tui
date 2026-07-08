@@ -507,7 +507,7 @@ export function CloneWizard() {
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
           <text content={`Dest: ${job!.destServerName || "—"}  ${job!.destServerIp || ""}`} fg={theme.text} wrapMode="none" />
           <box style={{ height: 1 }} />
-          <text content="Spinup needs a sudo connection on BOTH ends: root on the source" fg={theme.textFaint} wrapMode="none" />
+          <text content="SpinupTUI needs a sudo connection on BOTH ends: root on the source" fg={theme.textFaint} wrapMode="none" />
           <text content="to read each site, root on the dest to write + import." fg={theme.textFaint} wrapMode="none" />
           <box style={{ height: 1 }} />
           {row(srcOn, srcOn ? "Source sudo connected" : "Source sudo not connected — press G")}
