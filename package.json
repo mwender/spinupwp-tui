@@ -4,7 +4,7 @@
   "description": "SpinupTUI — a terminal dashboard for browsing, monitoring, and managing your SpinupWP servers and sites.",
   "type": "module",
   "bin": {
-    "spinuptui": "./bin/spinuptui.js"
+    "spinuptui": "bin/spinuptui.js"
   },
   "files": [
     "bin",
