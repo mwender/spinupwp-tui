@@ -11,6 +11,17 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-07-08
+
+### Fixed
+- **Finished the SpinupTUI rebrand in the README and cover banner/social-preview
+  images.** The v0.19.0 rename swept the CLI banner, header wordmark, and app
+  chrome, but missed 14 mid-sentence "Spinup" mentions scattered through the
+  README's prose, and the cover banner/social-preview images still spelled out
+  "SPINUP" in block-letter art. Both are fixed now; `spinup-sudo` (a Keychain
+  service name) and the `spinup-tui` machine key (a literal SSH key identity)
+  are unaffected — they're real persisted identifiers, not branding.
+
 ## [0.19.0] - 2026-07-08
 
 ### Changed
@@ -918,7 +929,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/mwender/spinupwp-tui/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/mwender/spinupwp-tui/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/mwender/spinupwp-tui/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/mwender/spinupwp-tui/compare/v0.16.1...v0.17.0
