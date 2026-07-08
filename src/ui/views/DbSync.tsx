@@ -163,7 +163,7 @@ export function DbSync() {
       <>
         <box style={{ height: 1 }} />
         <text content="No post-import hook set up for this project." fg={theme.textFaint} wrapMode="none" />
-        <text content="Spinup can run bin/sync.d/post-import.sh after each pull —" fg={theme.textFaint} wrapMode="none" />
+        <text content="SpinupTUI can run bin/sync.d/post-import.sh after each pull —" fg={theme.textFaint} wrapMode="none" />
         <text content="e.g. swap Elementor URLs, toggle dev-only plugins." fg={theme.textFaint} wrapMode="none" />
         <text content="  s  write a sample hook" fg={theme.textDim} wrapMode="none" />
       </>

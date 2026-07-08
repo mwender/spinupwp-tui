@@ -1,10 +1,25 @@
 {
-  "name": "spinupwp-tui",
+  "name": "spinuptui",
   "version": "0.18.0",
-  "description": "A cool terminal UI for browsing and monitoring your SpinupWP servers and sites.",
+  "description": "SpinupTUI — a terminal dashboard for browsing, monitoring, and managing your SpinupWP servers and sites.",
   "type": "module",
   "bin": {
-    "spinup": "./src/index.tsx"
+    "spinuptui": "./bin/spinuptui.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mwender/spinupwp-tui.git"
+  },
+  "homepage": "https://github.com/mwender/spinupwp-tui#readme",
+  "bugs": {
+    "url": "https://github.com/mwender/spinupwp-tui/issues"
   },
   "scripts": {
     "dev": "bun run src/index.tsx",
@@ -12,7 +27,7 @@
     "typecheck": "tsc --noEmit",
     "link-global": "bun link",
     "unlink-global": "bun unlink",
-    "build:binary": "bun build src/index.tsx --compile --outfile spinup"
+    "build:binary": "bun build src/index.tsx --compile --outfile spinuptui"
   },
   "keywords": [
     "spinupwp",
@@ -20,14 +35,15 @@
     "terminal-ui",
     "opentui",
     "wordpress",
-    "devops"
+    "devops",
+    "dashboard"
   ],
-  "author": "",
+  "author": "Michael Wender",
   "license": "MIT",
   "dependencies": {
     "@opentui-ui/toast": "^0.0.5",
-    "@opentui/core": "latest",
-    "@opentui/react": "latest",
+    "@opentui/core": "^0.4.1",
+    "@opentui/react": "^0.4.1",
     "react": "^19.0.0",
     "socket.io-client": "^4.8.3"
   },

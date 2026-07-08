@@ -224,7 +224,7 @@ export const PROVIDER_REGISTRY: Record<ConnProvider, ProviderDescriptor> = {
     console: "https://hub.godaddy.com/clients?view=table",
     consoleLabel: "Clients hub",
     accessNote:
-      "Spinup assumes you manage GoDaddy domains via Delegate Access from one main account. Press w to open your Clients hub (the domain is copied to your clipboard) → Login as the client → paste the domain → Exit access before checking the next.",
+      "SpinupTUI assumes you manage GoDaddy domains via Delegate Access from one main account. Press w to open your Clients hub (the domain is copied to your clipboard) → Login as the client → paste the domain → Exit access before checking the next.",
     verify: verifyGodaddy,
   },
 }

@@ -209,7 +209,7 @@ export function SudoConnect() {
             </box>
             <box style={{ height: 1 }} />
             <text content="Privileged actions on this server run for the rest of this" fg={theme.textDim} wrapMode="none" />
-            <text content="session — press K on a site to grant Spinup's SSH key." fg={theme.textDim} wrapMode="none" />
+            <text content="session — press K on a site to grant SpinupTUI's SSH key." fg={theme.textDim} wrapMode="none" />
             <box style={{ height: 1 }} />
             {saved ? (
               <>
@@ -294,7 +294,7 @@ export function SudoConnect() {
           </box>
           <box style={{ height: 1 }} />
           <text content="Why: writing an SSH key into a site user's authorized_keys" fg={theme.textDim} wrapMode="none" />
-          <text content="needs root, so Spinup logs in as your sudo user and" fg={theme.textDim} wrapMode="none" />
+          <text content="needs root, so SpinupTUI logs in as your sudo user and" fg={theme.textDim} wrapMode="none" />
           <text content="escalates. (The SpinupWP API can't manage SSH keys.)" fg={theme.textDim} wrapMode="none" />
           <box style={{ height: 1 }} />
           <text content="Enter this server's SpinupWP sudo user and its sudo" fg={theme.textDim} wrapMode="none" />

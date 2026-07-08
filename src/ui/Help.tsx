@@ -1,4 +1,4 @@
-// Help overlay: an "About Spinup" column plus the keybindings, laid out in
+// Help overlay: an "About SpinupTUI" column plus the keybindings, laid out in
 // responsive columns so it stays short on wide terminals and stacks on narrow
 // ones. Rendered on top via zIndex. Opened/closed with `?`.
 
@@ -8,7 +8,7 @@ import { theme } from "../lib/theme.ts"
 import { APP_NAME, APP_VERSION, REPO_URL } from "../version.ts"
 import { Sparkle, Spinner } from "./components.tsx"
 import { useStore } from "./store.tsx"
-import { runSelfUpdate, type UpdateInfo, type SelfUpdateResult } from "../lib/appUpdate.ts"
+import { runSelfUpdate, installChannel, PACKAGE_UPDATE_CMD, type UpdateInfo, type SelfUpdateResult } from "../lib/appUpdate.ts"
 
 type Section = { title: string; keys: [string, string][] }
 
@@ -43,7 +43,7 @@ const NAV: Section = {
     ["u", "Change PHP version"],
     ["H", "Enable/disable HTTPS"],
     ["P", "Purge page + object cache"],
-    ["K", "Grant Spinup's SSH key (sudo)"],
+    ["K", "Grant SpinupTUI's SSH key (sudo)"],
     ["d", "Identify a site's app (SSH)"],
   ],
 }
@@ -175,7 +175,7 @@ function AboutColumn({
       ) : updateInfo ? (
         line("You're on the latest.", theme.textFaint)
       ) : null}
-      {updateInfo?.updateAvailable && selfUpdate === "idle" ? (
+      {updateInfo?.updateAvailable && selfUpdate === "idle" && installChannel() === "git" ? (
         <box style={{ flexDirection: "row" }}>
           <text content="u " fg={theme.brand} attributes={1} />
           <text content="update now (git pull)" fg={theme.textDim} wrapMode="none" />
@@ -190,13 +190,22 @@ function AboutColumn({
       {selfUpdate !== "idle" && selfUpdate !== "running" ? (
         <text content={selfUpdate.message} fg={selfUpdate.ok ? theme.good : theme.bad} />
       ) : null}
-      {line("Manual: git pull in your")}
-      {line("checkout — spinup picks it")}
-      {line("up immediately.")}
+      {installChannel() === "package" ? (
+        <>
+          {line("Manual:")}
+          {line(PACKAGE_UPDATE_CMD, theme.text)}
+        </>
+      ) : (
+        <>
+          {line("Manual: git pull in your")}
+          {line("checkout — spinuptui picks")}
+          {line("it up immediately.")}
+        </>
+      )}
       <box style={{ height: 1 }} />
       <box style={{ flexDirection: "row" }}>
         <text content="check  " fg={theme.textFaint} />
-        <text content="spinup --version" fg={theme.text} wrapMode="none" />
+        <text content="spinuptui --version" fg={theme.text} wrapMode="none" />
       </box>
       <box style={{ height: 1 }} />
       {line(REPO_URL.replace(/^https:\/\//, ""), theme.textFaint)}
@@ -221,6 +230,7 @@ export function HelpOverlay({ onClose }: { onClose: () => void }) {
       return
     }
     if (key.name !== "u") return
+    if (installChannel() !== "git") return
     if (!updateInfo?.updateAvailable || selfUpdate === "running") return
     setSelfUpdate("running")
     void runSelfUpdate().then(setSelfUpdate)
