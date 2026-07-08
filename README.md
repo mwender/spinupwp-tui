@@ -2,7 +2,7 @@
   <img src=".github/assets/banner.png" alt="SpinupWP TUI" width="100%">
 </p>
 
-<h1 align="center">Spinup</h1>
+<h1 align="center">SpinupTUI</h1>
 
 <p align="center">
   A fast, keyboard-driven terminal control center for your
@@ -14,7 +14,7 @@
 Once you're in, the dashboard looks like this:
 
 ```
- ◆ Spinup v0.9.0   1 Dashboard   2 Servers   3 Stacks   4 Search   5 Events   20 servers · 171 sites
+ ◆ SpinupTUI v0.9.0   1 Dashboard   2 Servers   3 Stacks   4 Search   5 Events   20 servers · 171 sites
 
  ┌──────────────┐ ┌───────────────┐ ┌───────────────────┐ ┌──────────────────────┐
  │ Servers      │ │ Sites         │ │ Fleet Disk        │ │ WP Updates           │
@@ -188,59 +188,68 @@ Once you're in, the dashboard looks like this:
 
 ## Install & run
 
+The easy way — install the published package globally:
+
 ```sh
-git clone <this-repo> spinupwp-tui
-cd spinupwp-tui
-bun install
-bun run start
+bun install -g spinuptui
+spinuptui login          # save your API token to the config file (once)
+spinuptui                # launch from any directory
 ```
 
 On first launch, if no token is configured you'll be guided through a short
 onboarding flow that validates your token and saves it locally.
 
-### Run `spinup` from anywhere
-
-Install the `spinup` command globally with a symlink to this checkout (updates as
-you pull):
+### From source
 
 ```sh
-bun run link-global      # = bun link; creates `spinup` on your PATH
-spinup login             # save your API token to the config file (once)
-spinup                   # launch from any directory
+git clone <this-repo> spinuptui
+cd spinuptui
+bun install
+bun run start
 ```
 
-`spinup login` is what makes it work outside the project: the project `.env` is
-only read from the project directory, so the global command relies on the token
-saved in the config file. (Run `bun run unlink-global` to remove the command.)
+To run a source checkout from anywhere, install the `spinuptui` command globally
+with a symlink to the checkout (updates as you pull):
+
+```sh
+bun run link-global      # = bun link; creates `spinuptui` on your PATH
+```
+
+`spinuptui login` is what makes it work outside the project: the project `.env`
+is only read from the project directory, so the global command relies on the
+token saved in the config file. (Run `bun run unlink-global` to remove the
+command.)
 
 For a standalone binary that doesn't need Bun on `PATH` at runtime:
 
 ```sh
-bun run build:binary     # produces ./spinup — move it onto your PATH
+bun run build:binary     # produces ./spinuptui — move it onto your PATH
 ```
 
 ### Updating
 
 The app tells you when a newer release exists — a gold `✦ vX.Y.Z` appears next
-to the version in the header (and in the `?` About panel). From there, press
-**`u`** to update in place (`git pull --ff-only` in your checkout; refuses if
-you have uncommitted changes, and never merges/rebases). It can't hot-reload
-the already-running process, so it tells you plainly when to restart — press
-`q`, then relaunch `spinup`. **If the update changed dependencies, it tells you
-to run `bun install` too** before restarting.
+to the version in the header (and in the `?` About panel).
 
-Prefer to do it by hand? `git pull` in your checkout works the same way — the
-global `spinup` symlink picks up the new code immediately. A standalone binary
-needs a fresh `bun run build:binary` either way.
+- **Package install:** `bun update -g spinuptui` (the About panel shows the
+  same command).
+- **Source checkout:** press **`u`** in the About panel to update in place
+  (`git pull --ff-only`; refuses if you have uncommitted changes, and never
+  merges/rebases). It can't hot-reload the already-running process, so it tells
+  you plainly when to restart — press `q`, then relaunch `spinuptui`. **If the
+  update changed dependencies, it tells you to run `bun install` too** before
+  restarting. `git pull` by hand works the same way — the global `spinuptui`
+  symlink picks up the new code immediately. A standalone binary needs a fresh
+  `bun run build:binary` either way.
 
 #### CLI subcommands
 
 ```
-spinup            Launch the dashboard
-spinup login      Set or update your saved API token
-spinup where      Show the config path and which source the token came from
-spinup --version  Print the version
-spinup --help     Show help
+spinuptui            Launch the dashboard
+spinuptui login      Set or update your saved API token
+spinuptui where      Show the config path and which source the token came from
+spinuptui --version  Print the version
+spinuptui --help     Show help
 ```
 
 ## Configuration
@@ -273,11 +282,11 @@ These can be set in `config.json` or via an environment variable:
 - **`localSync`** / `SPINUPWP_LOCAL_SYNC` — opt-in for the **Pull production →
   local** DB sync (`p`); off by default because it overwrites your local database.
   **Prefer `"localSync": true` in `config.json`** — it's read from a fixed path
-  (`~/.config/spinupwp-tui/config.json`) so it applies wherever you launch `spinup`
+  (`~/.config/spinupwp-tui/config.json`) so it applies wherever you launch `spinuptui`
   from. The environment variable works too, but note a `.env` is only loaded when
   you launch from the directory that contains it (Bun reads `.env` from the current
   working directory, not from where the installed command lives) — so a repo or
-  project `.env` won't take effect for the globally-installed `spinup` run from
+  project `.env` won't take effect for the globally-installed `spinuptui` run from
   elsewhere. For a persistent, location-independent setting, use `config.json`.
 
 - **`uptimeKuma`** / `SPINUP_KUMA_URL` + `SPINUP_KUMA_USERNAME` +
@@ -408,7 +417,7 @@ it finishes.
 - **Needs a Read/Write token.** SpinupWP exposes no token-scope endpoint, so a
   read-only token is detected when the upgrade comes back `403` — you'll get a
   clear "token is read-only" message and nothing changes. Swap in a Read/Write
-  token (`spinup login`) to actually apply upgrades.
+  token (`spinuptui login`) to actually apply upgrades.
 - **On-demand install.** If the chosen version isn't installed on the server yet,
   SpinupWP installs it first; the event simply takes a little longer.
 - **Pending platform upgrade.** If the site's server has a pending SpinupWP

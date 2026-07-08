@@ -648,7 +648,7 @@ export function NewServer() {
           <box style={{ height: 1 }} />
           <text content="Next: connect it with a vanity site" fg={theme.accent} wrapMode="none" />
           <text content="A brand-new server has no site, so there's nothing to attach an" fg={theme.textDim} />
-          <text content="SSH key to and no way to reach it from Spinup. Creating a vanity" fg={theme.textDim} />
+          <text content="SSH key to and no way to reach it from SpinupTUI. Creating a vanity" fg={theme.textDim} />
           <text content="site — a tiny placeholder at the server's own hostname — gives" fg={theme.textDim} />
           <text content="you that foothold. Open the server in your Servers list to do it." fg={theme.textDim} />
           <box style={{ height: 1 }} />
@@ -675,7 +675,7 @@ export function NewServer() {
     return (
       <Panel title=" Link your server provider " active>
         <box style={{ flexDirection: "column", width: 64, paddingTop: 1, paddingBottom: 1 }}>
-          <text content={`${key ? providerLabel(key) : "This provider"} isn't linked in Spinup yet.`} fg={theme.text} wrapMode="none" />
+          <text content={`${key ? providerLabel(key) : "This provider"} isn't linked in SpinupTUI yet.`} fg={theme.text} wrapMode="none" />
           <text content="Paste its SpinupWP provider id (Account Settings →" fg={theme.textDim} wrapMode="none" />
           <text content="Server Providers — the ID column):" fg={theme.textDim} wrapMode="none" />
           <box style={{ height: 1 }} />

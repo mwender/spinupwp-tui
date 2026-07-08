@@ -321,7 +321,7 @@ export function ProviderConnect() {
             {isDelegateMode ? (
               <box style={{ flexDirection: "column", marginTop: 1 }}>
                 <text
-                  content={`Every zone on the right is a domain Spinup has already seen hosted here. Each shows an access note — "${DEFAULT_WEB_ACCESS_NOTE}" by default, or your own note (e.g. a third-party IT contact) once you set one.`}
+                  content={`Every zone on the right is a domain SpinupTUI has already seen hosted here. Each shows an access note — "${DEFAULT_WEB_ACCESS_NOTE}" by default, or your own note (e.g. a third-party IT contact) once you set one.`}
                   fg={theme.textFaint}
                 />
                 <box style={{ height: 1 }} />

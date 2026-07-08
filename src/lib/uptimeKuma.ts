@@ -374,7 +374,7 @@ export function loadPushMonitorPayload(name: string, pushToken: string): Record<
     type: "push",
     name,
     pushToken,
-    description: "1-min load average ×100 (integer), pushed by Spinup's heartbeat cron. 164 = load 1.64.",
+    description: "1-min load average ×100 (integer), pushed by SpinupTUI's heartbeat cron. 164 = load 1.64.",
     // The cron beats once a minute; alert after ~2 missed beats.
     interval: 60,
     retryInterval: 60,
@@ -394,7 +394,7 @@ export function redisPushMonitorPayload(name: string, pushToken: string): Record
     type: "push",
     name,
     pushToken,
-    description: "Server-wide Redis sentinel: Spinup's heartbeat cron pings Redis every minute and reports up/down. Silence = the server (not Redis) is the problem.",
+    description: "Server-wide Redis sentinel: SpinupTUI's heartbeat cron pings Redis every minute and reports up/down. Silence = the server (not Redis) is the problem.",
     interval: 60,
     retryInterval: 60,
     maxretries: 2,

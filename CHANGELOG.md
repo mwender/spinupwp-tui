@@ -11,6 +11,23 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Changed
+- **The app is now "SpinupTUI", and the command is `spinuptui`.** The rename
+  distinguishes the app from the SpinupWP service it talks to (and `spinup` was
+  already taken on npm). Everything else is unchanged — the config file stays at
+  `~/.config/spinupwp-tui/config.json`, and no settings move. **Source-checkout
+  users:** re-run `bun run link-global` to get the `spinuptui` command (and
+  `bun unlink` the old `spinup` link if you had one).
+
+### Added
+- **Installable from npm.** `bun install -g spinuptui` installs the global
+  `spinuptui` command; update any time with `bun update -g spinuptui`. The
+  package runs from source under Bun (OpenTUI needs Bun's FFI) — running the
+  bin under Node prints a friendly "install Bun" pointer instead of a crash.
+  The in-app update notice is now channel-aware: a package install is shown
+  the `bun update -g spinuptui` one-liner, while a git checkout keeps the
+  in-place `u` (git pull) updater.
+
 ### Fixed
 - **The header no longer shows a perpetual "Connecting {server}…" spinner when a
   vanity-site build is just waiting for you.** The connect flow's SSH-key step is
@@ -20,6 +37,17 @@ versions; such changes are called out here.
   wanted. That state now gets its own badge: `○ {server} needs your SSH key —
   press V`. The active "Connecting…" badge also gained the "press V" pointer the
   clone badge always had.
+- **Clone wizard no longer falsely fails a site when SpinupWP is slow to run its
+  add-domain event.** SpinupWP serializes events per server, so under a concurrent
+  clone an additional-domain add can sit queued for minutes behind site-creates.
+  The wizard's poll gave up after a flat 3 minutes and reported "failed on
+  SpinupWP" — aborting the site before any files were copied — even when the event
+  went on to succeed seconds later (2026-07-07 post-mortem, event 40454437). The
+  poll now waits out queueing with a generous 30-minute backstop, takes one final
+  look at the event before giving up, and when it does time out it says so
+  honestly ("gave up waiting … retry the site to re-check") instead of blaming
+  SpinupWP — a per-site retry safely resumes, since already-added domains are
+  skipped.
 
 ## [0.18.0] - 2026-07-07
 

@@ -513,7 +513,7 @@ export function KumaSite() {
         <>
           <text content="No notification providers in Uptime Kuma yet." fg={theme.text} wrapMode="none" />
           <text content="Add one in Kuma → Settings → Notifications (Telegram, email, …)," fg={theme.textDim} wrapMode="none" />
-          <text content="then press n again — Spinup wires it to this site's checks." fg={theme.textDim} wrapMode="none" />
+          <text content="then press n again — SpinupTUI wires it to this site's checks." fg={theme.textDim} wrapMode="none" />
           <box style={{ height: 1 }} />
           <text content="esc back" fg={theme.textFaint} wrapMode="none" />
         </>

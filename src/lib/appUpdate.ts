@@ -7,7 +7,7 @@
 // each time (releases are infrequent; the unauthenticated API allows 60 req/hr).
 // Never throws and degrades gracefully offline.
 
-import { join } from "node:path"
+import { join, sep } from "node:path"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { configDir } from "../config.ts"
 import { REPO_SLUG } from "../version.ts"
@@ -127,8 +127,22 @@ export async function refreshUpdateInfo(current: string): Promise<UpdateInfo | n
 
 // ---- In-app updater (`u` in the Help/About overlay) ------------------------
 
+// How this copy of the app was installed, which decides the update path shown
+// in Help/About: a package-manager install (bun/npm global) lives under a
+// node_modules dir and updates via `bun update -g spinuptui`; anything else is
+// treated as a git checkout and updates via `git pull` (runSelfUpdate).
+export type InstallChannel = "git" | "package"
+
+export function installChannel(): InstallChannel {
+  return import.meta.dir.includes(`${sep}node_modules${sep}`) ? "package" : "git"
+}
+
+// The one-liner Help shows for a package install (also used by runSelfUpdate's
+// "not a checkout" message so every path names the same command).
+export const PACKAGE_UPDATE_CMD = "bun update -g spinuptui"
+
 // The real checkout directory, resolved through Bun's module system rather
-// than process.cwd() — `spinup` is typically a global symlink invoked from
+// than process.cwd() — `spinuptui` is typically a global symlink invoked from
 // wherever the user happens to be, so cwd is meaningless here. import.meta.dir
 // follows the symlink to this file's REAL location (verified: it does not
 // resolve to the symlink's own path or the invoking shell's cwd).
@@ -162,7 +176,7 @@ export async function runSelfUpdate(cwd: string = checkoutRoot()): Promise<SelfU
   try {
     const isRepo = await git(cwd, ["rev-parse", "--is-inside-work-tree"])
     if (isRepo.code !== 0 || isRepo.stdout !== "true") {
-      return { ok: false, message: "This install isn't a git checkout — update it the way you installed it.", needsInstall: false }
+      return { ok: false, message: `This install isn't a git checkout — update with \`${PACKAGE_UPDATE_CMD}\`.`, needsInstall: false }
     }
     const status = await git(cwd, ["status", "--porcelain"])
     if (status.stdout.length > 0) {
@@ -183,8 +197,8 @@ export async function runSelfUpdate(cwd: string = checkoutRoot()): Promise<SelfU
       ok: true,
       needsInstall,
       message: needsInstall
-        ? "Updated on disk — run `bun install`, then press q and restart spinup."
-        : "Updated on disk — press q and restart spinup.",
+        ? "Updated on disk — run `bun install`, then press q and restart spinuptui."
+        : "Updated on disk — press q and restart spinuptui.",
     }
   } catch (err) {
     return { ok: false, message: `Update failed: ${(err as Error).message}`, needsInstall: false }
