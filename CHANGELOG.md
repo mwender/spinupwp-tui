@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-08
+
 ### Added
 - **The clone wizard's existing-server picker now shows each server's current
   site count.** Picking a destination previously showed only provider/region/
@@ -977,7 +979,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/mwender/spinupwp-tui/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/mwender/spinupwp-tui/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/mwender/spinupwp-tui/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/mwender/spinupwp-tui/compare/v0.17.0...v0.18.0
