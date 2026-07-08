@@ -31,7 +31,11 @@ export function Header() {
   const kumaDown = [...kumaStatus.values()].filter((s) => s.up === false).length
   const updateReady = updateInfo?.updateAvailable ?? false
   const building = isNewServerInFlight(newServerJob)
-  const connecting = isVanityInFlight(vanityJob)
+  // The sshkey step is the one that waits on the USER (add your key, confirm in
+  // the overlay) — a spinner there reads as "working" when nothing is running,
+  // so it gets a distinct waiting badge that says what it wants and where.
+  const vanityWaiting = vanityJob?.step === "sshkey"
+  const connecting = isVanityInFlight(vanityJob) && !vanityWaiting
   const vanityStuck = vanityJob != null && vanityJob.step === "error"
   // Show a clone badge only when it's running AND backgrounded (wizard closed) — the
   // open wizard covers the screen, so no badge is needed there.
@@ -83,8 +87,11 @@ export function Header() {
         {connecting && (
           <box style={{ flexDirection: "row", flexShrink: 0, alignItems: "center" }}>
             <Spinner interval={120} color={theme.warn} />
-            <text content={`  Connecting ${truncate(vanityJob!.hostname, 22)}  `} fg={theme.warn} wrapMode="none" />
+            <text content={`  Connecting ${truncate(vanityJob!.hostname, 22)} — press V  `} fg={theme.warn} wrapMode="none" />
           </box>
+        )}
+        {vanityWaiting && (
+          <text content={`  ○ ${truncate(vanityJob!.hostname, 20)} needs your SSH key — press V  `} fg={theme.warn} style={{ flexShrink: 0 }} wrapMode="none" />
         )}
         {vanityStuck && <text content={`  ⚠ ${truncate(vanityJob!.hostname, 20)} — press V  `} fg={theme.bad} style={{ flexShrink: 0 }} wrapMode="none" />}
         {/* A backgrounded clone keeps running in the store — surface it so it's

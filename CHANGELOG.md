@@ -11,6 +11,16 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **The header no longer shows a perpetual "Connecting {server}…" spinner when a
+  vanity-site build is just waiting for you.** The connect flow's SSH-key step is
+  manual by design (add your key, confirm in the overlay), but the resumable job
+  surfaced it with the same animated spinner as active work — so a build parked
+  at that step looked stuck-connecting on every launch, with no hint of what it
+  wanted. That state now gets its own badge: `○ {server} needs your SSH key —
+  press V`. The active "Connecting…" badge also gained the "press V" pointer the
+  clone badge always had.
+
 ## [0.18.0] - 2026-07-07
 
 ### Added
