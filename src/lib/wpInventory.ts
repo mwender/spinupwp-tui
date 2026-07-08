@@ -11,6 +11,7 @@
 import type { Server, Site } from "../api/types.ts"
 import { SSH_OPTS, sshPort } from "./dbBackup.ts"
 import { detectWpDirScript } from "./serverClone.ts"
+import { wpCliResolveScript } from "./wpCli.ts"
 
 // One plugin or theme, mirroring `wp {plugin,theme} list` columns.
 export interface WpItem {
@@ -100,13 +101,16 @@ export async function fetchWpInventory(
   const remote = [
     detectWpDirScript(root, site.public_folder ?? undefined),
     `if [ -z "$W" ]; then echo ===NOTWP; echo ===END; exit 0; fi`,
-    `WP=$(command -v wp 2>/dev/null || echo /usr/local/bin/wp)`,
+    // Pinned to the site's OWN configured PHP-CLI — bare `wp` resolves through
+    // its shebang to the server's system-default PHP, which can differ from
+    // (and lack extensions present in) the site's actual version. See wpCli.ts.
+    wpCliResolveScript(site.php_version),
     `echo ===WPDIR; printf '%s\\n' "$W"`,
     // The trailing `echo` after each wp command is load-bearing: `wp --format=json`
     // emits NO trailing newline, so without it the next ===MARKER glues onto the end
     // of the JSON line — the marker never parses and JSON.parse chokes on it.
-    `echo ===PLUGINS; "$WP" --path="$W" plugin list --fields=${fields} --format=json 2>/dev/null || true; echo`,
-    `echo ===THEMES; "$WP" --path="$W" theme list --fields=${fields} --format=json 2>/dev/null || true; echo`,
+    `echo ===PLUGINS; "$PHP" "$WP" --path="$W" plugin list --fields=${fields} --format=json 2>/dev/null || true; echo`,
+    `echo ===THEMES; "$PHP" "$WP" --path="$W" theme list --fields=${fields} --format=json 2>/dev/null || true; echo`,
     `echo ===END`,
   ].join("\n")
 

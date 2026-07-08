@@ -3767,7 +3767,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         try {
           const res = site.stack === "files"
             ? await verifyFilesClone(source, dest, { domain: site.domain, destIp })
-            : await verifyClone(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destIp, publicFolder: site.stack === "wp" ? site.publicFolder : undefined, sourceWebrootRel: site.stack === "wp" ? site.sourceWebrootRel : undefined, destWebrootRel: site.stack === "wp" ? site.destWebrootRel : undefined })
+            : await verifyClone(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destIp, publicFolder: site.stack === "wp" ? site.publicFolder : undefined, sourceWebrootRel: site.stack === "wp" ? site.sourceWebrootRel : undefined, destWebrootRel: site.stack === "wp" ? site.destWebrootRel : undefined, phpVersion: site.phpVersion })
           setCloneSite(siteId, (s) => ({ ...s, verifying: false, verify: res }))
         } catch (err) {
           setCloneSite(siteId, (s) => ({ ...s, verifying: false, verifyError: (err as Error).message }))

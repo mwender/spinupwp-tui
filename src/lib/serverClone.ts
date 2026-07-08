@@ -11,6 +11,7 @@
 // that shape the Bedrock branch).
 
 import type { Server } from "../api/types.ts"
+import { wpCliResolveScript } from "./wpCli.ts"
 
 const SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"]
 
@@ -700,6 +701,7 @@ export interface VerifySpec {
   publicFolder?: string // configured public folder — fallback when the pull's rels are unknown
   sourceWebrootRel?: string // DETECTED source layout from the pull ("" = files root)
   destWebrootRel?: string // the CLONE's WP dir from the pull (post-normalization)
+  phpVersion?: string | null // the site's configured PHP version — see wpCli.ts
 }
 
 // One round-trip per side: collect labeled wp-cli facts as `key=value` lines.
@@ -707,10 +709,14 @@ export interface VerifySpec {
 // stalled outbound call once ate the whole budget and cut the facts off mid-script) —
 // and the flags are identical on both sides, so every count stays comparable. The
 // trailing `eof` sentinel is how verifyClone tells "read got cut off" from "differs".
-async function wpFacts(ctx: SudoCtx, root: string, user: string): Promise<Record<string, string>> {
+// wp-cli is pinned to the site's OWN configured PHP-CLI (wpCliResolveScript) rather
+// than bare `wp` — see wpCli.ts for why (a server's system-default PHP can silently
+// differ from, and be missing extensions present in, the site's actual version).
+async function wpFacts(ctx: SudoCtx, root: string, user: string, phpVersion?: string | null): Promise<Record<string, string>> {
   const script = [
     `cd ${shq(root)} 2>/dev/null || exit 0`,
-    `u() { sudo -u ${shq(user)} -H wp --skip-plugins --skip-themes "$@" 2>/dev/null; }`,
+    wpCliResolveScript(phpVersion),
+    `u() { sudo -u ${shq(user)} -H "$PHP" "$WP" --skip-plugins --skip-themes "$@" 2>/dev/null; }`,
     `echo "core=$(u core version)"`,
     `echo "posts=$(u post list --post_type=any --format=count)"`,
     `echo "pages=$(u post list --post_type=page --format=count)"`,
@@ -753,8 +759,8 @@ export async function verifyClone(source: SudoCtx, dest: SudoCtx, spec: VerifySp
   const srcDir = dirFor(spec.sourceWebrootRel)
   const destDir = dirFor(spec.destWebrootRel)
   const [sf, cf, http] = await Promise.all([
-    wpFacts(source, srcDir, spec.sourceSiteUser),
-    wpFacts(dest, destDir, spec.destSiteUser),
+    wpFacts(source, srcDir, spec.sourceSiteUser, spec.phpVersion),
+    wpFacts(dest, destDir, spec.destSiteUser, spec.phpVersion),
     curlStatus(spec.domain, spec.destIp),
   ])
   // A missing tail sentinel means the facts script was cut off partway (timeout, a
@@ -763,6 +769,22 @@ export async function verifyClone(source: SudoCtx, dest: SudoCtx, spec: VerifySp
   if (sf.eof !== "1" || cf.eof !== "1") {
     const side = sf.eof !== "1" ? "source" : "clone"
     throw new Error(`couldn't read the ${side}'s WordPress facts (the wp-cli read was cut off) — press v to re-run`)
+  }
+  // `core` succeeding (a file read, no DB) while EVERY database-backed fact comes
+  // back empty is a distinct signature from a real content difference (which shows
+  // differing NON-empty values, not blanks) — it means wp-cli's PHP-CLI couldn't
+  // reach the database on that side, commonly a missing `mysqli` extension for
+  // whatever PHP version it resolved to (see wpCli.ts). Surface that plainly
+  // instead of a wall of misleading ✕ rows implying the clone lost data.
+  const dbFields = ["posts", "pages", "users", "plugins", "siteurl", "home"] as const
+  const looksBroken = (f: Record<string, string>) => !!f.core && dbFields.every((k) => !f[k])
+  const srcBroken = looksBroken(sf)
+  const cloneBroken = looksBroken(cf)
+  if (srcBroken || cloneBroken) {
+    const side = srcBroken && cloneBroken ? "both the source and the clone" : srcBroken ? "the source" : "the clone"
+    throw new Error(
+      `wp-cli can't reach ${side}'s database over PHP (commonly a missing "mysqli" extension for whatever PHP-CLI it resolved to) — this looks like a server/PHP-CLI environment issue, not an actual data difference.`,
+    )
   }
   const checks: VerifyCheck[] = []
   checks.push({ key: "http", label: "Clone serves (HTTP)", source: "—", clone: http, ok: /^[23]\d\d$/.test(http) })
