@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-08
+
 ### Changed
 - **The app is now "SpinupTUI", and the command is `spinuptui`.** The rename
   distinguishes the app from the SpinupWP service it talks to (and `spinup` was
@@ -916,7 +918,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/mwender/spinupwp-tui/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/mwender/spinupwp-tui/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/mwender/spinupwp-tui/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/mwender/spinupwp-tui/compare/v0.16.0...v0.16.1
