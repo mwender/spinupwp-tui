@@ -110,7 +110,7 @@ Once you're in, the dashboard looks like this:
 - **Create & connect a server** — press `c` on the Servers tab to provision a new
   server (DigitalOcean / Vultr / Linode / Hetzner), priced from the provider catalog
   and pre-filled to match a selected server. Then press `V` on any server that
-  doesn't yet have a **site at its own hostname** to connect it end to end: Spinup
+  doesn't yet have a **site at its own hostname** to connect it end to end: SpinupTUI
   writes the DNS A record, creates a
   placeholder "vanity" site, enables HTTPS, hands you off to add your SSH key, and
   publishes a status page — turning a bare server into one you can actually work
@@ -123,10 +123,10 @@ Once you're in, the dashboard looks like this:
   verifies the clone against the source, and finally repoints DNS on your word.
   Runs in the background with a header badge. (See "Cloning a server" below.)
 - **Privileged writes over SSH (sudo + SSH keys)** — the SpinupWP API can't manage
-  SSH keys or sudo users, so Spinup does it directly. Press `S` on a server to
+  SSH keys or sudo users, so SpinupTUI does it directly. Press `S` on a server to
   **connect sudo** for the session (optionally **remembered in your macOS Keychain**
   so it auto-unlocks next time), then `K` on a site to **grant or revoke** your
-  personal key and/or Spinup's dedicated machine key — one site or every site on the
+  personal key and/or SpinupTUI's dedicated machine key — one site or every site on the
   server. (See "Privileged writes over SSH" below.)
 - **Uptime Kuma monitoring** — press `m` on a site to wire it into your own
   [Uptime Kuma](https://github.com/louislam/uptime-kuma) instance (one-time
@@ -146,7 +146,7 @@ Once you're in, the dashboard looks like this:
   (See `docs/uptime-kuma.md` for recipes.)
 - **Site monitoring: fingerprints, a doctor, and a Redis sentinel** — press `M`
   on any site (Servers / Stacks / Search) for the monitoring overlay. `f`
-  calibrates a **front-page check**: Spinup reads your healthy front page,
+  calibrates a **front-page check**: SpinupTUI reads your healthy front page,
   derives a template-identity fingerprint from what WordPress itself stamps
   into the markup (not a headline someone might edit), proves it discriminates,
   and registers a Kuma keyword monitor at your chosen window (5m–1h) — catching
@@ -155,7 +155,7 @@ Once you're in, the dashboard looks like this:
   proven by the server's own `fastcgi-cache` headers) plus a wp-admin door
   probe, diagnosing stale caches and **partial outages** — cached pages fine
   while everything uncached throws 500 (a dead Redis does exactly this) — and
-  ending in a copyable runbook. `n` wires **alerts**: Spinup detects the
+  ending in a copyable runbook. `n` wires **alerts**: SpinupTUI detects the
   notification providers configured in Kuma by name and toggles them per site.
   And servers get a **Redis sentinel**: the heartbeat cron pings Redis every
   minute and reports up/down to its own `{server} redis` monitor.
@@ -163,7 +163,7 @@ Once you're in, the dashboard looks like this:
 - **Completion toasts** — background writes that take a while (a PHP upgrade, a
   server reboot/restart, resolving your fleet's DNS) raise a non-focus-stealing
   toast when they finish, so you're not left guessing after you've moved on.
-- **Release notes** — after Spinup updates to a new version, a one-time overlay
+- **Release notes** — after SpinupTUI updates to a new version, a one-time overlay
   shows what changed (sourced straight from that version's GitHub release —
   no separate feed to maintain). Press `n` in `?` Help to see the current
   version's notes again any time.
@@ -461,7 +461,7 @@ server's row keeps a spinner).
 Everything hangs off one overlay: press `M` on a site in any view (the Servers
 tab also keeps its original `m`). It talks to your own
 [Uptime Kuma](https://github.com/louislam/uptime-kuma) — Kuma watches 24/7 and
-sends the alerts; Spinup creates the monitors *correctly* and diagnoses on
+sends the alerts; SpinupTUI creates the monitors *correctly* and diagnoses on
 demand.
 
 - **`a` — uptime monitors.** Regular sites get a homepage monitor (up/down +
@@ -472,7 +472,7 @@ demand.
   SpinupWP's default object-cache drop-in, a dead Redis is **fatal (HTTP 500)
   for every request that misses the page cache** — cached pages keep serving
   200, so only the sentinel notices, within a minute.
-- **`f` — the front-page check.** Spinup reads your *healthy* front page,
+- **`f` — the front-page check.** SpinupTUI reads your *healthy* front page,
   derives a template-identity fingerprint from WordPress's own `body_class()`
   output (`class="home`, `page-id-N`, …, falling back to the canonical link),
   validates it against a throwaway search render to prove it discriminates,
@@ -493,7 +493,7 @@ demand.
   pages 200, fresh renders or wp-admin 5xx — Redis or a PHP fatal; visitors
   look fine, admins are broken) · recalibrate (`f` jumps straight there) ·
   down · inconclusive.
-- **`n` — alert wiring.** Spinup detects the notification providers configured
+- **`n` — alert wiring.** SpinupTUI detects the notification providers configured
   in your Kuma (by name — Telegram, email, whatever you've set up) and shows
   whether each is attached to this site's monitors (`✓` all / `◐` some / `○`
   none); `⏎` toggles a provider across all of the site's checks at once.
@@ -520,7 +520,7 @@ id (Account Settings → Server Providers) and saves it — once per provider. T
 build fires `POST /servers` and tracks the ~10-minute provision in the background.
 
 **Connect it with a vanity site (`V`).** A brand-new server has **no site**, so
-there's nothing to attach an SSH key to and no way for Spinup to reach it — empty
+there's nothing to attach an SSH key to and no way for SpinupTUI to reach it — empty
 servers are flagged in **amber** in the Servers list. A busy server benefits from
 the same thing (a status page at its own hostname + a site user to hold your key),
 so `V` is offered on **any server that doesn't yet have a site at its own
@@ -546,11 +546,11 @@ shows where, with `r` to retry or `x` to discard.
 ## Privileged writes over SSH (sudo & SSH keys)
 
 Some things the SpinupWP API simply can't do — it has **no** surface for SSH keys or
-sudo users. Spinup does them directly over SSH instead, which means these actions use
+sudo users. SpinupTUI does them directly over SSH instead, which means these actions use
 **your own SSH access**, not the API token.
 
 **Connect sudo (`S`).** Press `S` on a server and enter its SpinupWP **sudo user**
-and that user's **sudo password** once. Spinup validates them against the live server
+and that user's **sudo password** once. SpinupTUI validates them against the live server
 (`sudo -S -p '' true`) and then holds the password **in memory for the session only**
 — the username persists to config, the password is never written to plaintext config.
 A connected server shows a green `● sudo` badge on its row; `S` again disconnects.
@@ -568,7 +568,7 @@ A connected server shows a green `● sudo` badge on its row; `S` again disconne
 keys into the site user's `authorized_keys`:
 
 - **Pick which keys** — any of **your personal keys** (discovered from `~/.ssh/*.pub`
-  and your ssh-agent, so you can SSH/SFTP as yourself) and/or Spinup's dedicated
+  and your ssh-agent, so you can SSH/SFTP as yourself) and/or SpinupTUI's dedicated
   **`spinup-tui` machine key** (an ed25519 identity generated once into the config dir,
   deliberately **never added to your SpinupWP account** so SpinupWP's key reconciliation
   can't clobber it). Your selection is remembered.
@@ -589,7 +589,7 @@ migration and **only repoints DNS when you say so**. It needs a **Read/Write tok
 over SSH). The steps:
 
 1. **Plan** — pick which of the source's sites to clone (all selected by default;
-   `space` toggles). Spinup sizes each one live (disk + database) into a payload total
+   `space` toggles). SpinupTUI sizes each one live (disk + database) into a payload total
    so you know what you're moving; a concurrency cap protects the busy source.
 2. **Destination** — provision a fresh server pre-matched to the source (reusing the
    `c` flow), or `d` to pick an existing server as the target.
