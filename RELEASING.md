@@ -86,7 +86,7 @@ Run these in order. Replace `X.Y.Z` with the new version.
    ## Notes
    - …
 
-   **Update:** \`git pull\` in your checkout (the global \`spinup\` symlink picks it up immediately).
+   **Update:** \`bun update -g spinuptui\` (npm install) or \`git pull\` in your checkout (a linked global \`spinuptui\` picks it up immediately).
 
    **Full changelog:** https://github.com/mwender/spinupwp-tui/compare/vPREV...vX.Y.Z"
    ```
@@ -94,6 +94,18 @@ Run these in order. Replace `X.Y.Z` with the new version.
    - Body: short intro, `## Highlights` (bold lead-ins, key bindings in backticks),
      optional `## Fixed` / `## Notes`, the **Update** line, and the **Full
      changelog** compare link. Keep it anonymized.
+7. **Publish to npm.**
+   ```sh
+   npm pack --dry-run   # sanity check: confirm bin/spinuptui.js and the right
+                         # files are in the tarball BEFORE they ship — npm has
+                         # silently stripped a malformed `bin` entry before
+   npm publish
+   ```
+   - **Must run in a real terminal, not headless/non-interactively.** The
+     account uses passkey-only 2FA — `npm publish` opens a browser-auth URL
+     that npm masks/garbles without a real TTY attached, so it needs to run
+     from an actual Terminal/iTerm window, not a scripted or agent shell.
+   - Verify it landed: `npm view spinuptui version` should print `X.Y.Z`.
 
 ## Quick checklist
 
@@ -104,4 +116,5 @@ Run these in order. Replace `X.Y.Z` with the new version.
 - [ ] Release commit on `main`
 - [ ] `vX.Y.Z` annotated tag pushed
 - [ ] GitHub release published in house style
+- [ ] Published to npm (`npm publish` from a real terminal — passkey 2FA), `npm view spinuptui version` confirms it
 - [ ] No client domains anywhere
