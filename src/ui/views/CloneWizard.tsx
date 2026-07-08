@@ -48,6 +48,7 @@ export function CloneWizard() {
     cloneServer: server,
     cloneJob: job,
     servers,
+    sitesForServer,
     accountSlug,
     toggleCloneSite,
     toggleCloneSiteUploads,
@@ -473,7 +474,8 @@ export function CloneWizard() {
           <box style={{ height: 1 }} />
           {eligibleDests.map((s, i) => {
             const sel = i === destIdx
-            const meta = `${s.provider_name || "—"} · ${s.region || "—"}${s.ip_address ? "  " + s.ip_address : ""}`
+            const n = sitesForServer(s.id).length
+            const meta = `${n} site${n === 1 ? "" : "s"} · ${s.provider_name || "—"} · ${s.region || "—"}${s.ip_address ? "  " + s.ip_address : ""}`
             return (
               <box key={s.id} style={{ flexDirection: "row", height: 1, backgroundColor: sel ? theme.bgAlt : undefined }}>
                 <text content={sel ? "❯ " : "  "} fg={theme.brand} style={{ flexShrink: 0 }} />

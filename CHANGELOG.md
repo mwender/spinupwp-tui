@@ -11,6 +11,12 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **The clone wizard's existing-server picker now shows each server's current
+  site count.** Picking a destination previously showed only provider/region/
+  IP — no sense of how busy a candidate already is. Each row now leads with
+  `N site(s)`.
+
 ### Fixed
 - **The clone wizard no longer routes git-deployed non-WordPress sites through
   a Bedrock pull.** `cloneStackFor` trusted `git.repo` alone as "this is

@@ -592,7 +592,8 @@ over SSH). The steps:
    `space` toggles). SpinupTUI sizes each one live (disk + database) into a payload total
    so you know what you're moving; a concurrency cap protects the busy source.
 2. **Destination** — provision a fresh server pre-matched to the source (reusing the
-   `c` flow), or `d` to pick an existing server as the target.
+   `c` flow), or `d` to pick an existing server as the target — each listed with its
+   current site count, so you can see at a glance how busy a candidate already is.
 3. **Connect** — connect sudo on **both** servers. The clone is a server-to-server
    **pull**: the destination pulls each site directly from the source over SSH (no
    bytes routed through your laptop), authenticating with a key granted onto the source
