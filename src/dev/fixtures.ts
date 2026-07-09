@@ -1,8 +1,14 @@
-// Example fleet for Dev Mode (SPINUP_DEV_MODE=1) — a small, deliberately varied set
-// of servers/sites/events so every view has something interesting to show: an EOL
-// Ubuntu server, EOL PHP versions, a Bedrock site, a non-WP app, an empty server, a
-// disabled-HTTPS site, and a mix of disk usage / update counts. All domains are
+// Example fleet for Dev Mode (SPINUP_DEV_MODE=1) — a deliberately varied fleet (12
+// servers / ~80 sites) so every view has plenty to show: EOL Ubuntu and EOL PHP
+// servers/sites, Bedrock sites, non-WP apps, an empty server, a mid-provisioning
+// server, a self-hosted/"custom" server, disabled-HTTPS sites, stale/missing
+// backups, and a spread of disk usage / pending-update counts. All domains are
 // example.com/.org/.net — never a real client's.
+//
+// Sites 1001-1006 are hand-authored (kept stable so anything that references
+// them by id stays meaningful); sites 1007+ are generated deterministically
+// (see GENERATED_SITE_PLAN below) — no Math.random/Date.now, so the fleet is
+// identical across runs (reproducible screenshots, stable diffs).
 //
 // freshFixtures() returns a deep clone so MockSpinupWPClient can mutate its own copy
 // freely without leaking state across StoreProvider remounts.
@@ -84,9 +90,153 @@ const SERVERS: Server[] = [
     created_at: "2025-01-08T16:45:00Z",
     status: "active",
   },
+  {
+    id: 105,
+    name: "web4.example.com",
+    provider_name: "hetzner",
+    ubuntu_version: "24.04",
+    ip_address: "203.0.113.24",
+    ssh_port: 22,
+    timezone: "UTC",
+    region: "fsn1",
+    size: "cx41",
+    disk_space: { total: 120 * GB, available: 80 * GB, used: 40 * GB, updated_at: "2026-07-01T08:00:00Z" },
+    database: null,
+    connection_status: "connected",
+    reboot_required: false,
+    upgrade_required: false,
+    created_at: "2024-05-12T12:00:00Z",
+    status: "active",
+  },
+  {
+    id: 106,
+    name: "web5.example.net",
+    provider_name: "digitalocean",
+    ubuntu_version: "22.04",
+    ip_address: "203.0.113.25",
+    ssh_port: 22,
+    timezone: "UTC",
+    region: "sfo3",
+    size: "s-2vcpu-4gb",
+    disk_space: { total: 60 * GB, available: 42 * GB, used: 18 * GB, updated_at: "2026-07-01T08:00:00Z" },
+    database: null,
+    connection_status: "connected",
+    reboot_required: false,
+    upgrade_required: false,
+    created_at: "2025-09-19T10:30:00Z",
+    status: "active",
+  },
+  {
+    id: 107,
+    name: "web6.example.com",
+    provider_name: "vultr",
+    ubuntu_version: "24.04",
+    ip_address: "203.0.113.26",
+    ssh_port: 22,
+    timezone: "UTC",
+    region: "lax",
+    size: "vc2-4c-8gb",
+    disk_space: { total: 100 * GB, available: 75 * GB, used: 25 * GB, updated_at: "2026-07-01T08:00:00Z" },
+    database: null,
+    connection_status: "connected",
+    reboot_required: false,
+    upgrade_required: false,
+    created_at: "2023-11-03T08:15:00Z",
+    status: "active",
+  },
+  {
+    id: 108,
+    name: "web7.example.net",
+    provider_name: "linode",
+    ubuntu_version: "22.04",
+    ip_address: "203.0.113.27",
+    ssh_port: 22,
+    timezone: "UTC",
+    region: "eu-west",
+    size: "g6-standard-4",
+    disk_space: { total: 100 * GB, available: 45 * GB, used: 55 * GB, updated_at: "2026-07-01T08:00:00Z" },
+    database: null,
+    connection_status: "connected",
+    reboot_required: true,
+    upgrade_required: false,
+    created_at: "2024-02-27T09:00:00Z",
+    status: "active",
+  },
+  {
+    id: 109,
+    name: "web8.example.org",
+    provider_name: "hetzner",
+    ubuntu_version: "18.04",
+    ip_address: "203.0.113.28",
+    ssh_port: 22,
+    timezone: "UTC",
+    region: "hel1",
+    size: "cx31",
+    disk_space: { total: 40 * GB, available: 2 * GB, used: 38 * GB, updated_at: "2026-07-01T08:00:00Z" },
+    database: null,
+    connection_status: "connected",
+    reboot_required: false,
+    upgrade_required: true,
+    created_at: "2021-09-14T11:00:00Z",
+    status: "active",
+  },
+  {
+    id: 110,
+    name: "web10.example.com",
+    provider_name: "digitalocean",
+    ubuntu_version: "24.04",
+    ip_address: "203.0.113.30",
+    ssh_port: 22,
+    timezone: "UTC",
+    region: "ams3",
+    size: "s-4vcpu-8gb",
+    disk_space: { total: 160 * GB, available: 90 * GB, used: 70 * GB, updated_at: "2026-07-01T08:00:00Z" },
+    database: null,
+    connection_status: "connected",
+    reboot_required: false,
+    upgrade_required: false,
+    created_at: "2024-08-30T14:20:00Z",
+    status: "active",
+  },
+  {
+    id: 111,
+    name: "web11.example.org",
+    provider_name: "vultr",
+    ubuntu_version: "24.04",
+    ip_address: "203.0.113.31",
+    ssh_port: 22,
+    timezone: "UTC",
+    region: "syd",
+    size: "vc2-2c-4gb",
+    disk_space: null,
+    database: null,
+    connection_status: "connecting",
+    reboot_required: false,
+    upgrade_required: false,
+    created_at: "2026-07-08T07:50:00Z",
+    status: "active",
+  },
+  {
+    id: 112,
+    name: "edge1.example.net",
+    provider_name: null,
+    ubuntu_version: "22.04",
+    ip_address: "203.0.113.32",
+    ssh_port: 2222,
+    timezone: "UTC",
+    region: null,
+    size: null,
+    disk_space: { total: 80 * GB, available: 71 * GB, used: 9 * GB, updated_at: "2026-07-01T08:00:00Z" },
+    database: null,
+    connection_status: "connected",
+    reboot_required: false,
+    upgrade_required: false,
+    created_at: "2025-04-02T13:10:00Z",
+    status: "active",
+  },
 ]
 
-const SITES: Site[] = [
+const HAND_SITES: Site[] = [
   {
     id: 1001,
     server_id: 101,
@@ -193,6 +343,169 @@ const SITES: Site[] = [
   },
 ]
 
+// --- Generated sites (1007+) ------------------------------------------------
+//
+// One realistic short business-site word per generated site, so domains read as
+// a real-looking fleet rather than "site1.example.com". Words already used by
+// HAND_SITES (shop/blog/docs/app) are excluded to avoid collisions.
+const WORDS = [
+  "status", "portal", "members", "support", "academy", "press", "forum", "store",
+  "news", "events", "clinic", "studio", "gallery", "market", "travel", "fitness",
+  "realty", "law", "dental", "vet", "bakery", "garage", "garden", "kitchen",
+  "media", "agency", "consult", "finance", "insure", "charity", "church",
+  "school", "camp", "yoga", "spa", "salon", "barber", "tailor", "florist",
+  "nursery", "daycare", "tutoring", "coaching", "photography", "videography",
+  "catering", "brewery", "winery", "coffee", "bistro", "diner", "grill",
+  "pizzeria", "patisserie", "boutique", "jewelry", "antiques", "hardware",
+  "plumbing", "electric", "roofing", "landscaping", "painting", "moving",
+  "cleaning", "security", "accounting", "marketing", "printing", "repair",
+  "rental", "storage", "notary", "locksmith",
+]
+const TLDS = ["com", "org", "net"]
+
+// A handful of dates to cycle through deterministically (spread over ~3 years
+// up to "today" in Dev Mode, 2026-07-08) — real-looking site ages without
+// touching Date.now().
+const CREATED_DATES = [
+  "2022-09-14T10:00:00Z", "2023-01-22T14:30:00Z", "2023-05-09T08:45:00Z",
+  "2023-08-30T16:00:00Z", "2023-11-17T11:20:00Z", "2024-02-06T09:15:00Z",
+  "2024-04-19T13:40:00Z", "2024-06-25T10:05:00Z", "2024-09-03T15:50:00Z",
+  "2024-12-11T12:00:00Z", "2025-02-14T09:30:00Z", "2025-04-28T17:10:00Z",
+  "2025-06-16T08:20:00Z", "2025-08-22T14:00:00Z", "2025-10-05T11:45:00Z",
+  "2025-12-01T09:00:00Z", "2026-02-09T13:15:00Z", "2026-04-14T10:30:00Z",
+  "2026-05-20T15:40:00Z", "2026-06-10T08:00:00Z",
+]
+
+// One "kind" per site, cycled by index — covers every stack the app classifies
+// (Standard WP / Bedrock / Non-WP), plus the health signals the Dashboard,
+// Stacks, and Browser views surface: EOL PHP, disabled HTTPS, disabled/absent
+// backups, pending core/theme/plugin updates, and a non-Bedrock WP site that
+// still deploys via git (a case cloneStackFor's git.repo-precedence handles).
+type SiteKind = (site: { id: number; server_id: number; domain: string; site_user: string; created_at: string }) => Site
+
+const KINDS: SiteKind[] = [
+  // Standard WP, healthy, current PHP.
+  (s) => ({
+    ...s, php_version: "8.3", public_folder: "/", is_wordpress: true,
+    page_cache: { enabled: true }, https: { enabled: true },
+    database: { id: s.id, user_id: s.id, table_prefix: "wp_" },
+    backups: { files: true, database: true, retention_period: 14, next_run_time: "2026-07-09T03:00:00Z" },
+    wp_core_update: false, wp_theme_updates: 0, wp_plugin_updates: 2, status: "active",
+  }),
+  // Bedrock, healthy, current PHP.
+  (s) => ({
+    ...s, php_version: "8.2", public_folder: "/web/", is_wordpress: true,
+    page_cache: { enabled: true }, https: { enabled: true },
+    database: { id: s.id, user_id: s.id, table_prefix: "wp_" },
+    backups: { files: true, database: true, retention_period: 14, next_run_time: "2026-07-09T03:00:00Z" },
+    git: { repo: `git@github.com:example/${s.site_user}-bedrock.git`, branch: "main", deploy_script: "composer install -o --no-dev", push_enabled: true, deployment_url: null },
+    wp_core_update: false, wp_theme_updates: 0, wp_plugin_updates: 0, status: "active",
+  }),
+  // Non-WP static site.
+  (s) => ({
+    ...s, php_version: "8.3", public_folder: "/public/", is_wordpress: false,
+    https: { enabled: true }, status: "active",
+  }),
+  // WP on EOL PHP, no backups, plenty of updates pending.
+  (s) => ({
+    ...s, php_version: "7.4", public_folder: "/", is_wordpress: true,
+    page_cache: { enabled: false }, https: { enabled: true },
+    database: { id: s.id, user_id: s.id, table_prefix: "wp_" },
+    backups: { files: false, database: false },
+    wp_core_update: true, wp_theme_updates: 2, wp_plugin_updates: 7, status: "active",
+  }),
+  // Non-WP app (custom PHP app, not WordPress at all).
+  (s) => ({
+    ...s, php_version: "8.1", public_folder: "/public/", is_wordpress: false,
+    https: { enabled: true }, status: "active",
+  }),
+  // Standard WP with HTTPS disabled.
+  (s) => ({
+    ...s, php_version: "8.3", public_folder: "/", is_wordpress: true,
+    page_cache: { enabled: true }, https: { enabled: false },
+    database: { id: s.id, user_id: s.id, table_prefix: "wp_" },
+    backups: { files: true, database: true, retention_period: 14, next_run_time: "2026-07-09T03:00:00Z" },
+    wp_core_update: false, wp_theme_updates: 1, wp_plugin_updates: 1, status: "active",
+  }),
+  // Bedrock on EOL PHP (8.1 aged out of security support 2025-12-31).
+  (s) => ({
+    ...s, php_version: "8.1", public_folder: "/web/", is_wordpress: true,
+    page_cache: { enabled: true }, https: { enabled: true },
+    database: { id: s.id, user_id: s.id, table_prefix: "wp_" },
+    backups: { files: true, database: true, retention_period: 7, next_run_time: "2026-07-09T03:00:00Z" },
+    git: { repo: `git@github.com:example/${s.site_user}-bedrock.git`, branch: "main", deploy_script: "composer install -o --no-dev", push_enabled: true, deployment_url: null },
+    wp_core_update: false, wp_theme_updates: 0, wp_plugin_updates: 1, status: "active",
+  }),
+  // Standard WP, heavy pending updates + EOL PHP.
+  (s) => ({
+    ...s, php_version: "8.0", public_folder: "/", is_wordpress: true,
+    page_cache: { enabled: false }, https: { enabled: true },
+    database: { id: s.id, user_id: s.id, table_prefix: "wp_" },
+    backups: { files: true, database: true, retention_period: 7, next_run_time: "2026-07-09T03:00:00Z" },
+    wp_core_update: true, wp_theme_updates: 3, wp_plugin_updates: 11, status: "active",
+  }),
+  // Fresh Standard WP site, newest PHP, everything current.
+  (s) => ({
+    ...s, php_version: "8.4", public_folder: "/", is_wordpress: true,
+    page_cache: { enabled: true }, https: { enabled: true },
+    database: { id: s.id, user_id: s.id, table_prefix: "wp_" },
+    backups: { files: true, database: true, retention_period: 30, next_run_time: "2026-07-09T03:00:00Z" },
+    wp_core_update: false, wp_theme_updates: 0, wp_plugin_updates: 0, status: "active",
+  }),
+  // Standard WP (not Bedrock) that still deploys via git.
+  (s) => ({
+    ...s, php_version: "8.3", public_folder: "/", is_wordpress: true,
+    page_cache: { enabled: true }, https: { enabled: true },
+    database: { id: s.id, user_id: s.id, table_prefix: "wp_" },
+    backups: { files: true, database: true, retention_period: 14, next_run_time: "2026-07-09T03:00:00Z" },
+    git: { repo: `git@github.com:example/${s.site_user}.git`, branch: "main", deploy_script: null, push_enabled: false, deployment_url: null },
+    wp_core_update: false, wp_theme_updates: 1, wp_plugin_updates: 4, status: "active",
+  }),
+]
+
+// How many generated sites land on each active server. 102 (empty) and 111
+// (still connecting) deliberately get none — see the SERVERS list above.
+const GENERATED_SITE_PLAN: { serverId: number; count: number }[] = [
+  { serverId: 101, count: 3 },
+  { serverId: 103, count: 3 },
+  { serverId: 104, count: 3 },
+  { serverId: 105, count: 12 },
+  { serverId: 106, count: 3 },
+  { serverId: 107, count: 15 },
+  { serverId: 108, count: 8 },
+  { serverId: 109, count: 5 },
+  { serverId: 110, count: 20 },
+  { serverId: 112, count: 2 },
+]
+
+function generateSites(): Site[] {
+  const out: Site[] = []
+  let wordIdx = 0
+  let id = 1007
+  for (const { serverId, count } of GENERATED_SITE_PLAN) {
+    for (let i = 0; i < count; i++) {
+      const word = WORDS[wordIdx % WORDS.length]!
+      const tld = TLDS[wordIdx % TLDS.length]!
+      const domain = `${word}.example.${tld}`
+      const kind = KINDS[wordIdx % KINDS.length]!
+      out.push(
+        kind({
+          id,
+          server_id: serverId,
+          domain,
+          site_user: word,
+          created_at: CREATED_DATES[wordIdx % CREATED_DATES.length]!,
+        }),
+      )
+      wordIdx++
+      id++
+    }
+  }
+  return out
+}
+
+const SITES: Site[] = [...HAND_SITES, ...generateSites()]
+
 const EVENTS: Event[] = [
   {
     id: 9001,
@@ -226,6 +539,182 @@ const EVENTS: Event[] = [
     created_at: "2026-06-27T04:00:00Z",
     started_at: "2026-06-27T04:00:02Z",
     finished_at: "2026-06-27T04:01:15Z",
+  },
+  {
+    id: 9004,
+    initiated_by: "dev-mode",
+    server_id: 111,
+    name: "server.provisioned",
+    status: "running",
+    output: "Provisioning web11.example.org on Vultr (syd)…",
+    created_at: "2026-07-08T07:50:00Z",
+    started_at: "2026-07-08T07:50:03Z",
+    finished_at: null,
+  },
+  {
+    id: 9005,
+    initiated_by: "dev-mode",
+    server_id: 107,
+    name: "site.https.enabled",
+    status: "failed",
+    output: "HTTPS request failed for realty.example.com — DNS does not yet resolve to this server",
+    created_at: "2026-07-07T15:22:00Z",
+    started_at: "2026-07-07T15:22:01Z",
+    finished_at: "2026-07-07T15:22:18Z",
+  },
+  {
+    id: 9006,
+    initiated_by: "dev-mode",
+    server_id: 105,
+    name: "site.php_version.updated",
+    status: "deployed",
+    output: "PHP updated to 8.4 for coffee.example.net",
+    created_at: "2026-07-06T10:05:00Z",
+    started_at: "2026-07-06T10:05:04Z",
+    finished_at: "2026-07-06T10:05:39Z",
+  },
+  {
+    id: 9007,
+    initiated_by: "dev-mode",
+    server_id: 110,
+    name: "site.domains.updated",
+    status: "deployed",
+    output: "Added domain www.marketing.example.com",
+    created_at: "2026-07-05T13:40:00Z",
+    started_at: "2026-07-05T13:40:02Z",
+    finished_at: "2026-07-05T13:40:27Z",
+  },
+  {
+    id: 9008,
+    initiated_by: "dev-mode",
+    server_id: 108,
+    name: "server.service.mysql.restarted",
+    status: "deployed",
+    output: "mysql restarted on web7.example.net",
+    created_at: "2026-07-04T22:10:00Z",
+    started_at: "2026-07-04T22:10:01Z",
+    finished_at: "2026-07-04T22:10:12Z",
+  },
+  {
+    id: 9009,
+    initiated_by: "dev-mode",
+    server_id: 109,
+    name: "site.object_cache.purged",
+    status: "deployed",
+    output: "Object cache purged for repair.example.net",
+    created_at: "2026-07-04T09:00:00Z",
+    started_at: "2026-07-04T09:00:01Z",
+    finished_at: "2026-07-04T09:00:06Z",
+  },
+  {
+    id: 9010,
+    initiated_by: "dev-mode",
+    server_id: 106,
+    name: "site.https.disabled",
+    status: "deployed",
+    output: "HTTPS disabled for insure.example.org pending certificate reissue",
+    created_at: "2026-07-02T18:30:00Z",
+    started_at: "2026-07-02T18:30:02Z",
+    finished_at: "2026-07-02T18:30:20Z",
+  },
+  {
+    id: 9011,
+    initiated_by: "dev-mode",
+    server_id: 107,
+    name: "server.rebooted",
+    status: "deployed",
+    output: "Server rebooted successfully",
+    created_at: "2026-06-28T04:00:00Z",
+    started_at: "2026-06-28T04:00:02Z",
+    finished_at: "2026-06-28T04:01:08Z",
+  },
+  {
+    id: 9012,
+    initiated_by: "dev-mode",
+    server_id: 110,
+    name: "site.created",
+    status: "deployed",
+    output: "Site salon.example.com created",
+    created_at: "2026-06-24T11:15:00Z",
+    started_at: "2026-06-24T11:15:02Z",
+    finished_at: "2026-06-24T11:16:40Z",
+  },
+  {
+    id: 9013,
+    initiated_by: "dev-mode",
+    server_id: 105,
+    name: "server.service.nginx.restarted",
+    status: "deployed",
+    output: "nginx restarted on web4.example.com",
+    created_at: "2026-06-20T06:45:00Z",
+    started_at: "2026-06-20T06:45:01Z",
+    finished_at: "2026-06-20T06:45:09Z",
+  },
+  {
+    id: 9014,
+    initiated_by: "dev-mode",
+    server_id: 109,
+    name: "server.upgrade_required",
+    status: "deployed",
+    output: "Security updates available on web8.example.org (Ubuntu 18.04, EOL)",
+    created_at: "2026-06-18T05:00:00Z",
+    started_at: "2026-06-18T05:00:00Z",
+    finished_at: "2026-06-18T05:00:00Z",
+  },
+  {
+    id: 9015,
+    initiated_by: "dev-mode",
+    server_id: 112,
+    name: "site.cache.purged",
+    status: "deployed",
+    output: "Page cache purged for notary.example.com",
+    created_at: "2026-06-15T14:00:00Z",
+    started_at: "2026-06-15T14:00:01Z",
+    finished_at: "2026-06-15T14:00:07Z",
+  },
+  {
+    id: 9016,
+    initiated_by: "dev-mode",
+    server_id: 108,
+    name: "site.php_version.updated",
+    status: "deployed",
+    output: "PHP updated to 8.2 for tailor.example.net",
+    created_at: "2026-06-10T09:20:00Z",
+    started_at: "2026-06-10T09:20:03Z",
+    finished_at: "2026-06-10T09:20:51Z",
+  },
+  {
+    id: 9017,
+    initiated_by: "dev-mode",
+    server_id: 106,
+    name: "server.provisioned",
+    status: "deployed",
+    output: "Server web5.example.net provisioned",
+    created_at: "2025-09-19T10:30:00Z",
+    started_at: "2025-09-19T10:30:04Z",
+    finished_at: "2025-09-19T10:34:12Z",
+  },
+  {
+    id: 9018,
+    initiated_by: "dev-mode",
+    server_id: 105,
+    name: "server.provisioned",
+    status: "deployed",
+    output: "Server web4.example.com provisioned",
+    created_at: "2024-05-12T12:00:00Z",
+    started_at: "2024-05-12T12:00:05Z",
+    finished_at: "2024-05-12T12:04:30Z",
+  },
+  {
+    id: 9019,
+    initiated_by: "dev-mode",
+    server_id: 112,
+    name: "server.service.redis.restarted",
+    status: "deployed",
+    output: "redis restarted on edge1.example.net",
+    created_at: "2024-01-08T20:00:00Z",
+    started_at: "2024-01-08T20:00:01Z",
+    finished_at: "2024-01-08T20:00:06Z",
   },
 ]
 
