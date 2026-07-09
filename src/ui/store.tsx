@@ -46,6 +46,7 @@ import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
+import { inventoryDatabases, rollbackSourceMaintenance, runFinalizeDbSync, type FinalizeStage } from "../lib/finalizeMove.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
@@ -344,6 +345,50 @@ export function cloneNeedsGitAccess(j: CloneJob): boolean {
 export function isCloneInFlight(j: CloneJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
 }
+
+export type FinalizeMoveStep = "plan" | "connect" | "sync" | "cutover" | "done" | "error"
+export type FinalizeMoveSiteStep = "queued" | "syncing" | "done" | "error" | "skipped"
+export interface FinalizeMoveSiteState {
+  sourceSiteId: number
+  destSiteId?: number
+  domain: string
+  sourceSiteUser: string
+  destSiteUser?: string
+  sourcePublicFolder?: string | null
+  destPublicFolder?: string | null
+  selected: boolean
+  isWordPress: boolean
+  ready: boolean
+  step: FinalizeMoveSiteStep
+  detail?: string
+  failedStage?: FinalizeStage
+  error?: string
+  destDbName?: string
+}
+export interface FinalizeMoveInventory {
+  active: string[]
+  stale: string[]
+  databases: string[]
+  error?: string
+}
+export interface FinalizeMoveJob {
+  sourceServerId: number
+  sourceServerName: string
+  destServerId?: number
+  destServerName?: string
+  destServerIp?: string
+  step: FinalizeMoveStep
+  failedStep?: FinalizeMoveStep
+  error?: string
+  sites: FinalizeMoveSiteState[]
+  startedAt: number
+  fanoutStarted?: boolean
+  inventory?: FinalizeMoveInventory
+  logPath?: string
+}
+export function isFinalizeMoveInFlight(j: FinalizeMoveJob | null | undefined): boolean {
+  return j != null && j.step !== "done" && j.step !== "error"
+}
 // Alphanumeric token for generated dest DB passwords (never printed/persisted).
 function randomToken(n: number): string {
   const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -579,6 +624,18 @@ interface StoreValue extends DataState {
   cloneCutoverFinish: () => void // slice 6: cutover → done summary
   backgroundClone: () => void // hide the wizard, keep the in-flight clone running (reopen with C)
   clearClone: () => void
+  // Finalize an already-moved server: final DB sync, destination verification,
+  // stale DB report, then provider-neutral cutover guidance.
+  finalizeMoveServer: Server | null
+  setFinalizeMoveServer: (s: Server | null) => void
+  finalizeMoveJob: FinalizeMoveJob | null
+  beginFinalizeMove: (server: Server) => void
+  finalizeMoveSetDest: (server: Server) => void
+  toggleFinalizeMoveSite: (sourceSiteId: number) => void
+  finalizeMoveGoBack: () => void
+  startFinalizeMoveSync: () => void
+  finalizeMoveFinishCutover: () => void
+  clearFinalizeMove: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
   // session. loadProviderMetadata fetches lazily on demand.
   providerMetadata: Map<string, ProviderMetadata>
@@ -937,8 +994,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Plan draft (and, in later slices, the running fan-out).
   const [cloneServer, setCloneServer] = useState<Server | null>(null)
   const [cloneJob, setCloneJob] = useState<CloneJob | null>(null)
+  const [finalizeMoveServer, setFinalizeMoveServer] = useState<Server | null>(null)
+  const [finalizeMoveJob, setFinalizeMoveJob] = useState<FinalizeMoveJob | null>(null)
   // Per-job clone log (survives backgrounding/retries; a new job gets a new file).
   const cloneLogRef = useRef<CloneLogger | null>(null)
+  const finalizeLogRef = useRef<CloneLogger | null>(null)
   const [providerMetadata, setProviderMetadata] = useState<Map<string, ProviderMetadata>>(new Map())
   const [providerMetadataLoading, setProviderMetadataLoading] = useState<Set<string>>(new Set())
   const [providerMetadataError, setProviderMetadataError] = useState<Map<string, string>>(new Map())
@@ -3555,6 +3615,173 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [servers, sudoUsers],
   )
 
+  // ---- Finalize server move ----------------------------------------------
+
+  const beginFinalizeMove = useCallback(
+    (server: Server) => {
+      if (finalizeMoveJob && isFinalizeMoveInFlight(finalizeMoveJob)) {
+        setFinalizeMoveServer(servers.find((s) => s.id === finalizeMoveJob.sourceServerId) ?? server)
+        return
+      }
+      const sites: FinalizeMoveSiteState[] = sitesForServer(server.id).map((s) => ({
+        sourceSiteId: s.id,
+        domain: s.domain,
+        sourceSiteUser: s.site_user ?? "",
+        sourcePublicFolder: s.public_folder,
+        selected: s.is_wordpress,
+        isWordPress: s.is_wordpress,
+        ready: false,
+        step: s.is_wordpress ? "queued" : "skipped",
+      }))
+      setFinalizeMoveServer(server)
+      setFinalizeMoveJob({
+        sourceServerId: server.id,
+        sourceServerName: server.name,
+        step: "plan",
+        sites,
+        startedAt: Date.now(),
+      })
+    },
+    [finalizeMoveJob, servers, sitesForServer],
+  )
+
+  const finalizeMoveSetDest = useCallback(
+    (server: Server) => {
+      setFinalizeMoveJob((j) => {
+        if (!j || j.step !== "plan") return j
+        const destByDomain = new Map(sitesForServer(server.id).map((s) => [s.domain.toLowerCase(), s]))
+        const mapped = j.sites.map((src) => {
+          const dest = destByDomain.get(src.domain.toLowerCase())
+          const ready = !!dest?.is_wordpress && !!src.sourceSiteUser && !!dest.site_user
+          return {
+            ...src,
+            destSiteId: dest?.id,
+            destSiteUser: dest?.site_user ?? undefined,
+            destPublicFolder: dest?.public_folder,
+            ready,
+            selected: src.selected && ready,
+            step: ready ? ("queued" as FinalizeMoveSiteStep) : ("skipped" as FinalizeMoveSiteStep),
+            error: dest ? undefined : "No matching destination site.",
+          }
+        })
+        return { ...j, destServerId: server.id, destServerName: server.name, destServerIp: server.ip_address ?? "", sites: mapped, step: "connect" }
+      })
+    },
+    [sitesForServer],
+  )
+
+  const mutateFinalizeSite = useCallback((sourceSiteId: number, fn: (s: FinalizeMoveSiteState) => FinalizeMoveSiteState) => {
+    setFinalizeMoveJob((j) => (j ? { ...j, sites: j.sites.map((s) => (s.sourceSiteId === sourceSiteId ? fn(s) : s)) } : j))
+  }, [])
+
+  const toggleFinalizeMoveSite = useCallback(
+    (sourceSiteId: number) => mutateFinalizeSite(sourceSiteId, (s) => (s.ready ? { ...s, selected: !s.selected } : s)),
+    [mutateFinalizeSite],
+  )
+
+  const finalizeMoveGoBack = useCallback(() => {
+    setFinalizeMoveJob((j) => {
+      if (!j) return j
+      if (j.fanoutStarted) return j.step === "cutover" ? { ...j, step: "sync" } : j
+      if (j.step === "connect") return { ...j, step: "plan", destServerId: undefined, destServerName: undefined, destServerIp: undefined }
+      return j
+    })
+  }, [])
+
+  const startFinalizeMoveSync = useCallback(() => {
+    const j = finalizeMoveJob
+    if (!j || j.destServerId == null || j.fanoutStarted) return
+    const source = sudoCtxFor(j.sourceServerId)
+    const dest = sudoCtxFor(j.destServerId)
+    if (!source || !dest) return
+    const queue = j.sites.filter((s) => s.selected && s.ready)
+    if (queue.length === 0) return
+    const logger = new CloneLogger(`${j.sourceServerName}-to-${j.destServerName || j.destServerId}`, "finalize")
+    logger.redact(source.sudoPassword, dest.sudoPassword)
+    logger.log({ event: "job-start", source: j.sourceServerName, dest: j.destServerName, destServerId: j.destServerId, sites: queue.map((s) => s.domain) })
+    finalizeLogRef.current = logger
+    setFinalizeMoveJob((cur) =>
+      cur
+        ? {
+            ...cur,
+            step: "sync",
+            fanoutStarted: true,
+            logPath: logger.path,
+            error: undefined,
+            sites: cur.sites.map((s) => (s.selected && s.ready ? { ...s, step: "queued" as FinalizeMoveSiteStep, detail: undefined, error: undefined, failedStage: undefined } : s)),
+          }
+        : cur,
+    )
+
+    let cursor = 0
+    const importedDbs: string[] = []
+    let failed = false
+    const mark = (siteId: number, fn: (s: FinalizeMoveSiteState) => FinalizeMoveSiteState) => {
+      setFinalizeMoveJob((cur) => (cur ? { ...cur, sites: cur.sites.map((s) => (s.sourceSiteId === siteId ? fn(s) : s)) } : cur))
+    }
+    const worker = async () => {
+      while (cursor < queue.length) {
+        const site = queue[cursor++]
+        if (!site || !site.destSiteUser) continue
+        mark(site.sourceSiteId, (s) => ({ ...s, step: "syncing", detail: "starting" }))
+        const spec = {
+          domain: site.domain,
+          sourceSiteUser: site.sourceSiteUser,
+          destSiteUser: site.destSiteUser,
+          sourcePublicFolder: site.sourcePublicFolder,
+          destPublicFolder: site.destPublicFolder,
+        }
+        logger.log({ event: "site-start", domain: site.domain })
+        const res = await runFinalizeDbSync(
+          source,
+          dest,
+          spec,
+          (stage, status, detail) => {
+            mark(site.sourceSiteId, (s) => ({ ...s, detail: status === "start" ? stage : detail ?? stage, ...(status === "fail" ? { failedStage: stage } : {}) }))
+          },
+          (entry) => logger.log({ ...entry }),
+        )
+        if (res.ok) {
+          if (res.destDbName) importedDbs.push(res.destDbName)
+          logger.log({ event: "site-done", domain: site.domain, destDbName: res.destDbName })
+          mark(site.sourceSiteId, (s) => ({ ...s, step: "done", detail: undefined, error: undefined, destDbName: res.destDbName }))
+        } else {
+          failed = true
+          logger.log({ event: "site-failed", domain: site.domain, error: res.error })
+          await rollbackSourceMaintenance(source, spec).catch(() => {})
+          mark(site.sourceSiteId, (s) => ({ ...s, step: "error", detail: undefined, error: res.error, failedStage: s.failedStage }))
+        }
+      }
+    }
+    const done = async () => {
+      const workers = Array.from({ length: Math.min(2, queue.length) }, () => worker())
+      await Promise.all(workers)
+      setFinalizeMoveJob((cur) => {
+        if (!cur || cur.step !== "sync") return cur
+        const active = Array.from(new Set(importedDbs)).sort()
+        if (failed) {
+          logger.log({ event: "job-failed" })
+          return { ...cur, step: "error", failedStep: "sync", error: "One or more database syncs failed. Source maintenance was rolled back for failed sites." }
+        }
+        logger.log({ event: "job-synced", activeDatabases: active })
+        void inventoryDatabases(dest.server, dest.sudoUser, dest.sudoPassword, active)
+          .then((inv) => setFinalizeMoveJob((latest) => (latest ? { ...latest, inventory: inv } : latest)))
+          .catch((err) => setFinalizeMoveJob((latest) => (latest ? { ...latest, inventory: { active, stale: [], databases: [], error: (err as Error).message } } : latest)))
+        return { ...cur, step: "cutover" }
+      })
+    }
+    void done()
+  }, [finalizeMoveJob, sudoCtxFor])
+
+  const finalizeMoveFinishCutover = useCallback(() => {
+    setFinalizeMoveJob((j) => (j && j.step === "cutover" ? { ...j, step: "done" } : j))
+  }, [])
+
+  const clearFinalizeMove = useCallback(() => {
+    setFinalizeMoveServer(null)
+    setFinalizeMoveJob(null)
+  }, [])
+
   // Drive ONE site: create the dest site (event-polled), then the stack-appropriate
   // pull chain. Standard WP is wired; Bedrock is slice 4d.
   const driveCloneSite = useCallback(
@@ -4122,6 +4349,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneCutoverFinish,
     backgroundClone,
     clearClone,
+    finalizeMoveServer,
+    setFinalizeMoveServer,
+    finalizeMoveJob,
+    beginFinalizeMove,
+    finalizeMoveSetDest,
+    toggleFinalizeMoveSite,
+    finalizeMoveGoBack,
+    startFinalizeMoveSync,
+    finalizeMoveFinishCutover,
+    clearFinalizeMove,
     providerMetadata,
     providerMetadataLoading,
     providerMetadataError,

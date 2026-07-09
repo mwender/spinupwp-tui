@@ -39,6 +39,7 @@ const NAV: Section = {
     ["a", "Server actions (reboot/restart)"],
     ["c", "Create a new server"],
     ["C", "Clone this server to a new one"],
+    ["F", "Finalize a moved server"],
     ["S", "Connect sudo on the server"],
     ["u", "Change PHP version"],
     ["H", "Enable/disable HTTPS"],
