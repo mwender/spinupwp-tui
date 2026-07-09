@@ -29,18 +29,29 @@ implementation detail.
 ## Keep the README current (part of shipping a feature)
 
 `README.md` is user-facing docs, not just a landing page — a new feature isn't
-"done" until it's there. Whenever a change adds or changes user-facing behavior,
+"done" until it's there. As of the July 2026 rewrite, the README is deliberately
+**short and skimmable**: a screenshot gallery, one-line Features bullets, and a
+short pointer paragraph per feature area, each linking out to a full write-up in
+`docs/*.md`. Don't grow the README itself back into a wall of prose — depth goes
+in `docs/`, not inline. Whenever a change adds or changes user-facing behavior,
 update, in the same breath:
 
-- the **Features** list (a bullet, with the key and a "see … below" pointer),
+- the **Features** list — a one-line bullet with the key and a `→ [docs/x.md](docs/x.md)`
+  link (skip the link for something trivial enough to need no further detail),
 - the **Keybindings** table (every new key, with where it applies),
-- the relevant **feature section** (a short how-it-works block; add one for a
-  whole new area like the DNS module or local working copies).
+- the relevant **docs/*.md page** — the full how-it-works detail; for a whole new
+  feature area (like the DNS module or local working copies), add a new page and
+  a matching short pointer section in the README (see the existing sections for
+  the pattern: a sentence or two, then "Full details: `[docs/x.md](docs/x.md)`").
 
-When cutting a release, **re-read those three against the new `## [Unreleased]`
-changelog entries** and backfill anything that slipped — a prior release's
-features missing from the README is the exact failure mode this step exists to
-catch.
+The **Screenshots** section isn't part of this per-feature loop — it's a Dev Mode
+capture of the five main tabs (see "Dev Mode" in the README), only worth
+regenerating when a change visibly reshapes one of those screens.
+
+When cutting a release, **re-read the Features list, Keybindings table, and
+docs/ pages against the new `## [Unreleased]` changelog entries** and backfill
+anything that slipped — a prior release's features missing from the README is
+the exact failure mode this step exists to catch.
 
 ## Versioning (SemVer, while in `0.x`)
 
