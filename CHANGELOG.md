@@ -11,6 +11,23 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-07-08
+
+### Changed
+- **README rewritten for readability.** It had grown to 857 lines of dense,
+  multi-paragraph feature bullets — hard to skim for someone landing on the
+  repo. Added a screenshot gallery (real Dev Mode captures of all five main
+  tabs), condensed the Features list to one-liners, and moved all 13 deep-dive
+  "how it works" sections into their own pages under `docs/` (linked from the
+  README's short pointer paragraphs). No content was removed, only relocated;
+  `RELEASING.md`'s "Keep the README current" checklist is updated to match the
+  new house style.
+- **Dev Mode's example fleet scaled up** from 4 servers / 6 sites to 12
+  servers / ~80 sites / 19 events, generated deterministically (same fleet
+  every run) with a realistic spread of EOL Ubuntu/PHP, Standard WP/Bedrock/
+  non-WP sites, disabled HTTPS, and missing backups — mainly so the new
+  screenshots (and any future ones) show a fleet worth looking at.
+
 ## [0.20.0] - 2026-07-08
 
 ### Added
@@ -979,7 +996,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/mwender/spinupwp-tui/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/mwender/spinupwp-tui/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/mwender/spinupwp-tui/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/mwender/spinupwp-tui/compare/v0.18.0...v0.19.0
