@@ -76,16 +76,23 @@ anywhere.
 
 Connect your Kuma instance once and Spinup registers monitors itself:
 
-- **`m` on any site** (sites pane) opens the monitoring overlay. First use walks
-  through connecting (URL + login, verified by actually logging in; stored in
-  `config.json`, chmod 600 — or set `SPINUP_KUMA_URL`, `SPINUP_KUMA_USERNAME`,
-  `SPINUP_KUMA_PASSWORD`). Then `a` registers monitors: vanity sites get the
-  healthz monitor + a **load push monitor fed by a once-a-minute cron** in the
-  site user's crontab. Kuma graphs the pushed value: 1-min load ×100 as an
-  integer (164 = load 1.64 — some Kuma builds drop float pings; Spinup's own
-  views scale it back). A silent cron — server down, cron dead, egress broken —
-  flips the monitor: dead-man's-switch semantics. Regular
-  sites get a homepage monitor; Spinup never touches a client site's files.
+- **`m` on any site** (sites pane) opens the monitoring overlay — a two-pane
+  browser of that site's monitor kinds; see
+  [docs/site-monitoring.md](site-monitoring.md) for the full list and how to
+  act on each one. First use walks through connecting (URL + login, verified
+  by actually logging in; stored in `config.json`, chmod 600 — or set
+  `SPINUP_KUMA_URL`, `SPINUP_KUMA_USERNAME`, `SPINUP_KUMA_PASSWORD`). Then `a`
+  registers monitors: vanity sites get the healthz monitor + a **load push
+  monitor fed by a once-a-minute cron** in the site user's crontab, plus a
+  **Redis sentinel** (if Redis actually answers on that box) and, once sudo
+  is connected, a **PHP-fatal sentinel** (a root cron tailing every site's
+  error/debug logs for new fatals — one per server, not per site). Kuma
+  graphs the load push value: 1-min load ×100 as an integer (164 = load 1.64
+  — some Kuma builds drop float pings; Spinup's own views scale it back). A
+  silent load cron — server down, cron dead, egress broken — flips that
+  monitor: dead-man's-switch semantics. Regular sites get a homepage monitor
+  plus two further opt-in checks (front-page fingerprint, cache-bypass);
+  Spinup never touches a client site's files.
 - **Vanity pages published before this feature** need one `R` (refresh) from the
   `m` overlay to gain the health endpoints, then everything above applies. `R`
   doesn't require a Kuma connection — unconnected it just re-publishes the

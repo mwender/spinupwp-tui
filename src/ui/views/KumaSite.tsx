@@ -1,19 +1,23 @@
 // Site monitoring overlay — opened with `m` in the sites pane.
 //
-// The monitor screen is the default; the Kuma connect form is opt-in (`c`, or
-// pressing `a` while unconnected), so the vanity-page refresh works with no
-// Uptime Kuma at all:
-//   - `R` on a vanity site (domain = server name) re-publishes the embedded page
-//     — the upgrade path for pages seeded by older Spinup versions. Without a
-//     Kuma connection that's ALL it does; with one it also registers the healthz
-//     + load push monitors and installs the heartbeat cron.
-//   - `a` registers monitors for this site (vanity: healthz + load push + cron;
-//     regular site: homepage monitor only — client site files are never touched).
-//   - `f` (regular sites) calibrates the front-page check: reads the live front
-//     page, derives a template fingerprint (body class / canonical — survives
-//     copy edits), and registers a Kuma keyword monitor asserting it at a chosen
-//     window. Catches "the cache is serving the wrong page" (HTTP stays 200).
-//     Re-running recalibrates in place (monitor history survives a redesign).
+// Full-screen two-pane browser (mirrors ProviderConnect.tsx): a left list of
+// this site's monitor kinds (source: MONITOR_GLOSSARY, filtered by vanity vs
+// regular) with a status dot, and a right detail pane showing whichever one
+// is highlighted — its one-liner, longer mechanism description, live status,
+// and how to act on it. The Kuma connect form is opt-in (`c`, or pressing
+// `a` while unconnected), so the vanity-page refresh works with no Uptime
+// Kuma at all:
+//   - `↑↓`/`jk` move the highlight in the left list.
+//   - `a` acts on WHICHEVER monitor is currently selected — one key, not one
+//     per kind. Front page selected → opens the calibration window picker;
+//     Cache bypass selected → opens its window picker; anything else →
+//     register/repair (vanity: healthz + load push + cron + Redis/PHP-fatal
+//     sentinels if sudo is connected; regular site: homepage monitor only —
+//     client site files are never touched).
+//   - `R` on a vanity site (domain = server name) re-publishes the embedded
+//     page — the upgrade path for pages seeded by older Spinup versions.
+//     Without a Kuma connection that's ALL it does; with one it also
+//     registers monitors and installs the heartbeat cron.
 //   - `n` (alerts) lists Kuma's notification providers by name (Telegram, email,
 //     …) and toggles them per site across all of the site's Spinup monitors —
 //     detection is real (providers ride the post-login event burst), only the
@@ -21,17 +25,20 @@
 //   - `r` (vanity, confirm-gated) rotates the monitoring secrets: new push token
 //     edited into the existing monitor (history kept), cron rewritten, new health
 //     key re-seeded — so secrets shown on a screencast can be killed right after.
+//   - `d` (regular sites) runs the doctor — a pure-HTTP cache-vs-fresh-render
+//     diagnosis, deliberately not gated on a Kuma connection.
 //   - The connect form verifies by actually logging in before anything persists;
 //     the minted JWT is stored so later sessions (and 2FA accounts) log in by
 //     token. Env-sourced connections (SPINUP_KUMA_*) never see the form.
 
 import { useEffect, useState } from "react"
 import { useKeyboard } from "@opentui/react"
-import { theme } from "../../lib/theme.ts"
+import { theme, statusDot, statusColor } from "../../lib/theme.ts"
 import { Panel, Centered, Field, SecretInput, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore, type KumaAlertProvider } from "../store.tsx"
 import { isVanityPair } from "../../lib/vanitySite.ts"
+import { openUrl } from "../../lib/open.ts"
 import { runSiteDoctor, type DoctorReport } from "../../lib/siteDoctor.ts"
 import { classifyStack } from "../../lib/stack.ts"
 
@@ -50,6 +57,88 @@ const FP_WINDOWS = [
   { label: "1h", sec: 3600 },
 ] as const
 
+// Check windows for the cache-bypass monitor. Unlike the fingerprint check
+// (served from cache, costs nothing), this forces a real PHP render every
+// time — the window is really "how much added load is acceptable", so it
+// skews much longer. Defaults to 1h.
+const BYPASS_WINDOWS = [
+  { label: "30m", sec: 1800 },
+  { label: "1h", sec: 3600 },
+  { label: "2h", sec: 7200 },
+  { label: "4h", sec: 14400 },
+  { label: "6h", sec: 21600 },
+] as const
+const BYPASS_DEFAULT_IDX = 1 // "1h"
+
+// The `i` glossary overlay's content — one entry per monitor kind this view
+// can register, accurate to the actual mechanism (not an approximation of
+// it). `contexts` gates which site kind sees each entry.
+interface GlossaryEntry {
+  key: string
+  label: string
+  tagline: string
+  detail: string
+  contexts: Array<"vanity" | "regular">
+}
+const MONITOR_GLOSSARY: GlossaryEntry[] = [
+  {
+    key: "health-site",
+    label: "Site health check",
+    tagline: "Is this specific website up right now?",
+    detail:
+      "A plain HTTP check on this site's own homepage, plus certificate-expiry alerting. Served straight from the page cache when one exists — cheap, but for that exact reason it can't see a PHP fatal hiding behind a still-warm cache. This is about whether THIS site answers — independent of whether the server it lives on is under strain.",
+    contexts: ["regular"],
+  },
+  {
+    key: "health-server",
+    label: "Server health check",
+    tagline: "Is the server itself under strain?",
+    detail:
+      "Hits the vanity page's /?healthz endpoint — a small script that reports the server's own resource state (load, disk) and returns 503 when it's strained. This is about the server's health, not any one site's: a customer site can be completely broken while this stays green, and the server can be strained while every site still limps out a 200.",
+    contexts: ["vanity"],
+  },
+  {
+    key: "push",
+    label: "Load heartbeat",
+    tagline: "Is the server itself still alive?",
+    detail:
+      "A once-a-minute cron on the server pushes its 1-minute load average to Kuma. It's a dead-man's-switch: the cron never reports \"down\" itself — it just goes silent if the server, the cron, or its network egress dies, and Kuma's own missed-heartbeat timeout is what raises the alarm.",
+    contexts: ["vanity"],
+  },
+  {
+    key: "redis",
+    label: "Redis sentinel",
+    tagline: "Is Redis actually answering?",
+    detail:
+      "The same heartbeat cron also runs redis-cli ping every minute and actively reports up/down. Unlike the load heartbeat, this alerts immediately when Redis stops answering while the server itself is fine — important because SpinupWP's default object-cache drop-in makes a dead Redis fatal on every page-cache miss.",
+    contexts: ["vanity"],
+  },
+  {
+    key: "fatal",
+    label: "PHP-fatal sentinel",
+    tagline: "Did any site on this server just start fataling?",
+    detail:
+      "A root-level cron scans every site's error/debug logs each minute for new \"PHP Fatal error\" lines. Catches the exact blind spot where a fatal happens behind a still-warm page cache and the plain per-site checks never notice. One monitor per server (not per site) to avoid pileup — the specific affected domain is named in the down alert's own message.",
+    contexts: ["vanity"],
+  },
+  {
+    key: "fingerprint",
+    label: "Front page",
+    tagline: "Is the cache serving the right page?",
+    detail:
+      "At setup time, reads the live homepage and derives a template-identity fingerprint from whatever's actually there — a body-class token if one exists, otherwise the canonical link tag. From then on it asserts that same fingerprint stays present. Reads straight from the page cache, so it catches the cache serving a stale or wrong template even though the page still answers 200 — a failure a plain up/down check can't see.",
+    contexts: ["regular"],
+  },
+  {
+    key: "bypass",
+    label: "Cache bypass",
+    tagline: "Can PHP actually render this page right now?",
+    detail:
+      "The same homepage URL, but with a Cookie: wordpress_no_cache=1 header that forces the page cache to be skipped — so unlike the checks above, this one genuinely exercises PHP on every check. That's also why it costs the site something (a full render each time) and is opt-in rather than automatic, meant for sites with an actual history of PHP fatals hiding behind the cache.",
+    contexts: ["regular"],
+  },
+]
+
 // The `n` (alerts) step's state machine: load → list providers → toggle.
 type AlertsState =
   | null
@@ -57,8 +146,13 @@ type AlertsState =
   | { kind: "error"; error: string }
   | { kind: "ready"; providers: KumaAlertProvider[]; monitorIds: number[]; idx: number; busy: boolean; flash: string | null }
 
+// A passive, header-line summary of alert wiring — fetched once when the
+// overlay opens (not polled), kept in sync with `n`'s own toggles. Separate
+// from AlertsState since it must survive after `n`'s interactive view closes.
+type AlertSummary = null | { kind: "loading" } | { kind: "error"; error: string } | { kind: "ready"; providers: KumaAlertProvider[] }
+
 export function KumaSite() {
-  const { kumaSite: site, setKumaSite, kumaConfigured, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, fetchKumaAlerts, toggleKumaAlert, clearKumaOp, kumaStatus, servers, setInputMode } = useStore()
+  const { kumaSite: site, setKumaSite, kumaConfigured, kumaUrl, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, startBypassMonitorSetup, removeSiteMonitor, fetchKumaAlerts, toggleKumaAlert, clearKumaOp, kumaStatus, servers, setInputMode } = useStore()
 
   const [draft, setDraft] = useState({ url: "", username: "", password: "" })
   const [fieldIdx, setFieldIdx] = useState(0)
@@ -69,12 +163,26 @@ export function KumaSite() {
   // `r` arms a confirm (rotation kills the live push URL / health key the moment
   // it fires — never do that on a stray keypress); y/⏎ fires, Esc disarms.
   const [confirmRotate, setConfirmRotate] = useState(false)
+  // `x` arms a confirm before deleting an opt-in monitor (front page / cache
+  // bypass) — remembers WHICH kind, unlike confirmRotate (only one target).
+  const [confirmRemove, setConfirmRemove] = useState<"fingerprint" | "bypass" | null>(null)
   // `f` opens the front-page check-window picker; ⏎ calibrates & registers.
   const [fpPick, setFpPick] = useState(false)
   const [fpIdx, setFpIdx] = useState(0)
+  // `b` opens the cache-bypass check-window picker; ⏎ registers/recalibrates.
+  // Own state (not shared with fpPick) — different window array and default.
+  const [bypassPick, setBypassPick] = useState(false)
+  const [bypassIdx, setBypassIdx] = useState(BYPASS_DEFAULT_IDX)
   // `n` opens the alerts step — a live read of Kuma's notification providers and
   // which are attached to this site's monitors; ⏎ toggles the selected one.
   const [alerts, setAlerts] = useState<AlertsState>(null)
+  // Passive header-line summary of alert wiring — fetched once per site open
+  // (see the effect below), not polled; kept in sync with `n`'s own toggles.
+  const [alertSummary, setAlertSummary] = useState<AlertSummary>(null)
+  // Which monitor kind is highlighted in the left-hand list (full-screen
+  // browser). Clamped against `entries.length` at read time, not here — the
+  // list's length depends on isVanity, computed after this point.
+  const [selectedIdx, setSelectedIdx] = useState(0)
   // `d` runs the doctor — read-only HTTP diagnosis (works without Kuma).
   const [doctor, setDoctor] = useState<null | { kind: "loading" } | { kind: "ready"; report: DoctorReport }>(null)
   // 2FA: revealed only after Kuma answers `tokenRequired` to a correct password.
@@ -92,12 +200,166 @@ export function KumaSite() {
   // without this the only fix would be hand-editing config.json).
   const connecting = showConnect
 
+  // The left-hand list's rows for this site's context, and the currently
+  // highlighted one — clamped so a stale index (e.g. from a previous site
+  // with more rows) never indexes past the end.
+  const entries = MONITOR_GLOSSARY.filter((e) => e.contexts.includes(isVanity ? "vanity" : "regular"))
+  const safeIdx = Math.min(selectedIdx, Math.max(entries.length - 1, 0))
+  const selected = entries[safeIdx]
+
+  const win = (sec: number) => (sec % 3600 === 0 ? `${sec / 3600}h` : `${Math.round(sec / 60)}m`)
+  const healthUp = site ? (kumaStatus.get(site.domain)?.up ?? null) : null
+  const fpUp = site ? (kumaStatus.get(site.domain)?.fingerprintUp ?? null) : null
+  const redisUp = site ? (kumaStatus.get(site.domain)?.redisUp ?? null) : null
+  const fatalUp = site ? (kumaStatus.get(site.domain)?.fatalUp ?? null) : null
+  const bypassUp = site ? (kumaStatus.get(site.domain)?.bypassUp ?? null) : null
+  const fp = registered?.fingerprint
+  const fpValue = fp
+    ? `${fp.detail} · every ${win(fp.interval)}${fpUp === false ? " · WRONG PAGE SERVED" : fpUp === true ? " · ok" : ""}`
+    : registered?.fingerprintId
+      ? "registered (details unknown) · a recalibrates"
+      : "not calibrated · a"
+  const fpColor = fpUp === false ? theme.bad : fp ? (fpUp === true ? theme.good : theme.text) : theme.textFaint
+  const redisValue = !registered?.redisId
+    ? "not registered · a adds it"
+    : redisUp === false
+      ? "down"
+      : redisUp === true
+        ? "up"
+        : "registered (status unknown)"
+  const redisColor = redisUp === false ? theme.bad : registered?.redisId ? (redisUp === true ? theme.good : theme.text) : theme.textFaint
+  const fatalValue = !registered?.fatalId
+    ? "not registered · a adds it"
+    : fatalUp === false
+      ? "down"
+      : fatalUp === true
+        ? "up"
+        : "registered (status unknown)"
+  const fatalColor = fatalUp === false ? theme.bad : registered?.fatalId ? (fatalUp === true ? theme.good : theme.text) : theme.textFaint
+  const bypassValue = !registered?.bypassId
+    ? "not registered"
+    : bypassUp === false
+      ? "down · a recalibrates"
+      : bypassUp === true
+        ? "up · a recalibrates"
+        : "registered (status unknown) · a recalibrates"
+  const bypassColor = bypassUp === false ? theme.bad : registered?.bypassId ? (bypassUp === true ? theme.good : theme.text) : theme.textFaint
+
+  // Per-entry status, normalized into the { registered, upState } shape
+  // statusDot/statusColor's connection-style vocabulary maps onto (neither
+  // accepts "up"/"down" directly — see theme.ts).
+  function statusFor(key: string): { registered: boolean; upState: boolean | null; value: string; color: string } {
+    switch (key) {
+      case "health-site":
+      case "health-server":
+        return {
+          registered: !!registered?.healthId,
+          upState: healthUp,
+          value: !registered?.healthId
+            ? registered?.fingerprintId
+              ? "front-page check only"
+              : "not registered"
+            : healthUp === false
+              ? "down"
+              : healthUp === true
+                ? "up"
+                : "registered (status unknown)",
+          color: healthUp === false ? theme.bad : registered?.healthId ? (healthUp === true ? theme.good : theme.text) : theme.textFaint,
+        }
+      case "push":
+        // The load-heartbeat cron feeds the SAME shared `up` field as the
+        // health check (store.tsx's poll loop only sets it from push when
+        // health hasn't already) — there's no independent push-only signal.
+        return {
+          registered: !!registered?.pushId,
+          upState: healthUp,
+          value: !registered?.pushId ? "not registered" : healthUp === false ? "down" : healthUp === true ? "up" : "registered (status unknown)",
+          color: healthUp === false ? theme.bad : registered?.pushId ? (healthUp === true ? theme.good : theme.text) : theme.textFaint,
+        }
+      case "redis":
+        return { registered: !!registered?.redisId, upState: redisUp, value: redisValue, color: redisColor }
+      case "fatal":
+        return { registered: !!registered?.fatalId, upState: fatalUp, value: fatalValue, color: fatalColor }
+      case "fingerprint":
+        return { registered: !!registered?.fingerprintId, upState: fpUp, value: fpValue, color: fpColor }
+      case "bypass":
+        return { registered: !!registered?.bypassId, upState: bypassUp, value: bypassValue, color: bypassColor }
+      default:
+        return { registered: false, upState: null, value: "unknown", color: theme.textFaint }
+    }
+  }
+  // statusDot/statusColor's own vocabulary (theme.ts:26-47) is connection/
+  // deploy-style strings, not up/down — normalize here rather than there.
+  function dotStatus(s: { registered: boolean; upState: boolean | null }): string | null {
+    if (!s.registered) return null
+    if (s.upState === true) return "active"
+    if (s.upState === false) return "failed"
+    return "pending"
+  }
+  // The specific Kuma monitor id behind an entry, for the `o` deep-link — null
+  // when not yet registered (nothing to link to).
+  function monitorIdFor(key: string): number | null {
+    switch (key) {
+      case "health-site":
+      case "health-server":
+        return registered?.healthId ?? null
+      case "push":
+        return registered?.pushId ?? null
+      case "redis":
+        return registered?.redisId ?? null
+      case "fatal":
+        return registered?.fatalId ?? null
+      case "fingerprint":
+        return registered?.fingerprintId ?? null
+      case "bypass":
+        return registered?.bypassId ?? null
+      default:
+        return null
+    }
+  }
+
+  // Compresses alertSummary into one header line. Only flags the ABNORMAL
+  // case explicitly (partial wiring) — full wiring is the expected state and
+  // doesn't need its own callout.
+  function formatAlertSummary(): { text: string; color: string } {
+    if (!kumaConfigured) return { text: "Alerts: connect Kuma first · c", color: theme.textFaint }
+    if (!alertSummary || alertSummary.kind === "loading") return { text: "Alerts: checking…", color: theme.textFaint }
+    if (alertSummary.kind === "error") return { text: "Alerts: unavailable · n to retry", color: theme.textFaint }
+    if (alertSummary.providers.length === 0) return { text: "Alerts: none configured in Kuma · n to add one", color: theme.textFaint }
+    const attached = alertSummary.providers.filter((p) => p.attachedAny)
+    if (attached.length === 0) return { text: "Alerts: not wired to any provider · n to choose", color: theme.warn }
+    const names = attached.map((p) => p.name).join(", ")
+    const anyPartial = attached.some((p) => p.attachedAny && !p.attachedAll)
+    return { text: `Alerts: ${names}${anyPartial ? " (some monitors only)" : ""} · n to manage`, color: theme.good }
+  }
+
   // While the connect form is up, its inputs own the keyboard (suppresses the
   // global single-key shortcuts); cleared on connect/close.
   useEffect(() => {
     setInputMode(connecting)
     return () => setInputMode(false)
   }, [connecting, setInputMode])
+
+  // Silently fetch alert-wiring status once per site open (not polled — this
+  // needs a getMonitor round-trip per monitor, unlike the passive poll loop's
+  // beat reads, so it isn't "free" the way up/down status is). Re-fires on a
+  // genuinely different site (site?.domain toggles through undefined when the
+  // overlay closes, so reopening the same site re-fetches too).
+  useEffect(() => {
+    if (!site || !kumaConfigured) {
+      setAlertSummary(null)
+      return
+    }
+    let cancelled = false
+    setAlertSummary({ kind: "loading" })
+    void fetchKumaAlerts(site).then((r) => {
+      if (cancelled) return
+      setAlertSummary(r.ok ? { kind: "ready", providers: r.providers } : { kind: "error", error: r.error })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [site?.domain, kumaConfigured, fetchKumaAlerts])
 
   const runDoctor = () => {
     if (!site) return
@@ -180,6 +442,15 @@ export function KumaSite() {
       if (name === "escape" || name === "n" || name === "q") return setConfirmRotate(false)
       return
     }
+    if (confirmRemove) {
+      if ((name === "y" || name === "return") && site) {
+        const kind = confirmRemove
+        setConfirmRemove(null)
+        return removeSiteMonitor(site, kind)
+      }
+      if (name === "escape" || name === "n" || name === "q") return setConfirmRemove(null)
+      return
+    }
     if (doctor) {
       if (name === "escape" || name === "q") return setDoctor(null)
       if (doctor.kind !== "ready") return
@@ -212,6 +483,12 @@ export function KumaSite() {
             const n = prev.monitorIds.length
             return { ...prev, providers, busy: false, flash: `✓ ${p.name} ${on ? "now alerts" : "no longer alerts"} for ${n} monitor${n === 1 ? "" : "s"}` }
           })
+          // Keep the header's passive summary in sync without a re-fetch.
+          if (r.ok) {
+            setAlertSummary((prev) =>
+              prev?.kind === "ready" ? { kind: "ready", providers: prev.providers.map((q) => (q.id === p.id ? { ...q, attachedAll: on, attachedAny: on } : q)) } : prev,
+            )
+          }
         })
         return
       }
@@ -228,15 +505,27 @@ export function KumaSite() {
       if (name === "escape" || name === "q") return setFpPick(false)
       return
     }
-    if (name === "c") return setShowConnect(true)
-    if (name === "f" && !isVanity && site && op?.status !== "running") {
-      if (!kumaConfigured) return setShowConnect(true) // the check lives in Kuma
-      // Preselect the stored window on recalibration so ⏎⏎ keeps it.
-      const storedSec = registered?.fingerprint?.interval
-      const idx = FP_WINDOWS.findIndex((w) => w.sec === storedSec)
-      setFpIdx(idx >= 0 ? idx : 0)
-      return setFpPick(true)
+    if (bypassPick) {
+      if (name === "left" || name === "up" || name === "h" || name === "k") return setBypassIdx((i) => Math.max(i - 1, 0))
+      if (name === "right" || name === "down" || name === "l" || name === "j" || name === "tab") return setBypassIdx((i) => Math.min(i + 1, BYPASS_WINDOWS.length - 1))
+      if (/^[1-5]$/.test(name)) return setBypassIdx(Number(name) - 1)
+      if (name === "return" && site) {
+        setBypassPick(false)
+        return startBypassMonitorSetup(site, BYPASS_WINDOWS[bypassIdx]!.sec)
+      }
+      if (name === "escape" || name === "q") return setBypassPick(false)
+      return
     }
+    if (name === "c") return setShowConnect(true)
+    if (name === "o" && site && op?.status !== "running") {
+      const id = selected ? monitorIdFor(selected.key) : null
+      if (kumaUrl && id != null) openUrl(`${kumaUrl}/dashboard/${id}`)
+      return
+    }
+    // Move the left list's highlight — only reachable here since every modal
+    // state above already returned.
+    if ((name === "up" || name === "k") && site && op?.status !== "running") return setSelectedIdx((i) => Math.max(i - 1, 0))
+    if ((name === "down" || name === "j") && site && op?.status !== "running") return setSelectedIdx((i) => Math.min(i + 1, entries.length - 1))
     if (name === "d" && !isVanity && site && op?.status !== "running") {
       // Pure HTTP — deliberately NOT gated on a Kuma connection.
       return runDoctor()
@@ -250,8 +539,29 @@ export function KumaSite() {
       return
     }
     if (name === "r" && isVanity && site && op?.status !== "running") return setConfirmRotate(true)
+    if (
+      name === "x" &&
+      site &&
+      op?.status !== "running" &&
+      (selected?.key === "fingerprint" || selected?.key === "bypass") &&
+      monitorIdFor(selected.key) != null
+    ) {
+      return setConfirmRemove(selected.key)
+    }
+    // The single "act on whichever monitor is selected" key — replaces the old
+    // per-kind f/b keys now that the right pane shows one monitor at a time.
     if (name === "a" && site && op?.status !== "running") {
       if (!kumaConfigured) return setShowConnect(true) // monitors need a connection
+      if (selected?.key === "fingerprint") {
+        const storedSec = registered?.fingerprint?.interval
+        const idx = FP_WINDOWS.findIndex((w) => w.sec === storedSec)
+        setFpIdx(idx >= 0 ? idx : 0)
+        return setFpPick(true)
+      }
+      if (selected?.key === "bypass") {
+        setBypassIdx(BYPASS_DEFAULT_IDX)
+        return setBypassPick(true)
+      }
       return startKumaSetup(site)
     }
     if (name === "R" && isVanity && site && op?.status !== "running") {
@@ -270,7 +580,27 @@ export function KumaSite() {
         <text content={site.domain} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
       </box>
 
-      <Centered>{connecting ? renderConnect() : renderMonitor()}</Centered>
+      {connecting ? (
+        <Centered>{renderConnect()}</Centered>
+      ) : confirmRotate ? (
+        <Centered>{renderRotateConfirm()}</Centered>
+      ) : confirmRemove ? (
+        <Centered>{renderRemoveConfirm()}</Centered>
+      ) : doctor ? (
+        <Centered>
+          <Panel title=" Doctor — cache diagnosis " active>
+            <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>{renderDoctor()}</box>
+          </Panel>
+        </Centered>
+      ) : alerts ? (
+        <Centered>
+          <Panel title=" Alerts " active>
+            <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>{renderAlerts()}</box>
+          </Panel>
+        </Centered>
+      ) : (
+        renderMonitorBrowser()
+      )}
 
       <StatusBar hints={hints()} showGlobal={false} />
     </box>
@@ -326,77 +656,41 @@ export function KumaSite() {
     )
   }
 
-  function renderMonitor() {
-    const fp = registered?.fingerprint
-    const fpUp = site ? (kumaStatus.get(site.domain)?.fingerprintUp ?? null) : null
-    const win = (sec: number) => (sec % 3600 === 0 ? `${sec / 3600}h` : `${Math.round(sec / 60)}m`)
-    const fpValue = fp
-      ? `${fp.detail} · every ${win(fp.interval)}${fpUp === false ? " · WRONG PAGE SERVED" : fpUp === true ? " · ok" : ""}`
-      : registered?.fingerprintId
-        ? "registered (details unknown) · f recalibrates"
-        : "not calibrated · f"
-    const fpColor = fpUp === false ? theme.bad : fp ? (fpUp === true ? theme.good : theme.text) : theme.textFaint
+  // Full-screen browser: a narrow left list of this site's monitor kinds
+  // (status dot + label) and a wide right detail pane for whichever one is
+  // selected — mirrors ProviderConnect.tsx's two-Panel-in-a-row layout.
+  function renderMonitorBrowser() {
+    const alertLine = formatAlertSummary()
     return (
-      <Panel title=" Site monitoring " active>
-        <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>
-          {connectedVersion && (
-            <>
-              <text content={`● Uptime Kuma connected (${connectedVersion}).`} fg={theme.good} wrapMode="none" />
-              <box style={{ height: 1 }} />
-            </>
-          )}
-          <Field label="Site" value={site!.domain} />
-          <Field label="Kind" value={isVanity ? "vanity page (full server monitoring)" : "site homepage (up/down + cert expiry)"} />
-          <Field label="Kuma" value={kumaConfigured ? "connected · c to reconnect" : "not connected · c"} valueColor={kumaConfigured ? theme.good : theme.textFaint} />
-          <Field
-            label="Monitors"
-            value={
-              registered?.healthId
-                ? `registered${registered.pushId ? " (healthz + load push)" : ""}`
-                : registered?.fingerprintId
-                  ? "front-page check only · a adds the up/down monitor"
-                  : "not registered yet"
-            }
-          />
-          {!isVanity && <Field label="Front page" value={fpValue} valueColor={fpColor} />}
-          <box style={{ height: 1 }} />
-          {doctor ? (
-            renderDoctor()
-          ) : alerts ? (
-            renderAlerts()
-          ) : fpPick ? (
-            <>
-              <text content="Front-page check — alerts when the wrong page is served." fg={theme.text} wrapMode="none" />
-              <text content="Reads the live page now (while it's healthy), derives a template" fg={theme.textDim} wrapMode="none" />
-              <text content="fingerprint (body class / canonical — survives copy edits), and" fg={theme.textDim} wrapMode="none" />
-              <text content="registers a Kuma keyword monitor asserting it." fg={theme.textDim} wrapMode="none" />
-              <box style={{ height: 1 }} />
-              <box style={{ flexDirection: "row" }}>
-                <text content="Check window:" fg={theme.textDim} style={{ flexShrink: 0 }} />
-                {FP_WINDOWS.map((w, i) => (
-                  <text key={w.label} content={i === fpIdx ? `  ▸${w.label}` : `   ${w.label}`} fg={i === fpIdx ? theme.brand : theme.textFaint} style={{ flexShrink: 0 }} />
-                ))}
-              </box>
-              <box style={{ height: 1 }} />
-              <text content="←/→ or 1-4 window · ⏎ calibrate & register · esc cancel" fg={theme.textFaint} wrapMode="none" />
-            </>
-          ) : confirmRotate ? (
-            <>
-              <text content="Rotate this site's monitoring secrets?" fg={theme.warn} wrapMode="none" />
-              <text content="A new push URL and health key are minted; the old ones stop" fg={theme.textDim} wrapMode="none" />
-              <text content="working immediately. Kuma monitor history is kept." fg={theme.textDim} wrapMode="none" />
-              <box style={{ height: 1 }} />
-              <text content="y / ⏎ rotate · esc cancel" fg={theme.textFaint} wrapMode="none" />
-            </>
-          ) : op?.status === "running" ? (
-            <box style={{ flexDirection: "row" }}>
-              <Spinner />
-              <text content={`  ${op.detail}`} fg={theme.textDim} wrapMode="none" />
+      <box style={{ flexDirection: "column", flexGrow: 1, paddingLeft: 1, paddingRight: 1, paddingTop: 1 }}>
+        {connectedVersion && (
+          <>
+            <text content={`● Uptime Kuma connected (${connectedVersion}).`} fg={theme.good} wrapMode="none" />
+            <box style={{ height: 1 }} />
+          </>
+        )}
+        <text content={isVanity ? "vanity page (full server monitoring)" : "site homepage (up/down + cert expiry)"} fg={theme.textDim} wrapMode="none" />
+        <text content={kumaConfigured ? "Uptime Kuma: connected · c to reconnect" : "Uptime Kuma: not connected · c"} fg={kumaConfigured ? theme.good : theme.textFaint} wrapMode="none" />
+        <text content={alertLine.text} fg={alertLine.color} wrapMode="none" />
+        <box style={{ height: 1 }} />
+        <box style={{ flexGrow: 1, flexDirection: "row", gap: 1 }}>
+          <Panel title=" Monitors " active width={30}>
+            <box style={{ flexDirection: "column", paddingTop: 1, paddingBottom: 1 }}>
+              {entries.map((e, i) => {
+                const s = statusFor(e.key)
+                const sel = i === safeIdx
+                return (
+                  <box key={e.key} style={{ flexDirection: "row", backgroundColor: sel ? theme.selectedBg : undefined }}>
+                    <text content={sel ? "› " : "  "} fg={theme.brand} style={{ flexShrink: 0 }} />
+                    <text content={`${statusDot(dotStatus(s))} `} fg={statusColor(dotStatus(s))} style={{ flexShrink: 0 }} />
+                    <text content={e.label} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+                  </box>
+                )
+              })}
             </box>
-          ) : isVanity ? (
-            <>
-              {/* A settled result shows ABOVE the actions, never instead of them —
-                  the overlay must always offer its next moves. */}
+          </Panel>
+          <Panel title={selected ? ` ${selected.label} ` : " Monitor "} flexGrow={1} active>
+            <box style={{ flexDirection: "column", width: 90, paddingTop: 1, paddingBottom: 1, paddingLeft: 1 }}>
               {op?.status === "error" && (
                 <>
                   <text content={`✕ ${op.error}`} fg={theme.bad} />
@@ -409,43 +703,111 @@ export function KumaSite() {
                   <box style={{ height: 1 }} />
                 </>
               )}
-              <text
-                content={kumaConfigured ? "R — re-publish the page, register monitors & install the cron" : "R — re-publish the page (current version, health endpoints)"}
-                fg={theme.textDim}
-                wrapMode="none"
-              />
-              <text
-                content={kumaConfigured ? "a — register monitors & cron without touching the page" : "a — register Kuma monitors (connects Uptime Kuma first)"}
-                fg={theme.textDim}
-                wrapMode="none"
-              />
-              <text content="r — rotate secrets: new push URL + health key (old ones die)" fg={theme.textDim} wrapMode="none" />
-              <text content="n — alerts: choose where this server's checks notify" fg={theme.textDim} wrapMode="none" />
-            </>
-          ) : (
-            <>
-              {op?.status === "error" && (
+              {op?.status === "running" ? (
+                <box style={{ flexDirection: "row" }}>
+                  <Spinner />
+                  <text content={`  ${op.detail}`} fg={theme.textDim} wrapMode="none" />
+                </box>
+              ) : fpPick && selected?.key === "fingerprint" ? (
                 <>
-                  <text content={`✕ ${op.error}`} fg={theme.bad} />
+                  <text content="Reads the live page now (while it's healthy), derives a template" fg={theme.textDim} wrapMode="none" />
+                  <text content="fingerprint (body class / canonical — survives copy edits), and" fg={theme.textDim} wrapMode="none" />
+                  <text content="registers a Kuma keyword monitor asserting it." fg={theme.textDim} wrapMode="none" />
                   <box style={{ height: 1 }} />
+                  <box style={{ flexDirection: "row" }}>
+                    <text content="Check window:" fg={theme.textDim} style={{ flexShrink: 0 }} />
+                    {FP_WINDOWS.map((w, i) => (
+                      <text key={w.label} content={i === fpIdx ? `  ▸${w.label}` : `   ${w.label}`} fg={i === fpIdx ? theme.brand : theme.textFaint} style={{ flexShrink: 0 }} />
+                    ))}
+                  </box>
+                  <box style={{ height: 1 }} />
+                  <text content="←/→ or 1-4 window · ⏎ calibrate & register · esc cancel" fg={theme.textFaint} wrapMode="none" />
                 </>
-              )}
-              {op?.status === "done" && (
+              ) : bypassPick && selected?.key === "bypass" ? (
                 <>
-                  <text content={`✓ ${op.detail}`} fg={theme.good} />
+                  <text content="Forces a real PHP render, catching a fatal hidden behind a still-" fg={theme.textDim} wrapMode="none" />
+                  <text content="warm page cache. Costs the site a real render on every check, so" fg={theme.textDim} wrapMode="none" />
+                  <text content="pick a loose window; use only on sites with a history of this." fg={theme.textDim} wrapMode="none" />
                   <box style={{ height: 1 }} />
+                  <box style={{ flexDirection: "row" }}>
+                    <text content="Check window:" fg={theme.textDim} style={{ flexShrink: 0 }} />
+                    {BYPASS_WINDOWS.map((w, i) => (
+                      <text key={w.label} content={i === bypassIdx ? `  ▸${w.label}` : `   ${w.label}`} fg={i === bypassIdx ? theme.brand : theme.textFaint} style={{ flexShrink: 0 }} />
+                    ))}
+                  </box>
+                  <box style={{ height: 1 }} />
+                  <text content="←/→ or 1-5 window · ⏎ register · esc cancel" fg={theme.textFaint} wrapMode="none" />
                 </>
-              )}
-              <text content={kumaConfigured ? "a — register a homepage monitor in Uptime Kuma" : "a — register a homepage monitor (connects Uptime Kuma first)"} fg={theme.textDim} wrapMode="none" />
-              <text
-                content={registered?.fingerprintId ? "f — recalibrate the front-page check (e.g. after a redesign)" : "f — front-page check: alert when the wrong page is served"}
-                fg={theme.textDim}
-                wrapMode="none"
-              />
-              <text content="n — alerts: choose where this site's checks notify" fg={theme.textDim} wrapMode="none" />
-              <text content="d — doctor: prove whether the cache is serving the wrong page" fg={theme.textDim} wrapMode="none" />
-            </>
-          )}
+              ) : selected ? (
+                <>
+                  <text content={selected.tagline} fg={theme.text} wrapMode="none" />
+                  <box style={{ height: 1 }} />
+                  <text content={selected.detail} fg={theme.textDim} />
+                  <box style={{ height: 1 }} />
+                  <Field label="Status" value={statusFor(selected.key).value} valueColor={statusFor(selected.key).color} />
+                  <Field
+                    label="In Kuma"
+                    value={monitorIdFor(selected.key) != null ? `#${monitorIdFor(selected.key)} · o opens it` : "not registered yet"}
+                    valueColor={monitorIdFor(selected.key) != null ? theme.text : theme.textFaint}
+                  />
+                  <Field
+                    label="Action"
+                    value={(() => {
+                      const removable = (selected.key === "fingerprint" || selected.key === "bypass") && monitorIdFor(selected.key) != null
+                      const base =
+                        selected.key === "fingerprint"
+                          ? registered?.fingerprintId
+                            ? "a — recalibrate"
+                            : "a — calibrate & register"
+                          : selected.key === "bypass"
+                            ? registered?.bypassId
+                              ? "a — recalibrate"
+                              : "a — register (opt-in)"
+                            : statusFor(selected.key).registered
+                              ? "a — repair / re-register"
+                              : "a — register"
+                      return removable ? `${base} · x — remove` : base
+                    })()}
+                  />
+                  {selected.key !== "fingerprint" && selected.key !== "bypass" && statusFor(selected.key).registered && (
+                    <text content="(safe to re-run any time — re-syncs with Kuma, e.g. if a monitor was" fg={theme.textFaint} wrapMode="none" />
+                  )}
+                  {selected.key !== "fingerprint" && selected.key !== "bypass" && statusFor(selected.key).registered && (
+                    <text content="deleted directly in Kuma, or sudo just got connected for PHP-fatal)" fg={theme.textFaint} wrapMode="none" />
+                  )}
+                </>
+              ) : null}
+            </box>
+          </Panel>
+        </box>
+      </box>
+    )
+  }
+
+  function renderRotateConfirm() {
+    return (
+      <Panel title=" Rotate monitoring secrets " active>
+        <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>
+          <text content="Rotate this site's monitoring secrets?" fg={theme.warn} wrapMode="none" />
+          <text content="A new push URL and health key are minted; the old ones stop" fg={theme.textDim} wrapMode="none" />
+          <text content="working immediately. Kuma monitor history is kept." fg={theme.textDim} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          <text content="y / ⏎ rotate · esc cancel" fg={theme.textFaint} wrapMode="none" />
+        </box>
+      </Panel>
+    )
+  }
+
+  function renderRemoveConfirm() {
+    const label = confirmRemove === "fingerprint" ? "front-page" : "cache-bypass"
+    return (
+      <Panel title=" Remove monitor " active>
+        <box style={{ flexDirection: "column", width: 68, paddingTop: 1, paddingBottom: 1 }}>
+          <text content={`Remove the ${label} monitor?`} fg={theme.warn} wrapMode="none" />
+          <text content="Deletes it in Kuma — its history is gone for good. Pressing" fg={theme.textDim} wrapMode="none" />
+          <text content="a afterward re-opens the picker to add it back from scratch." fg={theme.textDim} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          <text content="y / ⏎ remove · esc cancel" fg={theme.textFaint} wrapMode="none" />
         </box>
       </Panel>
     )
@@ -554,16 +916,35 @@ export function KumaSite() {
   function hints() {
     if (connecting) return [{ key: "⏎", label: "next / connect" }, { key: "esc", label: "back" }]
     if (confirmRotate) return [{ key: "y/⏎", label: "rotate" }, { key: "esc", label: "cancel" }]
+    if (confirmRemove) return [{ key: "y/⏎", label: "remove" }, { key: "esc", label: "cancel" }]
     if (doctor) return doctor.kind === "ready" ? [{ key: "d", label: "re-run" }, { key: "esc", label: "back" }] : [{ key: "esc", label: "back" }]
     if (alerts) return alerts.kind === "ready" && alerts.providers.length > 0 ? [{ key: "↑↓", label: "select" }, { key: "⏎", label: "toggle" }, { key: "esc", label: "done" }] : [{ key: "esc", label: "back" }]
     if (fpPick) return [{ key: "←/→", label: "window" }, { key: "⏎", label: "calibrate" }, { key: "esc", label: "cancel" }]
+    if (bypassPick) return [{ key: "←/→", label: "window" }, { key: "⏎", label: "register" }, { key: "esc", label: "cancel" }]
     if (op?.status === "running") return [{ key: "esc", label: "background" }]
-    const base: { key: string; label: string }[] = []
+    const base: { key: string; label: string }[] = [{ key: "↑↓", label: "select monitor" }]
     if (isVanity) base.push({ key: "R", label: kumaConfigured ? "refresh page + monitors" : "refresh page" })
     if (isVanity) base.push({ key: "r", label: "rotate secrets" })
-    base.push({ key: "a", label: registered ? "repair monitors" : "add monitors" })
-    if (!isVanity) base.push({ key: "f", label: registered?.fingerprintId ? "recalibrate front page" : "front-page check" })
+    base.push({
+      key: "a",
+      label:
+        selected?.key === "fingerprint"
+          ? registered?.fingerprintId
+            ? "recalibrate front page"
+            : "front-page check"
+          : selected?.key === "bypass"
+            ? registered?.bypassId
+              ? "recalibrate cache-bypass"
+              : "cache-bypass check"
+            : statusFor(selected?.key ?? "").registered
+              ? "repair monitors"
+              : "add monitors",
+    })
+    if (selected && (selected.key === "fingerprint" || selected.key === "bypass") && monitorIdFor(selected.key) != null) {
+      base.push({ key: "x", label: "remove monitor" })
+    }
     if (!isVanity) base.push({ key: "d", label: "doctor" })
+    if (selected && monitorIdFor(selected.key) != null) base.push({ key: "o", label: "open in Kuma" })
     base.push({ key: "n", label: "alerts" })
     base.push({ key: "c", label: kumaConfigured ? "reconnect Kuma" : "connect Kuma" })
     return [...base, { key: "esc", label: "close" }]

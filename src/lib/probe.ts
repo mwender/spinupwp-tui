@@ -60,7 +60,7 @@ export function resolveSiteSshTarget(site: Site, server: Server | undefined, ssh
   return `${user}@${ip}`
 }
 
-const SSH_OPTS = [
+export const SSH_OPTS = [
   "-o", "BatchMode=yes",
   "-o", "ConnectTimeout=7",
   "-o", "StrictHostKeyChecking=accept-new",

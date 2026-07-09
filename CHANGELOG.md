@@ -11,6 +11,69 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-07-09
+
+### Added
+- **`spinuptui ssh <domain>`** — non-interactive CLI subcommand for external
+  tooling (e.g. an incident-diagnostics agent that's handed only a domain).
+  Resolves the domain to its site/server, builds the SSH target, and runs a
+  live connectivity probe, returning JSON with a classified failure reason
+  (site not found, ambiguous domain match, server has no IP, key not
+  granted, token rejected, etc.) when it can't connect.
+- **`spinuptui incidents <domain>` / `--all`** — surfaces Uptime Kuma's
+  down/up incident history as JSON, scoped to sites SpinupTUI manages
+  monitoring for. `--all` sweeps every such site over a single Kuma
+  connection; `--hours` sets the lookback window (default 24). Pairs with
+  `spinuptui ssh` for an external agent's discover → access → report loop.
+- **Server-wide PHP-fatal sentinel monitor.** Fixes a real monitoring blind
+  spot: SpinupWP's page cache keeps serving `/` even while PHP is fataling on
+  anything the cache doesn't already have, so the existing health/fingerprint
+  monitors can sleep through a real outage (confirmed against a 2026-07-07
+  incident that went undetected for 54 of its 68 minutes). A root-level cron
+  (one per server, added via the monitoring overlay's repair flow once sudo
+  is connected — same place the Redis sentinel is set up) tails every site's
+  error/debug logs each minute for new `PHP Fatal error` lines and reports
+  up/down to a single new Kuma push monitor, with the actually-affected
+  site domain(s) carried in the down message. Surfaces automatically in
+  `spinuptui incidents --all`.
+- **Cache-bypass monitor, opt-in per site.**
+  Closes the other half of the page-cache blind spot: a wedged PHP-FPM pool
+  that never logs a fatal is invisible to both the plain health monitor and
+  the new fatal sentinel above, since nginx serves the cache without ever
+  touching PHP-FPM. This registers an ordinary Kuma HTTP monitor with a
+  `Cookie: wordpress_no_cache=1` header — the same page-cache bypass
+  `siteDoctor.ts` already uses — so it actually exercises PHP on every check
+  (verified live: `fastcgi-cache-bypass-reason: COOKIE`). Deliberately opt-in
+  (not automatic) and defaults to a 1h check window (30m/1h/2h/4h/6h
+  choices), since forcing a real render costs the site something, unlike the
+  cache-served health/fingerprint checks — meant for sites with an actual
+  history of this failure mode, not the whole fleet.
+
+### Changed
+- **Site/server monitoring overlay rebuilt as a full-screen two-pane browser**
+  (`m` in the sites pane), replacing the small centered popover. A narrow
+  left list of the site's monitor kinds (with a live status dot) sits next
+  to a wide detail pane showing whichever one is selected — its one-line
+  definition, a longer explanation of the actual mechanism, live status, and
+  how to act on it. Grew out of real confusion testing the popover version:
+  six monitor kinds across two site contexts didn't fit legibly in a 68-col
+  box, and a separate glossary overlay left the explanation disconnected
+  from live status. Also **collapses the per-kind action keys into one `a`**
+  that acts on whichever monitor is currently highlighted (front page
+  selected → calibration picker; cache bypass selected → its picker;
+  anything else → register/repair) — fewer keys to remember now that the
+  detail pane shows which monitor you're acting on. The overlay also gained:
+  a passive "Alerts: …" header line (fetched once per open, not polled) so
+  notification wiring is visible without pressing `n`; `o` to deep-link
+  straight to the selected monitor's own page in Uptime Kuma; and `x` to
+  remove the front-page or cache-bypass monitor (confirm-gated) — scoped to
+  just those two kinds, since the other four re-derive themselves
+  automatically on the next repair and would silently reappear.
+- **The header's fleet-wide "N monitors down" badge now names the domain(s)**
+  (falling back to a bare count once there are too many to list) and points
+  at the Search tab to find them, instead of an unactionable number with no
+  way to tell which site it means.
+
 ## [0.20.1] - 2026-07-08
 
 ### Changed
@@ -996,7 +1059,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/mwender/spinupwp-tui/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/mwender/spinupwp-tui/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/mwender/spinupwp-tui/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/mwender/spinupwp-tui/compare/v0.19.0...v0.19.1
