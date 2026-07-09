@@ -41,6 +41,7 @@ export interface KumaBeat {
   time: string
   msg?: string
   ping?: number | null
+  important?: boolean // true on a status-transition row (Kuma's own "important events" flag)
 }
 
 // A notification provider as configured in Kuma (Settings → Notifications) —
@@ -403,6 +404,27 @@ export function redisPushMonitorPayload(name: string, pushToken: string): Record
   }
 }
 
+// The server-wide PHP-fatal sentinel: one per server (like the Redis sentinel),
+// fed by a root-level cron that greps every site's error.log/debug.log for new
+// "PHP Fatal error" lines — catches PHP dying behind a still-warm page cache,
+// which the plain up/down and fingerprint monitors sleep straight through.
+// Unlike every other monitor kind, a down beat's `msg` carries a comma-separated
+// list of the actual site domain(s) that fataled (this monitor's own domain is
+// just the server's vanity anchor, not the site that's actually broken).
+export function fatalPushMonitorPayload(name: string, pushToken: string): Record<string, unknown> {
+  return {
+    type: "push",
+    name,
+    pushToken,
+    description: "Server-wide PHP fatal sentinel: a root cron greps every site's error/debug log each minute for new PHP fatals and reports up/down. `msg` on a down beat lists the affected domain(s).",
+    interval: 60,
+    retryInterval: 60,
+    maxretries: 2,
+    upsideDown: false,
+    accepted_statuscodes: ["200-299"],
+  }
+}
+
 // The front-page fingerprint monitor (site monitoring Phase 1): a `keyword`
 // monitor asserting the front page still carries the template-identity string
 // calibration derived (lib/siteFingerprint.ts). Catches "the page cache is
@@ -453,6 +475,53 @@ export async function registerFingerprintMonitor(
   return kuma.addMonitor(fingerprintMonitorPayload(name, url, opts.keyword, opts.interval))
 }
 
+// The cache-bypass monitor (site monitoring blind-spot fix, part 2): a plain
+// http monitor on the front page, but with a Cookie header that forces
+// SpinupWP's nginx to bypass the page cache — the same bypass siteDoctor.ts
+// already uses and has verified live. Unlike the health/fingerprint monitors,
+// this actually exercises PHP on every check, so it's deliberately opt-in
+// (not automatic) and meant for a much looser interval than either of those.
+export function bypassMonitorPayload(name: string, url: string, interval: number): Record<string, unknown> {
+  return {
+    type: "http",
+    name,
+    url,
+    method: "GET",
+    interval,
+    retryInterval: 60,
+    resendInterval: 0,
+    maxretries: 2,
+    timeout: 48,
+    accepted_statuscodes: ["200-299"],
+    expiryNotification: false, // the plain health monitor already owns cert expiry
+    ignoreTls: false,
+    upsideDown: false,
+    maxredirects: 10,
+    headers: JSON.stringify({ Cookie: "wordpress_no_cache=1" }),
+  }
+}
+
+// Adopt-or-EDIT-or-create, same philosophy as registerFingerprintMonitor:
+// recalibrating the interval updates the existing row in place so history and
+// notification wiring survive.
+export async function registerBypassMonitor(
+  kuma: KumaClient,
+  domain: string,
+  opts: { proto: "http" | "https"; interval: number; knownId?: number | null },
+): Promise<number> {
+  const name = `${domain} cache-bypass`
+  const url = `${opts.proto}://${domain}/`
+  const monitors = await kuma.getMonitors()
+  const byId = new Map(monitors.map((m) => [m.id, m]))
+  const existingId = (opts.knownId != null && byId.has(opts.knownId) ? opts.knownId : undefined) ?? monitors.find((m) => m.name === name)?.id
+  if (existingId != null) {
+    const full = await kuma.getMonitor(existingId)
+    await kuma.editMonitor({ ...full, type: "http", url, interval: opts.interval, headers: JSON.stringify({ Cookie: "wordpress_no_cache=1" }) })
+    return existingId
+  }
+  return kuma.addMonitor(bypassMonitorPayload(name, url, opts.interval))
+}
+
 // Adopt-or-create the monitors for one domain — THE single implementation shared
 // by the vanity wizard's monitor step and the `m` overlay's add/repair, so the
 // two paths cannot drift. Rules:
@@ -464,8 +533,24 @@ export async function registerFingerprintMonitor(
 export async function registerMonitors(
   kuma: KumaClient,
   domain: string,
-  opts: { proto: "http" | "https"; healthzPath: string; wantPush: boolean; wantRedis?: boolean; known?: KumaMonitorRef | null; pushToken?: string | null },
-): Promise<{ healthId: number; pushId?: number; pushToken?: string; redisId?: number; redisToken?: string }> {
+  opts: {
+    proto: "http" | "https"
+    healthzPath: string
+    wantPush: boolean
+    wantRedis?: boolean
+    wantFatal?: boolean
+    known?: KumaMonitorRef | null
+    pushToken?: string | null
+  },
+): Promise<{
+  healthId: number
+  pushId?: number
+  pushToken?: string
+  redisId?: number
+  redisToken?: string
+  fatalId?: number
+  fatalToken?: string
+}> {
   const monitors = await kuma.getMonitors()
   const byId = new Map(monitors.map((m) => [m.id, m]))
   const byName = new Map(monitors.map((m) => [m.name, m]))
@@ -482,7 +567,12 @@ export async function registerMonitors(
   const existingRedis = opts.wantRedis && live(known.redisId) == null ? byName.get(`${domain} redis`) : undefined
   if (existingRedis?.pushToken) redisToken = existingRedis.pushToken
 
-  const [healthId, pushId, redisId] = await Promise.all([
+  // Same independent-token story as Redis — its own push URL, its own cron line.
+  let fatalToken = known.fatalToken ?? genPushToken()
+  const existingFatal = opts.wantFatal && live(known.fatalId) == null ? byName.get(`${domain} php-fatal`) : undefined
+  if (existingFatal?.pushToken) fatalToken = existingFatal.pushToken
+
+  const [healthId, pushId, redisId, fatalId] = await Promise.all([
     (async () => live(known.healthId) ?? byName.get(domain)?.id ?? (await kuma.addMonitor(healthMonitorPayload(domain, `${opts.proto}://${domain}${opts.healthzPath}`))))(),
     (async () => {
       if (!opts.wantPush) return undefined
@@ -492,6 +582,10 @@ export async function registerMonitors(
       if (!opts.wantRedis) return undefined
       return live(known.redisId) ?? existingRedis?.id ?? (await kuma.addMonitor(redisPushMonitorPayload(`${domain} redis`, redisToken)))
     })(),
+    (async () => {
+      if (!opts.wantFatal) return undefined
+      return live(known.fatalId) ?? existingFatal?.id ?? (await kuma.addMonitor(fatalPushMonitorPayload(`${domain} php-fatal`, fatalToken)))
+    })(),
   ])
   return {
     healthId,
@@ -499,6 +593,8 @@ export async function registerMonitors(
     pushToken: opts.wantPush ? pushToken : undefined,
     redisId,
     redisToken: opts.wantRedis ? redisToken : undefined,
+    fatalId,
+    fatalToken: opts.wantFatal ? fatalToken : undefined,
   }
 }
 

@@ -28,7 +28,13 @@ const SUBTITLES: Record<Route, string> = {
 
 export function Header() {
   const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob, vanityJob, cloneJob, cloneServer, kumaStatus } = useStore()
-  const kumaDown = [...kumaStatus.values()].filter((s) => s.up === false).length
+  // Name the domain(s) when there are few enough to fit the header row; fall
+  // back to a bare count once there are too many to list safely. Deliberately
+  // still just the plain up/down signal (kumaStatus.up) — not expanding what
+  // counts as "down" here, only how it's displayed.
+  const downDomains = [...kumaStatus.entries()].filter(([, s]) => s.up === false).map(([domain]) => domain)
+  const kumaDown = downDomains.length
+  const kumaDownLabel = kumaDown === 0 ? "" : kumaDown <= 2 ? `${downDomains.map((d) => truncate(d, 24)).join(", ")} down` : `${kumaDown} monitors down`
   const updateReady = updateInfo?.updateAvailable ?? false
   const building = isNewServerInFlight(newServerJob)
   // The sshkey step is the one that waits on the USER (add your key, confirm in
@@ -103,7 +109,9 @@ export function Header() {
           </box>
         )}
         {/* Uptime Kuma: only bad news earns header space — silence when all up. */}
-        {kumaDown > 0 && <text content={`  ▼ ${kumaDown} monitor${kumaDown === 1 ? "" : "s"} down  `} fg={theme.bad} style={{ flexShrink: 0 }} wrapMode="none" />}
+        {kumaDown > 0 && (
+          <text content={`  ▼ ${kumaDownLabel} — 4 to find ${kumaDown === 1 ? "it" : "them"}  `} fg={theme.bad} style={{ flexShrink: 0 }} wrapMode="none" />
+        )}
         {loading && <Spinner interval={100} />}
         <text content={`  ${servers.length} servers · ${sites.length} sites  `} fg={theme.textDim} style={{ flexShrink: 0 }} />
         <text content={lastUpdated ? `updated ${timeAgo(lastUpdated.toISOString())}` : "loading…"} fg={theme.textFaint} style={{ flexShrink: 0 }} />

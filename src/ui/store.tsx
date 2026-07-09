@@ -40,8 +40,8 @@ import {
 } from "../lib/providers.ts"
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
-import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, probeServerRedis, aRecordResolves, isVanityPair } from "../lib/vanitySite.ts"
-import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, setMonitorNotifications, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
+import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, seedFatalMonitorCron, probeServerRedis, aRecordResolves, isVanityPair } from "../lib/vanitySite.ts"
+import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, registerBypassMonitor, setMonitorNotifications, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
 import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
@@ -219,6 +219,14 @@ export interface KumaDomainStatus {
   // The server's Redis sentinel (vanity domains only): false = the cron reports
   // Redis unreachable while the server itself is beating fine.
   redisUp: boolean | null
+  // The server-wide PHP-fatal sentinel (vanity domains only): false = a new
+  // fatal was detected on some site on this server (see the down beat's own
+  // message for which one — this field is just "is anything on fire").
+  fatalUp: boolean | null
+  // The cache-bypass monitor (regular sites, opt-in): false = PHP couldn't
+  // render a fresh request even with the page cache skipped — distinct from
+  // `up`, which a warm cache can keep green even when this is failing.
+  bypassUp: boolean | null
 }
 
 // Clone a server to a new server (backlog item 5). Five server-level steps wrapping
@@ -538,6 +546,7 @@ interface StoreValue extends DataState {
   clearVanity: () => void
   vanityHealthKeyFor: (domain: string) => string | null // key baked into the seeded page's ?format=json mode
   kumaConfigured: boolean // an Uptime Kuma connection exists (config or env)
+  kumaUrl: string | null // base URL for deep-linking to a monitor's own Kuma page
   kumaSite: Site | null // site whose Kuma overlay (m) is open
   setKumaSite: (s: Site | null) => void
   kumaOps: Map<number, KumaOp> // in-flight/settled monitor setups, by site id
@@ -547,6 +556,8 @@ interface StoreValue extends DataState {
   startVanityReseed: (site: Site) => void // refresh an existing vanity page (no Kuma needed)
   startKumaRotate: (site: Site) => void // rotate the push token + health key (vanity; old URLs die immediately)
   startFingerprintSetup: (site: Site, intervalSec: number) => void // calibrate + register the front-page fingerprint monitor
+  startBypassMonitorSetup: (site: Site, intervalSec: number) => void // register (or recalibrate) the opt-in cache-bypass monitor
+  removeSiteMonitor: (site: Site, kind: "fingerprint" | "bypass") => void // delete an opt-in per-site monitor (front page / cache bypass only)
   fetchKumaAlerts: (site: Site) => Promise<{ ok: true; providers: KumaAlertProvider[]; monitorIds: number[] } | { ok: false; error: string }> // live read of provider/attachment state
   toggleKumaAlert: (site: Site, providerId: number, on: boolean, monitorIds: number[]) => Promise<{ ok: true } | { ok: false; error: string }>
   clearKumaOp: (siteId: number) => void // forget a settled op so the overlay opens fresh
@@ -2947,7 +2958,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // very maintenance windows we create around reboots).
           const beatUp = (s: number) => s !== 0
           for (const [domain, ref] of Object.entries(cfgRef.current.kumaMonitors)) {
-            const status: KumaDomainStatus = { up: null, uptime24: null, responseBeats: [], loadBeats: [], lastLoad: null, fingerprintUp: null, redisUp: null }
+            const status: KumaDomainStatus = { up: null, uptime24: null, responseBeats: [], loadBeats: [], lastLoad: null, fingerprintUp: null, redisUp: null, fatalUp: null, bypassUp: null }
             if (ref.healthId && byId.has(ref.healthId)) {
               const beats = kuma.beatsFor(ref.healthId)
               const last = beats[beats.length - 1]
@@ -2973,6 +2984,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               const beats = kuma.beatsFor(ref.redisId)
               const last = beats[beats.length - 1]
               status.redisUp = last ? beatUp(last.status) : null
+            }
+            if (ref.fatalId && byId.has(ref.fatalId)) {
+              const beats = kuma.beatsFor(ref.fatalId)
+              const last = beats[beats.length - 1]
+              status.fatalUp = last ? beatUp(last.status) : null
+            }
+            if (ref.bypassId && byId.has(ref.bypassId)) {
+              const beats = kuma.beatsFor(ref.bypassId)
+              const last = beats[beats.length - 1]
+              status.bypassUp = last ? beatUp(last.status) : null
             }
             map.set(domain, status)
           }
@@ -3106,13 +3127,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             wantRedis = probe.ok
             if (!probe.ok) redisNote = probe.error ?? "Redis sentinel skipped."
           }
+          // The PHP-fatal sentinel is also server-wide (it globs every site's
+          // logs), but unlike Redis it needs ROOT — a regular site user can't
+          // even list /sites (confirmed live). Only offer it when sudo is
+          // already connected for this server; otherwise skip quietly rather
+          // than blocking the rest of setup, and say what unlocks it.
+          const sudoReady = isVanity && !!server && isSudoConnected(server.id)
+          const wantFatal = sudoReady
+          let fatalNote: string | null = null
+          if (isVanity && server && !sudoReady) fatalNote = "PHP-fatal sentinel skipped — connect sudo (S) first, then re-run to add it."
           setOp({ status: "running", detail: "Registering monitors in Uptime Kuma…" })
           const known = cfgRef.current.kumaMonitors[domain] ?? {}
           // Monitor over the protocol the site actually serves — an https monitor
           // on an http-only site would be permanently down.
           const proto = site.https?.enabled ? "https" : "http"
           const { result, jwt } = await withKuma(conn, (kuma) =>
-            registerMonitors(kuma, domain, { proto, healthzPath: isVanity ? "/?healthz" : "/", wantPush: isVanity, wantRedis, known }),
+            registerMonitors(kuma, domain, { proto, healthzPath: isVanity ? "/?healthz" : "/", wantPush: isVanity, wantRedis, wantFatal, known }),
           )
           persistKumaAuth(conn, jwt)
           persistKumaMonitors(domain, {
@@ -3122,16 +3152,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             pushToken: result.pushToken ?? known.pushToken,
             redisId: result.redisId ?? known.redisId,
             redisToken: result.redisToken ?? known.redisToken,
+            fatalId: result.fatalId ?? known.fatalId,
+            fatalToken: result.fatalToken ?? known.fatalToken,
           })
           if (isVanity && result.pushId && result.pushToken && server) {
             setOp({ status: "running", detail: "Installing the heartbeat cron…" })
             const cron = await seedVanityPushCron({ ...ssh, kumaUrl: conn.url, pushToken: result.pushToken, redisToken: result.redisId != null ? (result.redisToken ?? known.redisToken ?? null) : null })
             if (!cron.ok) throw new Error(cron.error || "Couldn't install the heartbeat cron.")
           }
+          if (sudoReady && server && result.fatalId && result.fatalToken) {
+            setOp({ status: "running", detail: "Installing the PHP-fatal check (sudo)…" })
+            const sudoUser = sudoUsers.get(server.id) ?? ""
+            const sudoPassword = sudoPwRef.current.get(server.id) ?? ""
+            const fatalCron = await seedFatalMonitorCron(server, { sudoUser, sudoPassword, kumaUrl: conn.url, pushToken: result.fatalToken })
+            if (!fatalCron.ok) {
+              if (/password was rejected|password is required|can't run sudo|couldn't connect/i.test(fatalCron.error ?? "")) disconnectSudo(server.id)
+              fatalNote = `PHP-fatal sentinel skipped — ${fatalCron.error ?? "couldn't install the cron."}`
+            }
+          }
           setOp({
             status: "done",
             detail: isVanity
-              ? `Monitors live: healthz checks + load graph${result.redisId != null ? " + Redis sentinel" : ""} (cron beating every minute).${redisNote ? ` ${redisNote}` : ""}`
+              ? `Monitors live: healthz checks + load graph${result.redisId != null ? " + Redis sentinel" : ""}${result.fatalId != null && !fatalNote ? " + PHP-fatal sentinel" : ""} (cron beating every minute).${redisNote ? ` ${redisNote}` : ""}${fatalNote ? ` ${fatalNote}` : ""}`
               : "Monitor live: homepage checks + certificate-expiry alerts.",
           })
         } catch (err) {
@@ -3140,7 +3182,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       void run()
     },
-    [servers, reseedVanityPage, persistKumaAuth, persistKumaMonitors],
+    [servers, reseedVanityPage, persistKumaAuth, persistKumaMonitors, isSudoConnected, sudoUsers, disconnectSudo],
   )
 
   // Calibrate + register the front-page fingerprint monitor (site monitoring
@@ -3177,6 +3219,76 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             status: "done",
             detail: `Front-page check live — asserts ${derived.fingerprint.detail} every ${win}${derived.validated ? "" : ` (${derived.note ?? "unvalidated"})`}.`,
           })
+        } catch (err) {
+          setOp({ status: "error", detail: "", error: (err as Error).message })
+        }
+      }
+      void run()
+    },
+    [persistKumaAuth, persistKumaMonitors],
+  )
+
+  // Register (or recalibrate) the per-site cache-bypass monitor (site
+  // monitoring blind-spot fix, part 2): opt-in, deliberately a much looser
+  // interval than health/fingerprint since it forces a real PHP render on
+  // every check, unlike those two which are served straight from cache.
+  const startBypassMonitorSetup = useCallback(
+    (site: Site, intervalSec: number) => {
+      const conn = cfgRef.current.uptimeKuma
+      if (!conn || isDevMode()) return
+      const setOp = (op: KumaOp) => setKumaOps((prev) => new Map(prev).set(site.id, op))
+      const run = async () => {
+        try {
+          const domain = site.domain
+          const proto = site.https?.enabled ? "https" : "http"
+          const known = cfgRef.current.kumaMonitors[domain] ?? {}
+          setOp({ status: "running", detail: "Registering the cache-bypass monitor…" })
+          const { result: bypassId, jwt } = await withKuma(conn, (kuma) =>
+            registerBypassMonitor(kuma, domain, { proto, interval: intervalSec, knownId: known.bypassId }),
+          )
+          persistKumaAuth(conn, jwt)
+          persistKumaMonitors(domain, { ...known, bypassId })
+          const win = intervalSec % 3600 === 0 ? `${intervalSec / 3600}h` : `${Math.round(intervalSec / 60)}m`
+          setOp({ status: "done", detail: `Cache-bypass check live — forces a fresh render every ${win}, bypassing the page cache.` })
+        } catch (err) {
+          setOp({ status: "error", detail: "", error: (err as Error).message })
+        }
+      }
+      void run()
+    },
+    [persistKumaAuth, persistKumaMonitors],
+  )
+
+  // Remove an opt-in per-site monitor (front-page fingerprint or cache-bypass)
+  // — deliberately NOT offered for health/push/redis/fatal, which are all
+  // re-derived automatically on the next `a`/`R` press (no persisted opt-out
+  // exists for them yet), so "removing" one there would just silently
+  // reappear. These two are genuinely opt-in: pressing `a` after removal
+  // just reopens the picker, nothing re-creates them on its own.
+  const removeSiteMonitor = useCallback(
+    (site: Site, kind: "fingerprint" | "bypass") => {
+      const conn = cfgRef.current.uptimeKuma
+      if (!conn || isDevMode()) return
+      const setOp = (op: KumaOp) => setKumaOps((prev) => new Map(prev).set(site.id, op))
+      const run = async () => {
+        try {
+          const domain = site.domain
+          const known = cfgRef.current.kumaMonitors[domain] ?? {}
+          const id = kind === "fingerprint" ? known.fingerprintId : known.bypassId
+          const label = kind === "fingerprint" ? "Front-page" : "Cache-bypass"
+          if (id == null) return setOp({ status: "done", detail: "Already removed." })
+          setOp({ status: "running", detail: `Removing the ${label.toLowerCase()} monitor…` })
+          const { jwt } = await withKuma(conn, (kuma) => kuma.deleteMonitor(id))
+          persistKumaAuth(conn, jwt)
+          const next = { ...known }
+          if (kind === "fingerprint") {
+            delete next.fingerprintId
+            delete next.fingerprint
+          } else {
+            delete next.bypassId
+          }
+          persistKumaMonitors(domain, next)
+          setOp({ status: "done", detail: `${label} monitor removed.` })
         } catch (err) {
           setOp({ status: "error", detail: "", error: (err as Error).message })
         }
@@ -4083,6 +4195,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     clearVanity,
     vanityHealthKeyFor,
     kumaConfigured: !isDevMode() && cfgRef.current.uptimeKuma != null,
+    // Base URL for deep-linking straight to a monitor's own Kuma page
+    // (`${kumaUrl}/dashboard/${id}`) — null in Dev Mode / when unconfigured.
+    kumaUrl: !isDevMode() ? (cfgRef.current.uptimeKuma?.url ?? null) : null,
     kumaSite,
     setKumaSite,
     kumaOps,
@@ -4092,6 +4207,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     startVanityReseed,
     startKumaRotate,
     startFingerprintSetup,
+    startBypassMonitorSetup,
+    removeSiteMonitor,
     fetchKumaAlerts,
     toggleKumaAlert,
     clearKumaOp,
