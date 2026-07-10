@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-07-10
+
 ### Fixed
 - **Onboarding's API token link was a 404.** `https://spinupwp.app/account/api/`
   no longer resolves, and the correct URL is account-specific (a company slug
@@ -1123,7 +1125,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.21.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.21.2...HEAD
+[0.21.2]: https://github.com/mwender/spinupwp-tui/compare/v0.21.1...v0.21.2
 [0.21.1]: https://github.com/mwender/spinupwp-tui/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/mwender/spinupwp-tui/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/mwender/spinupwp-tui/compare/v0.20.0...v0.20.1
