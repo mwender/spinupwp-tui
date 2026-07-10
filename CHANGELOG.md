@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-07-10
+
 ### Fixed
 - **Uptime Kuma connection now falls back to HTTP long-polling.** The client
   previously connected over WebSocket only; a reverse proxy or CDN in front of
@@ -1071,7 +1073,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.21.1...HEAD
+[0.21.1]: https://github.com/mwender/spinupwp-tui/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/mwender/spinupwp-tui/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/mwender/spinupwp-tui/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/mwender/spinupwp-tui/compare/v0.19.1...v0.20.0
