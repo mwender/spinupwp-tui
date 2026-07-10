@@ -42,6 +42,7 @@ function stepsFor(needsGit: boolean): { step: CloneStep; label: string }[] {
     : [STEP_PLAN, STEP_SERVER, STEP_TRUST, STEP_CLONE, STEP_CUTOVER]
 }
 const RAIL_W = 24
+const SITES_PER_PAGE = 25
 
 export function CloneWizard() {
   const {
@@ -51,6 +52,8 @@ export function CloneWizard() {
     sitesForServer,
     accountSlug,
     toggleCloneSite,
+    toggleCloneAll,
+    toggleCloneGitAuth,
     toggleCloneSiteUploads,
     cloneAdvanceFromPlan,
     cloneSetDest,
@@ -87,6 +90,9 @@ export function CloneWizard() {
   const [verifyOpen, setVerifyOpen] = useState<number | null>(null) // slice 5: drilled-into site
   const [pickExisting, setPickExisting] = useState(false) // dest step: choosing an existing server
   const [destIdx, setDestIdx] = useState(0) // cursor in the existing-server picker
+  const sitePageCount = Math.max(1, Math.ceil((job?.sites.length ?? 0) / SITES_PER_PAGE))
+  const sitePage = Math.min(sitePageCount - 1, Math.floor(idx / SITES_PER_PAGE))
+  const sitePageStart = sitePage * SITES_PER_PAGE
 
   // Kick the fan-out once, when we land on the Clone step. Guarded by the job's
   // fanoutStarted flag (not component state) so reopening a backgrounded wizard
@@ -179,6 +185,20 @@ export function CloneWizard() {
 
   const close = () => clearClone()
 
+  function moveSitePage(delta: number) {
+    setIdx((current) => {
+      const count = job!.sites.length
+      const pages = Math.ceil(count / SITES_PER_PAGE)
+      const slot = current % SITES_PER_PAGE
+      const targetPage = (Math.floor(current / SITES_PER_PAGE) + delta + pages) % pages
+      return Math.min(targetPage * SITES_PER_PAGE + slot, count - 1)
+    })
+  }
+
+  function planPageLabel() {
+    return job!.sites.length > SITES_PER_PAGE ? `Page ${sitePage + 1}/${sitePageCount} · ${sitePageStart + 1}–${Math.min(sitePageStart + SITES_PER_PAGE, job!.sites.length)} of ${job!.sites.length}` : null
+  }
+
   // Existing servers eligible as a clone destination (anything but the source),
   // name-sorted. The DEV override (SPINUP_DEV_CLONE_DEST) just pre-points the cursor.
   const eligibleDests = servers.filter((s) => s.id !== job?.sourceServerId).slice().sort((a, b) => a.name.localeCompare(b.name))
@@ -214,9 +234,13 @@ export function CloneWizard() {
       const n = job.sites.length
       if (name === "up" || name === "k") return setIdx((i) => (i - 1 + n) % n)
       if (name === "down" || name === "j") return setIdx((i) => (i + 1) % n)
+      if (n > SITES_PER_PAGE && (name === "pageup" || name === "[")) return moveSitePage(-1)
+      if (n > SITES_PER_PAGE && (name === "pagedown" || name === "]")) return moveSitePage(1)
       const cur = job.sites[idx]
       if (name === "space" && cur) return toggleCloneSite(cur.sourceSiteId)
+      if (name === "a") return toggleCloneAll()
       if (name === "u" && cur) return toggleCloneSiteUploads(cur.sourceSiteId)
+      if (name === "g") return toggleCloneGitAuth()
       if (name === "t") return toggleCloneLowerTtl()
       if (name === "return") return cloneAdvanceFromPlan()
     }
@@ -498,6 +522,7 @@ export function CloneWizard() {
     const srcOn = isSudoConnected(server!.id)
     const destOn = destServer != null && isSudoConnected(destServer.id)
     const both = srcOn && destOn
+    const adopted = job!.sites.filter((s) => s.selected && s.adoptedDestination).length
     const row = (ok: boolean, label: string) => (
       <box style={{ flexDirection: "row", height: 1 }}>
         <text content={ok ? "✓ " : "○ "} fg={ok ? theme.good : theme.warn} style={{ flexShrink: 0 }} />
@@ -514,6 +539,8 @@ export function CloneWizard() {
           <box style={{ height: 1 }} />
           {row(srcOn, srcOn ? "Source sudo connected" : "Source sudo not connected — press G")}
           {row(destOn, destOn ? "Dest sudo connected" : "Dest sudo not connected — create a sudo user (w), then press S")}
+          {adopted > 0 ? <text content={`↻ ${adopted} existing destination site${adopted === 1 ? "" : "s"} will be repaired in place (DB credentials reset, then clone resumes).`} fg={theme.warn} wrapMode="none" /> : null}
+          <text content={job!.gitAuth === "server" ? "Git: use destination server's account key (change with g on Plan)." : "Git: use per-repository deploy keys (change with g on Plan)."} fg={theme.textFaint} wrapMode="none" />
           <box style={{ flexGrow: 1 }} />
           {both ? (
             <text content="❯ Enter — both ends connected, continue to clone" fg={theme.brand} wrapMode="none" />
@@ -620,8 +647,8 @@ export function CloneWizard() {
             <text content={`${selected.length} of ${job!.sites.length} selected`} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
           </box>
           <box style={{ height: 1 }} />
-          {job!.sites.map((s, i) => {
-            const sel = i === idx
+          {job!.sites.slice(sitePageStart, sitePageStart + SITES_PER_PAGE).map((s, offset) => {
+            const sel = sitePageStart + offset === idx
             const mark = s.selected ? "◉" : "◯"
             const markColor = s.selected ? theme.good : theme.textFaint
             const size = s.sizeBytes != null ? formatBytes(s.sizeBytes) : "—"
@@ -638,6 +665,7 @@ export function CloneWizard() {
               </box>
             )
           })}
+          {planPageLabel() ? <text content={planPageLabel()!} fg={theme.textFaint} wrapMode="none" /> : null}
           <box style={{ flexGrow: 1 }} />
           <text content={payloadLine()} fg={theme.textFaint} wrapMode="none" />
           <box style={{ height: 1 }} />
@@ -649,6 +677,10 @@ export function CloneWizard() {
           <box style={{ flexDirection: "row", height: 1 }}>
             <text content={job!.lowerTtlEarly ? "◉ " : "◯ "} fg={job!.lowerTtlEarly ? theme.good : theme.textFaint} style={{ flexShrink: 0 }} />
             <text content="Lower DNS TTL now (t) — makes cutover near-instant later" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
+          </box>
+          <box style={{ flexDirection: "row", height: 1 }}>
+            <text content={job!.gitAuth === "server" ? "◉ " : "◯ "} fg={job!.gitAuth === "server" ? theme.good : theme.textFaint} style={{ flexShrink: 0 }} />
+            <text content={job!.gitAuth === "server" ? "Use destination server's GitHub account key (g)" : "Use per-repo deploy keys (g)"} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
           </box>
         </box>
       </Panel>
@@ -832,7 +864,10 @@ export function CloneWizard() {
     if (job!.step === "plan") {
       return [
         { key: "space", label: "toggle" },
+        { key: "a", label: "toggle all" },
+        { key: "Pg↑↓/[ ]", label: "page" },
         { key: "u", label: "uploads" },
+        { key: "g", label: "Git auth" },
         { key: "t", label: "lower TTL" },
         ...(sudoOn ? [] : [{ key: "S", label: "connect sudo" }]),
         ...(selected.length > 0 ? [{ key: "⏎", label: "continue" }] : []),

@@ -46,7 +46,7 @@ import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
-import { inventoryDatabases, rollbackSourceMaintenance, runFinalizeDbSync, type FinalizeStage } from "../lib/finalizeMove.ts"
+import { inventoryDatabases, matchFinalizeDestinationSite, rollbackSourceMaintenance, runFinalizeDbSync, type FinalizeStage } from "../lib/finalizeMove.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
@@ -227,6 +227,7 @@ export interface KumaDomainStatus {
 // per-site roster. See docs/2026-06-24_clone-to-server-spec.md. (Slice 2 = shell +
 // Plan; server/trust/clone/cutover orchestration land in later slices.)
 export type CloneStep = "plan" | "server" | "trust" | "gitaccess" | "clone" | "cutover" | "done" | "error"
+export type CloneGitAuth = "server" | "deploy-key"
 // Deploy-key onboarding state for one repo (git-native Bedrock dest). Each repo gets
 // its OWN locally-generated keypair — GitHub attaches a deploy key to exactly ONE repo
 // account-wide, so the server-wide git_publickey can never cover a second repo on the
@@ -260,6 +261,7 @@ export interface CloneSiteState {
   gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
   gitBranch?: string // source git.branch
   gitDeployKey?: { privateKey: string; publicKey: string } // unique per-site key (stamped leaving gitaccess) → create payload
+  adoptedDestination?: boolean // matching site existed when this job chose its destination; repair it rather than POSTing a duplicate
   additionalDomains?: string[] // extra domains served by the site → extra cutover records
   additionalDomainConfigs?: AdditionalDomain[] // full source configs (redirects) — re-created on the dest
   excludeUploads: boolean // per-site opt-out (default false = sync uploads/)
@@ -327,6 +329,7 @@ export interface CloneJob {
   specs: { providerName: string; region: string; size: string; cost?: number; enableBackups?: boolean }
   destServerName: string
   concurrency: number // default 3 (protects the live source's I/O)
+  gitAuth: CloneGitAuth
   lowerTtlEarly: boolean
   destServerId?: number
   destServerIp?: string
@@ -340,7 +343,7 @@ export interface CloneJob {
 // The gitaccess step is only needed when a selected site is Bedrock (a git repo whose
 // dest the new server must be authorized to clone).
 export function cloneNeedsGitAccess(j: CloneJob): boolean {
-  return j.sites.some((s) => s.selected && s.stack === "bedrock" && !!s.gitRepo)
+  return j.gitAuth === "deploy-key" && j.sites.some((s) => s.selected && !s.adoptedDestination && s.stack === "bedrock" && !!s.gitRepo)
 }
 export function isCloneInFlight(j: CloneJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
@@ -603,6 +606,8 @@ interface StoreValue extends DataState {
   cloneJob: CloneJob | null
   beginClone: (server: Server) => void // build the Plan draft (sites[] from the source)
   toggleCloneSite: (sourceSiteId: number) => void // include/exclude a site in Plan
+  toggleCloneAll: () => void // include every site / clear the Plan selection
+  toggleCloneGitAuth: () => void
   toggleCloneSiteUploads: (sourceSiteId: number) => void // per-site uploads opt-out
   setCloneConcurrency: (n: number) => void // throttle (1..N, protects the source)
   toggleCloneLowerTtl: () => void // drop apex/www TTLs at the start so cutover is fast
@@ -632,6 +637,7 @@ interface StoreValue extends DataState {
   beginFinalizeMove: (server: Server) => void
   finalizeMoveSetDest: (server: Server) => void
   toggleFinalizeMoveSite: (sourceSiteId: number) => void
+  toggleFinalizeMoveAll: () => void
   finalizeMoveGoBack: () => void
   startFinalizeMoveSync: () => void
   finalizeMoveFinishCutover: () => void
@@ -3421,6 +3427,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         specs: { providerName: server.provider_name ?? "", region: server.region ?? "", size: server.size ?? "" },
         destServerName: "",
         concurrency: 3,
+        gitAuth: cfgRef.current.cloneGitAuth,
         lowerTtlEarly: false,
         sites,
         startedAt: Date.now(),
@@ -3444,6 +3451,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     (id: number) => mutateCloneSite(id, (s) => ({ ...s, selected: !s.selected })),
     [mutateCloneSite],
   )
+  const toggleCloneAll = useCallback(() => {
+    setCloneJob((j) => {
+      if (!j || j.step !== "plan" || j.sites.length === 0) return j
+      const select = !j.sites.every((s) => s.selected)
+      return { ...j, sites: j.sites.map((s) => ({ ...s, selected: select })) }
+    })
+  }, [])
+  const toggleCloneGitAuth = useCallback(() => {
+    setCloneJob((j) => {
+      if (!j || j.step !== "plan") return j
+      const gitAuth: CloneGitAuth = j.gitAuth === "server" ? "deploy-key" : "server"
+      void saveConfig({ cloneGitAuth: gitAuth })
+      return { ...j, gitAuth }
+    })
+  }, [])
   const toggleCloneSiteUploads = useCallback(
     (id: number) => mutateCloneSite(id, (s) => ({ ...s, excludeUploads: !s.excludeUploads })),
     [mutateCloneSite],
@@ -3461,12 +3483,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // NewServer flow, or an existing box in the dev-override path) and move to the
   // Connect-dest step. Idempotent — re-setting the same dest is a no-op advance.
   const cloneSetDest = useCallback((server: Server) => {
+    const destinationSites = new Map(sitesForServer(server.id).map((s) => [s.domain.trim().toLowerCase(), s]))
     setCloneJob((j) =>
       j && (j.step === "server" || j.step === "trust")
-        ? { ...j, destServerId: server.id, destServerName: server.name, destServerIp: server.ip_address ?? "", step: j.step === "server" ? "trust" : j.step }
+        ? {
+            ...j,
+            destServerId: server.id,
+            destServerName: server.name,
+            destServerIp: server.ip_address ?? "",
+            step: j.step === "server" ? "trust" : j.step,
+            sites: j.sites.map((site) => {
+              const existing = destinationSites.get(site.domain.trim().toLowerCase())
+              return existing ? { ...site, destSiteId: existing.id, adoptedDestination: true } : { ...site, destSiteId: undefined, adoptedDestination: false }
+            }),
+          }
         : j,
     )
-  }, [])
+  }, [sitesForServer])
   // Advance to the fan-out. The caller (wizard) gates this on sudo being connected
   // on BOTH ends (it has live isSudoConnected); we just move the step.
   const cloneTrustContinue = useCallback(() => {
@@ -3649,10 +3682,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     (server: Server) => {
       setFinalizeMoveJob((j) => {
         if (!j || j.step !== "plan") return j
-        const destByDomain = new Map(sitesForServer(server.id).map((s) => [s.domain.toLowerCase(), s]))
+        const destinationSites = sitesForServer(server.id)
         const mapped = j.sites.map((src) => {
-          const dest = destByDomain.get(src.domain.toLowerCase())
-          const ready = !!dest?.is_wordpress && !!src.sourceSiteUser && !!dest.site_user
+          const dest = matchFinalizeDestinationSite(src.domain, destinationSites)
+          // The source's WordPress status determines eligibility. A server that
+          // was moved outside SpinupWP can legitimately have a stale
+          // `is_wordpress: false` flag even though its files and database are
+          // already in place. runFinalizeDbSync verifies the actual destination
+          // install over SSH before it ever enables source maintenance.
+          const ready = !!dest && !!src.sourceSiteUser && !!dest.site_user
           return {
             ...src,
             destSiteId: dest?.id,
@@ -3678,6 +3716,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     (sourceSiteId: number) => mutateFinalizeSite(sourceSiteId, (s) => (s.ready ? { ...s, selected: !s.selected } : s)),
     [mutateFinalizeSite],
   )
+
+  const toggleFinalizeMoveAll = useCallback(() => {
+    setFinalizeMoveJob((j) => {
+      if (!j || j.step !== "connect") return j
+      const ready = j.sites.filter((s) => s.ready)
+      if (ready.length === 0) return j
+      const select = !ready.every((s) => s.selected)
+      return { ...j, sites: j.sites.map((s) => (s.ready ? { ...s, selected: select } : s)) }
+    })
+  }, [])
 
   const finalizeMoveGoBack = useCallback(() => {
     setFinalizeMoveJob((j) => {
@@ -3918,10 +3966,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const onExec = logger ? (e: CloneExecRecord) => logger.log({ event: "exec", ...e }) : undefined
         const res =
           site.stack === "bedrock"
-            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads }, onProgress, onExec, onTransfer)
+            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads, repairDestinationDatabase: site.adoptedDestination }, onProgress, onExec, onTransfer)
             : site.stack === "files"
               ? await runFilesOnlyPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, approxFilesBytes: site.sizeWebBytes }, onProgress, onExec, onTransfer)
-              : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder, approxFilesBytes: site.sizeWebBytes }, onProgress, onExec, onTransfer)
+              : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder, approxFilesBytes: site.sizeWebBytes, repairDestinationDatabase: site.adoptedDestination }, onProgress, onExec, onTransfer)
         if (!res.ok) {
           const stage = (res.error?.split(":")[0] ?? "pull") as CloneStage
           return fail(stageToStep(stage), res.error ?? "pull failed")
@@ -4328,6 +4376,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneJob,
     beginClone,
     toggleCloneSite,
+    toggleCloneAll,
+    toggleCloneGitAuth,
     toggleCloneSiteUploads,
     setCloneConcurrency,
     toggleCloneLowerTtl,
@@ -4355,6 +4405,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     beginFinalizeMove,
     finalizeMoveSetDest,
     toggleFinalizeMoveSite,
+    toggleFinalizeMoveAll,
     finalizeMoveGoBack,
     startFinalizeMoveSync,
     finalizeMoveFinishCutover,

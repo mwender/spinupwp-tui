@@ -10,6 +10,7 @@ import { StatusBar } from "../StatusBar.tsx"
 import { useStore, type FinalizeMoveSiteState } from "../store.tsx"
 
 const RAIL_W = 24
+const SITES_PER_PAGE = 25
 const STEPS = [
   { step: "plan", label: "Destination" },
   { step: "connect", label: "Connect" },
@@ -25,6 +26,7 @@ export function FinalizeMove() {
     sitesForServer,
     finalizeMoveSetDest,
     toggleFinalizeMoveSite,
+    toggleFinalizeMoveAll,
     finalizeMoveGoBack,
     startFinalizeMoveSync,
     finalizeMoveFinishCutover,
@@ -43,6 +45,9 @@ export function FinalizeMove() {
   )
   const selected = job?.sites.filter((s) => s.selected && s.ready) ?? []
   const curStepIdx = job?.step === "done" ? STEPS.length : Math.max(0, STEPS.findIndex((s) => s.step === job?.step))
+  const sitePageCount = Math.max(1, Math.ceil((job?.sites.length ?? 0) / SITES_PER_PAGE))
+  const sitePage = Math.min(sitePageCount - 1, Math.floor(idx / SITES_PER_PAGE))
+  const sitePageStart = sitePage * SITES_PER_PAGE
 
   useEffect(() => setIdx(0), [job?.step])
   useEffect(() => {
@@ -74,8 +79,11 @@ export function FinalizeMove() {
       const n = job.sites.length
       if (n > 0 && (name === "up" || name === "k")) return setIdx((i) => (i - 1 + n) % n)
       if (n > 0 && (name === "down" || name === "j")) return setIdx((i) => (i + 1) % n)
+      if (n > SITES_PER_PAGE && (name === "pageup" || name === "[")) return moveSitePage(-1)
+      if (n > SITES_PER_PAGE && (name === "pagedown" || name === "]")) return moveSitePage(1)
       const cur = job.sites[idx]
       if (name === "space" && cur) return toggleFinalizeMoveSite(cur.sourceSiteId)
+      if (name === "a") return toggleFinalizeMoveAll()
       if (name === "return" && dest && isSudoConnected(server.id) && isSudoConnected(dest.id) && selected.length > 0) return startFinalizeMoveSync()
       return
     }
@@ -84,6 +92,8 @@ export function FinalizeMove() {
       const n = job.sites.length
       if (n > 0 && (name === "up" || name === "k")) return setIdx((i) => (i - 1 + n) % n)
       if (n > 0 && (name === "down" || name === "j")) return setIdx((i) => (i + 1) % n)
+      if (n > SITES_PER_PAGE && (name === "pageup" || name === "[")) return moveSitePage(-1)
+      if (n > SITES_PER_PAGE && (name === "pagedown" || name === "]")) return moveSitePage(1)
       return
     }
 
@@ -93,6 +103,24 @@ export function FinalizeMove() {
   })
 
   if (!server || !job) return null
+
+  function moveSitePage(delta: number) {
+    setIdx((current) => {
+      const count = job!.sites.length
+      const pages = Math.ceil(count / SITES_PER_PAGE)
+      const slot = current % SITES_PER_PAGE
+      const targetPage = (Math.floor(current / SITES_PER_PAGE) + delta + pages) % pages
+      return Math.min(targetPage * SITES_PER_PAGE + slot, count - 1)
+    })
+  }
+
+  function sitePageRows(selectable: boolean) {
+    return job!.sites.slice(sitePageStart, sitePageStart + SITES_PER_PAGE).map((s, offset) => siteRow(s, sitePageStart + offset === idx, selectable))
+  }
+
+  function pageLabel() {
+    return job!.sites.length > SITES_PER_PAGE ? `Page ${sitePage + 1}/${sitePageCount} · ${sitePageStart + 1}–${Math.min(sitePageStart + SITES_PER_PAGE, job!.sites.length)} of ${job!.sites.length}` : null
+  }
 
   return (
     <box style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.bg, zIndex: 219 }}>
@@ -172,7 +200,8 @@ export function FinalizeMove() {
           <text content={`${srcOn ? "✓" : "○"} source sudo ${srcOn ? "connected" : "not connected — press S"}`} fg={srcOn ? theme.good : theme.warn} wrapMode="none" />
           <text content={`${destOn ? "✓" : "○"} destination sudo ${destOn ? "connected" : "not connected — press D"}`} fg={destOn ? theme.good : theme.warn} wrapMode="none" />
           <box style={{ height: 1 }} />
-          {job!.sites.map((s, i) => siteRow(s, i === idx, true))}
+          {sitePageRows(true)}
+          {pageLabel() ? <text content={pageLabel()!} fg={theme.textFaint} wrapMode="none" /> : null}
           <box style={{ flexGrow: 1 }} />
           {srcOn && destOn && selected.length > 0 ? (
             <text content="❯ Enter — activate source maintenance and run final DB sync" fg={theme.brand} wrapMode="none" />
@@ -189,7 +218,8 @@ export function FinalizeMove() {
     return (
       <Panel title={job!.step === "error" ? " DB sync failed " : job!.step === "done" ? " Finalized " : " DB sync "} active>
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-          {job!.sites.map((s, i) => siteRow(s, i === idx, false))}
+          {sitePageRows(false)}
+          {pageLabel() ? <text content={pageLabel()!} fg={theme.textFaint} wrapMode="none" /> : null}
           {failed.length > 0 ? (
             <>
               <box style={{ height: 1 }} />
@@ -244,8 +274,8 @@ export function FinalizeMove() {
 
   function hints() {
     if (job!.step === "plan") return [{ key: "↑↓", label: "select dest" }, { key: "⏎", label: "use server" }, { key: "esc", label: "close" }]
-    if (job!.step === "connect") return [{ key: "S/D", label: "connect sudo" }, { key: "space", label: "toggle site" }, { key: "⏎", label: "sync DBs" }, { key: "esc", label: "close" }]
+    if (job!.step === "connect") return [{ key: "S/D", label: "connect sudo" }, { key: "space", label: "toggle site" }, { key: "a", label: "toggle all" }, { key: "Pg↑↓/[ ]", label: "page" }, { key: "⏎", label: "sync DBs" }, { key: "esc", label: "close" }]
     if (job!.step === "cutover") return [{ key: "⏎", label: "finish" }, { key: "esc", label: "close" }]
-    return [{ key: "↑↓", label: "select" }, { key: "esc", label: "close" }]
+    return [{ key: "↑↓", label: "select" }, { key: "Pg↑↓/[ ]", label: "page" }, { key: "esc", label: "close" }]
   }
 }

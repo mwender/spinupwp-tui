@@ -7,6 +7,22 @@
 
 import type { Server } from "../api/types.ts"
 import { detectWpDirScript, sudoExec, type SudoCtx, type SudoResult } from "./serverClone.ts"
+import { normalizeDomain } from "./dns.ts"
+import type { Site } from "../api/types.ts"
+
+// A moved site can have a different primary hostname on its destination (most
+// often the apex versus `www` form). SpinupWP also records aliases separately
+// in `additional_domains`, so use every configured hostname when pairing the
+// source's primary domain with its destination site. Do not guess when two
+// destination sites claim the same canonical hostname.
+export function matchFinalizeDestinationSite(sourceDomain: string, destinationSites: Site[]): Site | undefined {
+  const target = normalizeDomain(sourceDomain)
+  if (!target) return undefined
+  const matches = destinationSites.filter((site) =>
+    [site.domain, ...(site.additional_domains ?? []).map((domain) => domain.domain)].some((domain) => normalizeDomain(domain) === target),
+  )
+  return matches.length === 1 ? matches[0] : undefined
+}
 
 function shq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
@@ -69,19 +85,23 @@ function wpCwdScript(domain: string, publicFolder?: string | null): string {
   const root = siteFiles(domain)
   return [
     detectWpDirScript(root, publicFolderArg(publicFolder)),
-    // Bedrock's wp-cli.yml and .env live at files/, so wp-cli should run there
-    // rather than inside web/wp.
-    `[ -f "$D/wp-cli.yml" ] && [ -f "$D/.env" ] && W="$D"`,
+    // A project's wp-cli.yml can point wp-cli at its real install and config
+    // (including a config one level above web/wp), so run from its directory.
+    `[ -f "$D/wp-cli.yml" ] && W="$D"`,
     `[ -n "$W" ] || { echo "no WordPress install found under $D" >&2; exit 64; }`,
   ].join("; ")
 }
 
-function envValueScript(name: string): string {
-  return `awk -F= '$1==${shq(name)} { v=$0; sub(/^[^=]*=/, "", v); gsub(/^['"'"'"]|['"'"'"]$/, "", v); print v; exit }' .env 2>/dev/null`
+function envValueScript(name: string, file = ".env"): string {
+  // Use octal quotes in the awk regex: the generated program is single-quoted
+  // by the shell, so embedding a literal apostrophe would break the script.
+  return `awk -F= '$1==${JSON.stringify(name)} { v=$0; sub(/^[^=]*=/, "", v); gsub(/^[\\042\\047]|[\\042\\047]$/, "", v); print v; exit }' ${file} 2>/dev/null`
 }
 
-function dbNameScript(siteUser: string): string {
-  return `DB=$(${envValueScript("DB_NAME")}); [ -n "$DB" ] || DB=$(sudo -u ${shq(siteUser)} -H wp config get DB_NAME 2>/dev/null || true)`
+export function dbNameScript(siteUser: string): string {
+  // Bedrock commonly keeps .env at files/, while the detected WordPress
+  // directory is files/web/wp. Check both before falling back to wp-cli.
+  return `DB=$(${envValueScript("DB_NAME")}); [ -n "$DB" ] || DB=$(${envValueScript("DB_NAME", '"$D/.env"')}); [ -n "$DB" ] || DB=$(sudo -u ${shq(siteUser)} -H wp config get DB_NAME 2>/dev/null || true)`
 }
 
 export async function runFinalizeDbSync(
@@ -126,14 +146,13 @@ export async function runFinalizeDbSync(
     const dstDet = await run(
       "detect",
       dest,
-      `${wpCwdScript(spec.domain, spec.destPublicFolder)}; cd "$W"; ${dbNameScript(du)}; echo "WPDIR:$W"; echo "DBNAME:$DB"`,
+      `${wpCwdScript(spec.domain, spec.destPublicFolder)}; cd "$W"; ${dbNameScript(du)}; sudo -u ${shq(du)} -H wp db check >/dev/null; echo "WPDIR:$W"; echo "DBNAME:$DB"`,
       30_000,
     )
     destWpDir = (dstDet.stdout.match(/^WPDIR:(.*)$/m)?.[1] ?? "").trim()
     destDbName = (dstDet.stdout.match(/^DBNAME:(.*)$/m)?.[1] ?? "").trim()
     if (!dstDet.ok || !destWpDir) return fail("detect", dstDet.stderr.trim() || "couldn't find the destination WordPress install")
-    if (!destDbName) return fail("detect", "couldn't read the destination DB_NAME")
-    onProgress("detect", "ok", destDbName)
+    onProgress("detect", "ok", destDbName || "destination DB connection verified")
 
     onProgress("auth", "start")
     const gen = await run("auth", dest, `rm -f ${shq(key)} ${shq(`${key}.pub`)}; ssh-keygen -t ed25519 -f ${shq(key)} -N "" -C ${shq(marker)} >/dev/null 2>&1 && cat ${shq(`${key}.pub`)}`, 30_000)

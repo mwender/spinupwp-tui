@@ -7,7 +7,8 @@ migration and **only repoints DNS when you say so**. It needs a **Read/Write tok
 over SSH). The steps:
 
 1. **Plan** — pick which of the source's sites to clone (all selected by default;
-   `space` toggles). SpinupTUI sizes each one live (disk + database) into a payload total
+   `space` toggles; `a` toggles all; `PgUp`/`PgDn` or `[`/`]` pages long
+   lists). SpinupTUI sizes each one live (disk + database) into a payload total
    so you know what you're moving; a concurrency cap protects the busy source.
 2. **Destination** — provision a fresh server pre-matched to the source (reusing the
    `c` flow), or `d` to pick an existing server as the target — each listed with its
@@ -16,20 +17,18 @@ over SSH). The steps:
    **pull**: the destination pulls each site directly from the source over SSH (no
    bytes routed through your laptop), authenticating with a key granted onto the source
    for the job and **revoked when it's done**.
-4. **Git access** (only when a Bedrock site is selected) — each repo gets its **own
-   read-only deploy key**, generated locally and never persisted: the public half
-   goes on the repo (added for you via `gh` when it's installed and authed, or shown
-   for a manual add — `o` opens the repo's deploy-key settings, `y` copies the key),
-   and the pair rides the site create so SpinupWP installs it as the new site's git
-   identity. Per-site keys are what let any number of Bedrock repos land on one
-   server — GitHub allows a deploy key on only **one** repository account-wide, so a
-   shared server key stops working at the second repo.
+4. **Git access** — by default, a Bedrock clone uses the destination server's
+   server-wide SSH key, for accounts that authorize that key on GitHub. Press `g`
+   on Plan to use the stricter **per-repo deploy-key** workflow instead; that
+   generates a unique read-only key for each repository and walks you through adding
+   it via `gh` or manually. The selected mode is remembered.
 5. **Clone sites** — a live roster runs the sites concurrently, each advancing
    `create → pull → config → verify → done` with **live transfer progress** (bytes,
    rate, elapsed; database pulls show a true percent). Three stacks are handled:
    **Standard WP** (files + database, with `wp-config` re-stamped for the
    destination), **Bedrock** (git-native — created from the repo, `composer install`
-   over SSH, uploads + secrets pulled, `.env` re-stamped), and **files-only** for
+   over SSH, project + site-scoped Composer credentials and secrets pulled, `.env`
+   re-stamped), and **files-only** for
    non-WordPress sites (redirect shells, static/PHP — opt-in in Plan, no database).
    The pull **detects each site's real webroot** rather than trusting settings —
    `public/`-style layouts (with `wp-config.php` one level above the webroot) are
@@ -59,3 +58,12 @@ retries just that site. Pairs naturally with the DNS module: **lower the TTLs**
 
 For the under-the-hood design (why it's structured this way, what's safe/reversible
 at each step), see [docs/clone-wizard-explained.md](clone-wizard-explained.md).
+
+## Repairing an interrupted clone
+
+When the selected destination already contains the same domain, Clone adopts that
+site instead of trying to create a duplicate. It resets the destination database
+credential, restores the source configuration, then resumes the dependency build,
+uploads, and database import. This makes a failed or interrupted clone resumable
+without deleting the destination site. The destination DB credential changes during
+this repair; source files and database remain read-only.

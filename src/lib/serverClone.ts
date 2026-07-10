@@ -19,6 +19,32 @@ function shq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
+function sqlq(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`
+}
+
+function sqlIdentifier(s: string): string {
+  if (!/^[A-Za-z0-9_]+$/.test(s)) throw new Error("Destination database name contains unsupported characters.")
+  return s
+}
+
+// An adopted destination was created by an earlier interrupted Spinup clone, so
+// the original generated DB password is intentionally unavailable after restart.
+// Reset every matching MySQL account to this run's fresh password before writing
+// its .env/wp-config. The database itself is never dropped or recreated.
+export function repairDestinationDatabaseScript(dbName: string, dbUser: string, password: string): string {
+  const user = sqlq(dbUser)
+  const pass = sqlq(password)
+  const database = sqlIdentifier(dbName)
+  const lookup = shq(`SELECT Host FROM mysql.user WHERE User = ${user};`)
+  return [
+    `HOSTS=$(mysql --defaults-file=/home/spinupwp/.my.cnf -NBe ${lookup})`,
+    `[ -n "$HOSTS" ] || { echo "No destination MySQL user found for ${dbUser}." >&2; exit 65; }`,
+    `while IFS= read -r HOST; do mysql --defaults-file=/home/spinupwp/.my.cnf -e "ALTER USER ${user}@'$HOST' IDENTIFIED BY ${pass}; GRANT ALL PRIVILEGES ON ${database}.* TO ${user}@'$HOST';"; done <<< "$HOSTS"`,
+    `mysql --defaults-file=/home/spinupwp/.my.cnf -e "FLUSH PRIVILEGES;"`,
+  ].join("; ")
+}
+
 export interface SudoResult {
   ok: boolean
   stdout: string
@@ -245,6 +271,7 @@ export interface StandardWpPullSpec {
   destDbPassword: string
   publicFolder?: string // source site's public_folder (dest is created with the same)
   approxFilesBytes?: number // Plan's uncompressed webroot size — soft ceiling for the files meter
+  repairDestinationDatabase?: boolean
 }
 
 // The ephemeral pull key and its authorized_keys marker are PER SITE. They were
@@ -357,6 +384,10 @@ export async function runStandardWpPull(
     // 3. config — re-stamp DB creds to the dest's. Run from the dest WP dir: wp-cli
     // walks up to find wp-config.php, covering both layouts.
     onProgress("config", "start")
+    if (spec.repairDestinationDatabase) {
+      const repaired = await run("config", dest, repairDestinationDatabaseScript(spec.destDbName, spec.destDbUser, spec.destDbPassword), 30_000)
+      if (!repaired.ok) return fail("config", repaired.stderr.trim() || repaired.stdout.trim() || "couldn't reset the adopted destination database credentials")
+    }
     const cfg = await run(
       "config",
       dest,
@@ -428,6 +459,7 @@ export interface BedrockPullSpec {
   destDbUser: string
   destDbPassword: string
   excludeUploads: boolean
+  repairDestinationDatabase?: boolean
 }
 
 export async function runBedrockPull(
@@ -474,8 +506,36 @@ export async function runBedrockPull(
     if (!grant.ok) return fail("auth", grant.stderr.trim() || "couldn't grant pull key on source")
     onProgress("auth", "ok")
 
-    // 2. build — pull auth.json first (private composer repos need it), then
-    //    `composer install` to build vendor/ + web/wp (git/deploy won't, per findings).
+    // 2. config — pull source .env verbatim and swap DB_* (and any DATABASE_URL)
+    // to the destination credentials before Composer. Bedrock post-install hooks
+    // commonly boot WordPress, so running Composer first leaves the clone with an
+    // empty/missing DB config and fails before uploads or the database can transfer.
+    onProgress("config", "start")
+    if (spec.repairDestinationDatabase) {
+      const repaired = await run("config", dest, repairDestinationDatabaseScript(spec.destDbName, spec.destDbUser, spec.destDbPassword), 30_000)
+      if (!repaired.ok) return fail("config", repaired.stderr.trim() || repaired.stdout.trim() || "couldn't reset the adopted destination database credentials")
+    }
+    const cfg = await run(
+      "config",
+      dest,
+      [
+        `set -e`,
+        `${remote(`cat ${shq(`${root}/.env`)}`)} > ${tmp}_env`,
+        `test -s ${tmp}_env`,
+        // Drop existing DB assignments (commented or not) + DATABASE_URL, then append canonical creds.
+        `sed -i -E '/^[[:space:]]*#?[[:space:]]*(DB_NAME|DB_USER|DB_PASSWORD|DB_HOST|DATABASE_URL)[[:space:]]*=/d' ${tmp}_env`,
+        `printf "\\nDB_NAME='%s'\\nDB_USER='%s'\\nDB_PASSWORD='%s'\\nDB_HOST='localhost'\\n" ${shq(spec.destDbName)} ${shq(spec.destDbUser)} ${shq(spec.destDbPassword)} >> ${tmp}_env`,
+        `install -m 640 -o ${shq(du)} -g ${shq(du)} ${tmp}_env ${shq(`${root}/.env`)}`,
+        `rm -f ${tmp}_env`,
+      ].join("; "),
+      60_000,
+    )
+    if (!cfg.ok) return fail("config", cfg.stderr.trim() || ".env re-stamp / db check failed")
+    onProgress("config", "ok")
+
+    // 3. build — pull project and site-scoped Composer auth first (private package
+    // repos use either location), then build vendor/ + web/wp without scripts.
+    // Bedrock post-install hooks can boot WordPress before the source DB is imported.
     onProgress("build", "start")
     const authPull = await run(
       "build",
@@ -484,16 +544,27 @@ export async function runBedrockPull(
       120_000,
     )
     if (!authPull.ok) return fail("build", authPull.stderr.trim() || "auth.json pull failed")
+    const composerAuthPull = await run(
+      "build",
+      dest,
+      `set -e; ${remote(`cat ${shq(`${home}/.config/composer/auth.json`)} 2>/dev/null`)} > ${tmp}_composer_auth.json || true; if [ -s ${tmp}_composer_auth.json ]; then install -d -m 700 -o ${shq(du)} -g ${shq(du)} ${shq(`${home}/.config/composer`)}; install -m 600 -o ${shq(du)} -g ${shq(du)} ${tmp}_composer_auth.json ${shq(`${home}/.config/composer/auth.json`)}; fi; rm -f ${tmp}_composer_auth.json`,
+      120_000,
+    )
+    if (!composerAuthPull.ok) return fail("build", composerAuthPull.stderr.trim() || "Composer auth pull failed")
     const composer = await run(
       "build",
       dest,
-      `set -e; cd ${shq(root)}; sudo -u ${shq(du)} -H bash -lc 'composer install -o --no-dev --no-interaction' 2>&1; test -d ${shq(`${root}/web/wp`)}`,
+      `set -e; cd ${shq(root)}; sudo -u ${shq(du)} -H bash -lc 'composer install -o --no-dev --no-interaction --no-scripts' 2>&1; test -d ${shq(`${root}/web/wp`)}`,
       600_000,
     )
     if (!composer.ok) return fail("build", (composer.stdout + composer.stderr).trim().split("\n").slice(-3).join(" ") || "composer install failed")
+    // A just-created/adopted Bedrock site may not have web/wp until Composer
+    // finishes. Check the destination DB only after that no-script build.
+    const dbCheck = await run("config", dest, `cd ${shq(root)}; sudo -u ${shq(du)} -H wp db check`, 30_000)
+    if (!dbCheck.ok) return fail("config", dbCheck.stderr.trim() || dbCheck.stdout.trim() || "destination DB check failed")
     onProgress("build", "ok")
 
-    // 3. files — pull web/app/uploads (unless excluded). Best-effort: a site with no
+    // 4. files — pull web/app/uploads (unless excluded). Best-effort: a site with no
     //    uploads dir yields an empty stream we simply skip.
     onProgress("files", "start")
     if (!spec.excludeUploads) {
@@ -508,28 +579,6 @@ export async function runBedrockPull(
       if (!up.ok) return fail("files", up.stderr.trim() || "uploads pull failed")
     }
     onProgress("files", "ok")
-
-    // 4. config — pull source .env verbatim, swap DB_* (and any DATABASE_URL) to the
-    //    dest creds, keep everything else (salts, WP_HOME, custom vars). Then db check.
-    onProgress("config", "start")
-    const cfg = await run(
-      "config",
-      dest,
-      [
-        `set -e`,
-        `${remote(`cat ${shq(`${root}/.env`)}`)} > ${tmp}_env`,
-        `test -s ${tmp}_env`,
-        // drop existing DB assignments (commented or not) + DATABASE_URL, then append canonical creds.
-        `sed -i -E '/^[[:space:]]*#?[[:space:]]*(DB_NAME|DB_USER|DB_PASSWORD|DB_HOST|DATABASE_URL)[[:space:]]*=/d' ${tmp}_env`,
-        `printf "\\nDB_NAME='%s'\\nDB_USER='%s'\\nDB_PASSWORD='%s'\\nDB_HOST='localhost'\\n" ${shq(spec.destDbName)} ${shq(spec.destDbUser)} ${shq(spec.destDbPassword)} >> ${tmp}_env`,
-        `install -m 640 -o ${shq(du)} -g ${shq(du)} ${tmp}_env ${shq(`${root}/.env`)}`,
-        `rm -f ${tmp}_env`,
-        `cd ${shq(root)}; sudo -u ${shq(du)} -H wp db check >/dev/null 2>&1`,
-      ].join("; "),
-      60_000,
-    )
-    if (!cfg.ok) return fail("config", cfg.stderr.trim() || ".env re-stamp / db check failed")
-    onProgress("config", "ok")
 
     // 5. db — stage on source (clean stream → file), pull, import.
     onProgress("db", "start")
@@ -552,7 +601,22 @@ export async function runBedrockPull(
     if (!imp.ok) return fail("db", imp.stderr.trim() || "db pull/import failed")
     onProgress("db", "ok")
 
-    // 6. verify — wp-cli on the dest (HTTP --resolve is the caller's).
+    // 6. deploy hooks — database-dependent Composer hooks run only after import.
+    onProgress("build", "start")
+    const hooks = await run(
+      "build",
+      dest,
+      `set -e; install -d -m 775 -o ${shq(du)} -g ${shq(du)} ${shq(`${home}/tmp`)}; cd ${shq(root)}; if grep -q '"post-install-cmd"' composer.json; then sudo -u ${shq(du)} -H bash -lc 'composer run post-install-cmd --no-interaction' 2>&1; fi`,
+      300_000,
+    )
+    // These are application-specific deployment conveniences (plugin installs,
+    // license-driven updates, cache warmers), not clone integrity. The copied
+    // files and imported DB have already succeeded; keep the warning in the
+    // stage log but let the final WordPress verification decide clone success.
+    if (!hooks.ok) onProgress("build", "ok", `post-install hook warning: ${(hooks.stdout + hooks.stderr).trim().split("\n").slice(-1)[0] || "failed"}`)
+    onProgress("build", "ok")
+
+    // 7. verify — wp-cli on the dest (HTTP --resolve is the caller's).
     onProgress("verify", "start")
     const ver = await run("verify", dest, `cd ${shq(root)}; sudo -u ${shq(du)} -H wp core is-installed`, 30_000)
     if (!ver.ok) return fail("verify", "wp core is-installed returned false on the dest")
@@ -563,7 +627,7 @@ export async function runBedrockPull(
     // 7. revoke — drop the pull key (by marker) on source, clean dest temp + staged dump.
     onProgress("revoke", "start")
     await run("revoke", source, `AK=${shq(home)}/.ssh/authorized_keys; [ -f "$AK" ] && sed -i ${shq(`/${MARKER}/d`)} "$AK" && chown ${shq(su)}:${shq(su)} "$AK"; rm -f ${shq(home)}/.clone_db.sql.gz`, 30_000).catch(() => {})
-    await run("revoke", dest, `rm -f ${KEY} ${KEY}.pub ${tmp}_auth.json ${tmp}_up.tgz ${tmp}_env ${tmp}.sql.gz ${tmp}.sql`, 30_000).catch(() => {})
+    await run("revoke", dest, `rm -f ${KEY} ${KEY}.pub ${tmp}_auth.json ${tmp}_composer_auth.json ${tmp}_up.tgz ${tmp}_env ${tmp}.sql.gz ${tmp}.sql`, 30_000).catch(() => {})
     onProgress("revoke", "ok")
   }
 }
