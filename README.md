@@ -96,10 +96,9 @@
   ```sh
   curl -fsSL https://bun.sh/install | bash
   ```
-- A SpinupWP API token — create one at
-  [spinupwp.app/account/api](https://spinupwp.app/account/api/). **Read Only**
-  scope is enough to browse; use **Read/Write** if you want to upgrade a site's
-  PHP version.
+- A SpinupWP API token — create one in your SpinupWP dashboard under
+  **Settings → API Tokens**. **Read Only** scope is enough to browse; use
+  **Read/Write** if you want to upgrade a site's PHP version.
 
 ## Install & run
 

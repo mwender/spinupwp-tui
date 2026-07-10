@@ -11,6 +11,12 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Onboarding's API token link was a 404.** `https://spinupwp.app/account/api/`
+  no longer resolves, and the correct URL is account-specific (a company slug
+  we can't know before the user has a token) — replaced with generic
+  "Settings → API Tokens" navigation instructions in onboarding and the README.
+
 ## [0.21.1] - 2026-07-10
 
 ### Fixed
