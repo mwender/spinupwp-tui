@@ -11,6 +11,18 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Uptime Kuma connection now falls back to HTTP long-polling.** The client
+  previously connected over WebSocket only; a reverse proxy or CDN in front of
+  a Kuma instance that doesn't forward the WebSocket upgrade headers made the
+  connection fail outright instead of degrading gracefully. It now tries
+  polling as a fallback transport.
+- **Connection failures no longer swallow the real reason.** A failed connect
+  could render as `Couldn't reach Uptime Kuma at https://…: ` with nothing
+  after the colon — the underlying error's message was empty and got used
+  as-is. The error message now falls back through the error's description and
+  code before giving up, so a connection failure is actually diagnosable.
+
 ## [0.21.0] - 2026-07-09
 
 ### Added

@@ -67,6 +67,23 @@ interface Ack {
 const ACK_TIMEOUT_MS = 15_000
 const CONNECT_TIMEOUT_MS = 10_000
 
+// engine.io wraps most transport failures in a TransportError whose `.message`
+// is a fixed literal ("websocket error") with the real reason tucked away in
+// `.description`; a few failure modes (a WebSocket constructor throwing
+// synchronously — seen from Bun's net/tls shim on cert issues) skip that
+// wrapper and hand us a bare Error whose `.message` can be empty. Walk every
+// place a reason might live rather than trusting `.message` alone, so a
+// connect failure never renders as a bare trailing colon.
+function describeConnectError(e: unknown): string {
+  const err = e as { message?: string; description?: unknown; code?: string } | undefined
+  if (err?.message) return err.message
+  const desc = err?.description
+  if (desc instanceof Error && desc.message) return desc.message
+  if (typeof desc === "string" && desc) return desc
+  if (err?.code) return err.code
+  return String(e)
+}
+
 // 32 chars, [A-Za-z0-9] — same shape the Kuma UI generates for push monitors.
 // (Kuma stores whatever the client sends; the token is chosen client-side.)
 export function genPushToken(): string {
@@ -155,7 +172,10 @@ export class KumaClient {
 
   static async connect(url: string): Promise<KumaClient> {
     const base = url.replace(/\/+$/, "")
-    const socket = io(base, { transports: ["websocket"], reconnection: false, timeout: CONNECT_TIMEOUT_MS })
+    // Polling as a fallback (not websocket-only): a reverse proxy/CDN in front of
+    // Kuma that doesn't forward the WebSocket Upgrade headers otherwise hard-fails
+    // the connection outright instead of degrading gracefully.
+    const socket = io(base, { transports: ["websocket", "polling"], reconnection: false, timeout: CONNECT_TIMEOUT_MS })
     const client = new KumaClient(socket)
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => {
@@ -169,7 +189,7 @@ export class KumaClient {
       socket.once("connect_error", (e: Error) => {
         clearTimeout(t)
         socket.disconnect()
-        reject(new KumaError(`Couldn't reach Uptime Kuma at ${base}: ${e.message}`))
+        reject(new KumaError(`Couldn't reach Uptime Kuma at ${base}: ${describeConnectError(e)}`))
       })
     })
     return client
