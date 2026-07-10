@@ -15,7 +15,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs"
 import { join, dirname } from "node:path"
 import type { Server, Site } from "../api/types.ts"
-import { expandPath, findProjectRoot, type LocalLink } from "./local.ts"
+import { expandPath, findProjectRoot, resolveLocalLink, type LocalKind, type LocalLink } from "./local.ts"
 import { remoteDocRoot, backupBaseName, SSH_OPTS, sshPort, scpPort, runProcess, meaningfulError } from "./dbBackup.ts"
 
 // Read a KEY=value from a dotenv file, tolerating surrounding quotes. null if absent.
@@ -99,6 +99,7 @@ export interface DbSyncPlan {
   localHost: string // bare local host (hook env)
   hookPath: string | null // bin/sync.d/post-import.sh, if present
   prefixWarning: string | null // set when remote/local table prefixes differ
+  localKind: LocalKind // for a tailored hint if local wp-cli can't find an install (e.g. fresh Bedrock checkout)
 }
 
 export type SyncPlanResult = { ok: true; plan: DbSyncPlan } | { ok: false; error: string }
@@ -161,6 +162,7 @@ export function planDbSync(
         ? join(localRoot, "bin", "sync.d", "post-import.sh")
         : null,
       prefixWarning,
+      localKind: resolveLocalLink(link).kind,
     },
   }
 }
@@ -209,7 +211,15 @@ export async function runDbSync(plan: DbSyncPlan, domain: string, onProgress: (p
   }
   const localSql = plan.localBackupPath.replace(/\.gz$/, "")
   const lb = await wp(`wp db export "${localSql}" >/dev/null && gzip -f "${localSql}"`, 300_000)
-  if (lb.code !== 0) return stageFail("Local DB backup failed", lb.stderr, "couldn't export the local database.", "local-backup")
+  if (lb.code !== 0) {
+    // wp-cli's own "not a WordPress install" error is a common first-pull snag on a
+    // fresh checkout — a Bedrock project needs `composer install` to build vendor/ +
+    // web/wp before wp-cli (or wp-cli.yml) can find anything there at all. Appended
+    // after meaningfulError's own pick (not passed as its fallback), since that's
+    // only used when stderr has NO meaningful line — not the case here.
+    const hint = plan.localKind === "bedrock" && /does not seem to be a WordPress install/i.test(lb.stderr) ? " Run `composer install` in your local checkout first." : ""
+    return fail(`Local DB backup failed — ${meaningfulError(lb.stderr, "couldn't export the local database.")}${hint}`, "local-backup")
+  }
 
   // 2) Export prod + download the gzip (same remote pipeline as the backup).
   onProgress({ stage: "export", domain })
