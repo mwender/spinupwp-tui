@@ -189,21 +189,55 @@ export function pollTransferSize(ctx: SudoCtx, path: string, onBytes: (bytes: nu
 export function publicFolderRel(publicFolder?: string): string {
   return (publicFolder ?? "/").replace(/^\/+|\/+$/g, "")
 }
-function webrootFor(root: string, publicFolder?: string): string {
+export function webrootFor(root: string, publicFolder?: string): string {
   const pf = publicFolderRel(publicFolder)
   return pf ? `${root}/${pf}` : root
 }
 
 // Bash fragment: set W to the dir under $D (the files root) that holds
-// wp-settings.php — configured-candidate first, then the root, then a bounded find.
-// Leaves W empty when no WordPress core exists. Exported for the test harness.
+// wp-settings.php — configured-candidate first, then Bedrock's convention
+// relative to that candidate, then the root, then a bounded find. Also sets B to
+// the Bedrock PROJECT root (composer.json, .env, wp-cli.yml) when core was found
+// nested inside a directory literally named "wp" — derived from W rather than a
+// second blind search, so it's correct at whatever depth W was actually found,
+// and confirmed against composer.json content so a coincidental "wp"-named dir
+// in some other stack doesn't get misidentified.
+// Leaves W (and B) empty when no WordPress core exists. Exported for the test harness.
 export function detectWpDirScript(root: string, publicFolder?: string): string {
   const candidate = webrootFor(root, publicFolder)
   return [
     `D=${shq(root)}; W=""`,
     `[ -f ${shq(candidate)}/wp-settings.php ] && W=${shq(candidate)}`,
+    // Bedrock never puts core directly in the public folder — it lives one level
+    // down, at {public_folder}/wp/ (the whole point of Bedrock's web/wp + web/app
+    // split). Anchoring on the CONFIGURED public folder here — rather than relying
+    // solely on the blind find below — finds Bedrock core at any nesting depth,
+    // not just the couple of levels the bounded find happens to reach.
+    `[ -z "$W" ] && [ -f ${shq(candidate)}/wp/wp-settings.php ] && W=${shq(candidate)}/wp`,
     `[ -z "$W" ] && [ -f "$D/wp-settings.php" ] && W="$D"`,
     `[ -z "$W" ] && { F=$(find "$D" -maxdepth 3 -name wp-settings.php -not -path "*/wp-content/*" -print -quit 2>/dev/null); [ -n "$F" ] && W=$(dirname "$F"); }`,
+    `B=""`,
+    `[ -n "$W" ] && [ "$(basename "$W")" = "wp" ] && { P=$(dirname "$(dirname "$W")"); [ -f "$P/composer.json" ] && grep -q "roots/bedrock" "$P/composer.json" 2>/dev/null && B="$P"; }`,
+  ].join("; ")
+}
+
+// Bash fragment: set B to the Bedrock PROJECT root via composer.json — for a
+// FRESH git clone, before `composer install` has run. detectWpDirScript's B
+// anchors on WordPress core (a directory literally named "wp"), which doesn't
+// exist yet at this point — Bedrock's core is a composer dependency, never
+// committed to git. composer.json IS present immediately post-clone, so this
+// anchors on that instead: the configured public folder's PARENT first (that's
+// where composer.json sits, by Bedrock convention — one level above the public
+// folder), then the files root itself, then a bounded find. Leaves B empty when
+// no Bedrock project is found. Exported for the test harness.
+export function detectBedrockRootScript(root: string, publicFolder?: string): string {
+  const candidate = webrootFor(root, publicFolder)
+  const parent = candidate === root ? root : candidate.slice(0, candidate.lastIndexOf("/"))
+  return [
+    `D=${shq(root)}; P=${shq(parent)}; B=""`,
+    `[ -f "$P/composer.json" ] && grep -q "roots/bedrock" "$P/composer.json" 2>/dev/null && B="$P"`,
+    `[ -z "$B" ] && [ "$P" != "$D" ] && [ -f "$D/composer.json" ] && grep -q "roots/bedrock" "$D/composer.json" 2>/dev/null && B="$D"`,
+    `[ -z "$B" ] && { F=$(find "$D" -maxdepth 3 -name composer.json -not -path "*/vendor/*" -print -quit 2>/dev/null); [ -n "$F" ] && grep -q "roots/bedrock" "$F" 2>/dev/null && B=$(dirname "$F"); }`,
   ].join("; ")
 }
 
@@ -417,8 +451,12 @@ export async function runStandardWpPull(
 // we `composer install` ourselves over SSH to build vendor/ + web/wp. Only the
 // gitignored artifacts come from the source: web/app/uploads, auth.json, .env, and the
 // DB. The .env is pulled verbatim and its DB_* creds swapped to the dest's (so salts /
-// WP_HOME / custom vars are preserved — a true clone of the same domain). wp-cli runs
-// from the Bedrock root (files/, where wp-cli.yml points at web/wp).
+// WP_HOME / custom vars are preserved — a true clone of the same domain).
+//
+// The Bedrock project's actual location under files/ is DETECTED independently on
+// each end, not assumed to match — see the "0. detect" step below. wp-cli runs from
+// whichever project root was detected there (where wp-cli.yml lives), not a
+// hardcoded files/.
 
 export interface BedrockPullSpec {
   domain: string
@@ -428,6 +466,7 @@ export interface BedrockPullSpec {
   destDbUser: string
   destDbPassword: string
   excludeUploads: boolean
+  publicFolder?: string // a signal, not a fact (CLAUDE.md) — re-verified below, independently, on both ends
 }
 
 export async function runBedrockPull(
@@ -439,7 +478,7 @@ export async function runBedrockPull(
   onTransfer?: CloneTransfer,
 ): Promise<{ ok: boolean; error?: string }> {
   const srcIp = source.server.ip_address ?? ""
-  const root = `/sites/${spec.domain}/files` // Bedrock project root (composer.json, web/, .env)
+  const root = `/sites/${spec.domain}/files` // files root — the Bedrock project itself may be nested under this
   const home = `/sites/${spec.domain}`
   const su = spec.sourceSiteUser
   const du = spec.destSiteUser
@@ -460,6 +499,46 @@ export async function runBedrockPull(
   }
 
   try {
+    // 0. detect — locate the real Bedrock project root on BOTH ends independently
+    //    (public_folder is a setting, not a fact — see CLAUDE.md). The two ends need
+    //    different anchors: the SOURCE already has WordPress core built, so it
+    //    anchors on wp-settings.php (detectWpDirScript). The DEST was just git-cloned
+    //    and has NOT run `composer install` yet — core doesn't exist there (it's a
+    //    composer dependency, never committed), so nothing to anchor detection on
+    //    except composer.json, which IS present immediately post-clone
+    //    (detectBedrockRootScript). We do NOT assume the dest mirrors whatever the
+    //    source happened to detect — its structure comes from the git repo's own
+    //    content, which can legitimately diverge from the source's on-disk state.
+    onProgress("detect", "start")
+    const det = await run("detect", source, `${detectWpDirScript(root, spec.publicFolder)}; echo "WPCORE:$W"; echo "BEDROCKROOT:$B"`, 30_000)
+    const wpCore = (det.stdout.match(/^WPCORE:(.*)$/m)?.[1] ?? "").trim()
+    const srcProjectRoot = (det.stdout.match(/^BEDROCKROOT:(.*)$/m)?.[1] ?? "").trim()
+    if (!det.ok || !wpCore || !srcProjectRoot) {
+      return fail("detect", `couldn't find a Bedrock project (composer.json + WordPress core) under ${root} on the source — is the public folder set correctly?`)
+    }
+    const webDir = wpCore.slice(0, wpCore.lastIndexOf("/")) // wpCore's parent — the public folder, whatever it's actually named
+
+    // The dest's webroot is fixed by what we told SpinupWP at site-creation time
+    // (public_folder), which is what nginx will actually serve — composer install
+    // MUST target here for the site to work, regardless of the repo's own internal
+    // wordpress-install-dir config. Its PARENT (the project root: composer.json,
+    // .env) is what needs re-detecting, since that's a fact about the repo's
+    // content, not something either of us configured.
+    const destWebDir = webrootFor(root, spec.publicFolder)
+    const destProjectRootExpected = destWebDir === root ? root : destWebDir.slice(0, destWebDir.lastIndexOf("/"))
+    const destDet = await run("detect", dest, `${detectBedrockRootScript(root, spec.publicFolder)}; echo "BEDROCKROOT:$B"`, 30_000)
+    const destProjectRoot = (destDet.stdout.match(/^BEDROCKROOT:(.*)$/m)?.[1] ?? "").trim()
+    if (!destDet.ok || !destProjectRoot) {
+      return fail("detect", `couldn't find a Bedrock project (composer.json) under ${root} on the destination — did the git clone complete?`)
+    }
+    if (destProjectRoot !== destProjectRootExpected) {
+      return fail(
+        "detect",
+        `the site's git repo layout doesn't match its configured Public Folder (repo has composer.json at ${destProjectRoot}, but Public Folder implies ${destProjectRootExpected}) — align them and retry`,
+      )
+    }
+    onProgress("detect", "ok")
+
     // 1. auth — ephemeral key on dest, granted onto the source site user.
     onProgress("auth", "start")
     const gen = await run("auth", dest, `rm -f ${KEY} ${KEY}.pub; ssh-keygen -t ed25519 -f ${KEY} -N "" -C ${MARKER} >/dev/null 2>&1 && cat ${KEY}.pub`, 30_000)
@@ -480,28 +559,33 @@ export async function runBedrockPull(
     const authPull = await run(
       "build",
       dest,
-      `set -e; ${remote(`cat ${shq(`${root}/auth.json`)} 2>/dev/null`)} > ${tmp}_auth.json || true; if [ -s ${tmp}_auth.json ]; then install -m 640 -o ${shq(du)} -g ${shq(du)} ${tmp}_auth.json ${shq(`${root}/auth.json`)}; fi; rm -f ${tmp}_auth.json`,
+      `set -e; ${remote(`cat ${shq(`${srcProjectRoot}/auth.json`)} 2>/dev/null`)} > ${tmp}_auth.json || true; if [ -s ${tmp}_auth.json ]; then install -m 640 -o ${shq(du)} -g ${shq(du)} ${tmp}_auth.json ${shq(`${destProjectRoot}/auth.json`)}; fi; rm -f ${tmp}_auth.json`,
       120_000,
     )
     if (!authPull.ok) return fail("build", authPull.stderr.trim() || "auth.json pull failed")
     const composer = await run(
       "build",
       dest,
-      `set -e; cd ${shq(root)}; sudo -u ${shq(du)} -H bash -lc 'composer install -o --no-dev --no-interaction' 2>&1; test -d ${shq(`${root}/web/wp`)}`,
+      `set -e; cd ${shq(destProjectRoot)}; sudo -u ${shq(du)} -H bash -lc 'composer install -o --no-dev --no-interaction' 2>&1; test -d ${shq(`${destWebDir}/wp`)}`,
       600_000,
     )
     if (!composer.ok) return fail("build", (composer.stdout + composer.stderr).trim().split("\n").slice(-3).join(" ") || "composer install failed")
     onProgress("build", "ok")
 
-    // 3. files — pull web/app/uploads (unless excluded). Best-effort: a site with no
-    //    uploads dir yields an empty stream we simply skip.
+    // 3. files — pull {web}/app/uploads (unless excluded), `web` being whatever the
+    //    detected public folder is actually named — which can differ in nesting
+    //    depth between source and dest (the repo's own content vs. how deep the
+    //    source's on-disk state happens to be). Archiving/extracting relative to
+    //    EACH side's own web dir (not `root`) with a fixed member name sidesteps
+    //    that — the two ends never need to agree on a shared relative path. Best-
+    //    effort: a site with no uploads dir yields an empty stream we simply skip.
     onProgress("files", "start")
     if (!spec.excludeUploads) {
       const stopUpPoll = pollTransferSize(dest, `${tmp}_up.tgz`, (b) => onTransfer?.("files", b))
       const up = await run(
         "files",
         dest,
-        `set -e; timeout -k 5 3600 ${remote(`[ -d ${shq(`${root}/web/app/uploads`)} ] && tar -C ${shq(root)} --warning=no-file-changed -czf - web/app/uploads || true`)} > ${tmp}_up.tgz; if [ -s ${tmp}_up.tgz ]; then tar -C ${shq(root)} -xzf ${tmp}_up.tgz && chown -R ${shq(du)}:${shq(du)} ${shq(`${root}/web/app/uploads`)}; fi; rm -f ${tmp}_up.tgz`,
+        `set -e; timeout -k 5 3600 ${remote(`[ -d ${shq(`${webDir}/app/uploads`)} ] && tar -C ${shq(webDir)} --warning=no-file-changed -czf - app/uploads || true`)} > ${tmp}_up.tgz; if [ -s ${tmp}_up.tgz ]; then tar -C ${shq(destWebDir)} -xzf ${tmp}_up.tgz && chown -R ${shq(du)}:${shq(du)} ${shq(`${destWebDir}/app/uploads`)}; fi; rm -f ${tmp}_up.tgz`,
         3_660_000, // outer must exceed the in-script `timeout 3600` so the inner reports a clean 124
       )
       stopUpPoll()
@@ -517,14 +601,14 @@ export async function runBedrockPull(
       dest,
       [
         `set -e`,
-        `${remote(`cat ${shq(`${root}/.env`)}`)} > ${tmp}_env`,
+        `${remote(`cat ${shq(`${srcProjectRoot}/.env`)}`)} > ${tmp}_env`,
         `test -s ${tmp}_env`,
         // drop existing DB assignments (commented or not) + DATABASE_URL, then append canonical creds.
         `sed -i -E '/^[[:space:]]*#?[[:space:]]*(DB_NAME|DB_USER|DB_PASSWORD|DB_HOST|DATABASE_URL)[[:space:]]*=/d' ${tmp}_env`,
         `printf "\\nDB_NAME='%s'\\nDB_USER='%s'\\nDB_PASSWORD='%s'\\nDB_HOST='localhost'\\n" ${shq(spec.destDbName)} ${shq(spec.destDbUser)} ${shq(spec.destDbPassword)} >> ${tmp}_env`,
-        `install -m 640 -o ${shq(du)} -g ${shq(du)} ${tmp}_env ${shq(`${root}/.env`)}`,
+        `install -m 640 -o ${shq(du)} -g ${shq(du)} ${tmp}_env ${shq(`${destProjectRoot}/.env`)}`,
         `rm -f ${tmp}_env`,
-        `cd ${shq(root)}; sudo -u ${shq(du)} -H wp db check >/dev/null 2>&1`,
+        `cd ${shq(destProjectRoot)}; sudo -u ${shq(du)} -H wp db check >/dev/null 2>&1`,
       ].join("; "),
       60_000,
     )
@@ -536,7 +620,7 @@ export async function runBedrockPull(
     const dump = await run(
       "db",
       source,
-      `sudo -u ${shq(su)} -H bash -c "cd ${shq(root)} && wp --skip-plugins --skip-themes db export ${shq(home)}/.clone_db.sql 2>/dev/null && gzip -f ${shq(home)}/.clone_db.sql && stat -c %s ${shq(home)}/.clone_db.sql.gz"`,
+      `sudo -u ${shq(su)} -H bash -c "cd ${shq(srcProjectRoot)} && wp --skip-plugins --skip-themes db export ${shq(home)}/.clone_db.sql 2>/dev/null && gzip -f ${shq(home)}/.clone_db.sql && stat -c %s ${shq(home)}/.clone_db.sql.gz"`,
       900_000,
     )
     if (!dump.ok) return fail("db", dump.stderr.trim() || "source db export failed")
@@ -545,7 +629,7 @@ export async function runBedrockPull(
     const imp = await run(
       "db",
       dest,
-      `set -e; timeout -k 5 300 ${remote(`cat ${shq(`${home}/.clone_db.sql.gz`)}`)} > ${tmp}.sql.gz; gunzip -f ${tmp}.sql.gz; chmod 644 ${tmp}.sql; cd ${shq(root)}; sudo -u ${shq(du)} -H wp db import ${tmp}.sql >/dev/null; rm -f ${tmp}.sql`,
+      `set -e; timeout -k 5 300 ${remote(`cat ${shq(`${home}/.clone_db.sql.gz`)}`)} > ${tmp}.sql.gz; gunzip -f ${tmp}.sql.gz; chmod 644 ${tmp}.sql; cd ${shq(destProjectRoot)}; sudo -u ${shq(du)} -H wp db import ${tmp}.sql >/dev/null; rm -f ${tmp}.sql`,
       360_000, // outer must exceed the in-script `timeout 300`
     )
     stopDbPoll()
@@ -554,7 +638,7 @@ export async function runBedrockPull(
 
     // 6. verify — wp-cli on the dest (HTTP --resolve is the caller's).
     onProgress("verify", "start")
-    const ver = await run("verify", dest, `cd ${shq(root)}; sudo -u ${shq(du)} -H wp core is-installed`, 30_000)
+    const ver = await run("verify", dest, `cd ${shq(destProjectRoot)}; sudo -u ${shq(du)} -H wp core is-installed`, 30_000)
     if (!ver.ok) return fail("verify", "wp core is-installed returned false on the dest")
     onProgress("verify", "ok")
 
@@ -566,6 +650,32 @@ export async function runBedrockPull(
     await run("revoke", dest, `rm -f ${KEY} ${KEY}.pub ${tmp}_auth.json ${tmp}_up.tgz ${tmp}_env ${tmp}.sql.gz ${tmp}.sql`, 30_000).catch(() => {})
     onProgress("revoke", "ok")
   }
+}
+
+// Cheap pre-flight, before a Bedrock clone creates anything: does the SOURCE's
+// on-disk project match its OWN configured Public Folder? A heuristic, not a
+// guarantee — the destination's real structure comes from the git repo's
+// committed content, which this can't inspect directly, so it can't promise the
+// clone will succeed. But in the ordinary case (the source's files came from
+// composer-installing that same repo) the two agree, so a mismatch here reliably
+// predicts the same failure runBedrockPull's own "detect" step would hit later —
+// just BEFORE a destination site (and its git clone) gets created for nothing.
+// Silent no-op for anything that isn't a detectable Bedrock install; that's
+// covered by the pull chain's own detection, not this pre-check's job.
+export async function preflightBedrockSource(source: SudoCtx, spec: { domain: string; publicFolder?: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const root = `/sites/${spec.domain}/files`
+  const expectedWebDir = webrootFor(root, spec.publicFolder)
+  const expectedProjectRoot = expectedWebDir === root ? root : expectedWebDir.slice(0, expectedWebDir.lastIndexOf("/"))
+  const r = await exec(source, `${detectWpDirScript(root, spec.publicFolder)}; echo "BEDROCKROOT:$B"`, 30_000)
+  const detected = (r.stdout.match(/^BEDROCKROOT:(.*)$/m)?.[1] ?? "").trim()
+  if (!r.ok || !detected) return { ok: true }
+  if (detected !== expectedProjectRoot) {
+    return {
+      ok: false,
+      error: `this site's actual files (Bedrock project at ${detected}) don't match its configured Public Folder (implies ${expectedProjectRoot}) — align them and retry`,
+    }
+  }
+  return { ok: true }
 }
 
 // ---- Files-only pull chain (non-WP sites: redirect shells, static/PHP sites) --

@@ -2,20 +2,25 @@
 // fetch (no SSH, no extra API calls). Signals: `is_wordpress` and
 // `public_folder` on the Site object, validated against the live fleet.
 //
-//   is_wordpress === false      → Non-WP
-//   is_wordpress && "/web/"      → Bedrock
-//   is_wordpress && anything else → Standard WP
+//   is_wordpress === false           → Non-WP
+//   is_wordpress && webroot ends "web" → Bedrock
+//   is_wordpress && anything else     → Standard WP
 //
 // Important: `public_folder` is the user-set "Public Folder" (the suffix after
 // `~/sites/{domain}/files`), NOT a SpinupWP-enforced stack flag. So this is a
-// heuristic keyed on a convention: webroot `/web/` means Bedrock. The
-// is_wordpress guard matters — a couple of non-WP custom apps also use "/web/",
-// so Bedrock requires WP too. Any other WP webroot (incl. the bare `~/files`
-// default, `/public/`, `/`) is treated as Standard WP. Tier-2 (on-demand SSH
-// probe that inspects the filesystem) is the authoritative correction layer.
+// heuristic keyed on a convention: a webroot named `web` means Bedrock — checked
+// by its LAST path segment (not an exact "/web/" match), so a nested layout like
+// `/site/web/` (the Bedrock project moved into a subdirectory — a real, seen
+// layout, see the WP-core-detection fix in serverClone.ts) still buckets
+// correctly instead of falling through to Standard WP. The is_wordpress guard
+// matters — a couple of non-WP custom apps also use a `web` webroot, so Bedrock
+// requires WP too. Any other WP webroot (incl. the bare `~/files` default,
+// `/public/`, `/`) is treated as Standard WP. Tier-2 (on-demand SSH probe that
+// inspects the filesystem) is the authoritative correction layer regardless.
 
 import type { Site } from "../api/types.ts"
 import type { ProbeKind } from "./probe.ts"
+import { publicFolderRel } from "./serverClone.ts"
 import { theme } from "./theme.ts"
 
 export type Stack = "Standard WP" | "Bedrock" | "Non-WP"
@@ -25,7 +30,8 @@ export const STACKS: Stack[] = ["Standard WP", "Bedrock", "Non-WP"]
 
 export function classifyStack(site: Site): Stack {
   if (!site.is_wordpress) return "Non-WP"
-  if (site.public_folder === "/web/") return "Bedrock"
+  const rel = publicFolderRel(site.public_folder ?? undefined) // e.g. "web" or "site/web"
+  if (rel === "web" || rel.endsWith("/web")) return "Bedrock"
   return "Standard WP"
 }
 

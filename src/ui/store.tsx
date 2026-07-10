@@ -45,7 +45,7 @@ import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, reg
 import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
-import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
+import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, preflightBedrockSource, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
@@ -3679,6 +3679,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       try {
         if (site.stack === "bedrock" && !site.gitRepo) return fail("create", "the source Bedrock site has no git repo to clone from.")
+        // Cheap pre-flight, before creating anything: catches a source whose actual
+        // files don't match its own configured Public Folder — the same mismatch
+        // runBedrockPull's own detect step would hit later, just before wasting a
+        // site-creation + auth cycle on a clone that can't succeed. Not a guarantee
+        // (see preflightBedrockSource) — the real check is still the one after create.
+        if (site.stack === "bedrock") {
+          const pre = await preflightBedrockSource(source, { domain: site.domain, publicFolder: site.publicFolder })
+          if (!pre.ok) return fail("create", pre.error)
+        }
         // create — Bedrock → `git` site (SpinupWP clones the repo); Standard WP →
         // blank + database; files-only → blank with NO database (nothing to import).
         set((s) => ({ ...s, step: "create", error: undefined, failedStep: undefined, detail: undefined, stageStartedAt: Date.now() }))
@@ -3803,7 +3812,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const onExec = logger ? (e: CloneExecRecord) => logger.log({ event: "exec", ...e }) : undefined
         const res =
           site.stack === "bedrock"
-            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads }, onProgress, onExec, onTransfer)
+            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads, publicFolder: site.publicFolder }, onProgress, onExec, onTransfer)
             : site.stack === "files"
               ? await runFilesOnlyPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, approxFilesBytes: site.sizeWebBytes }, onProgress, onExec, onTransfer)
               : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder, approxFilesBytes: site.sizeWebBytes }, onProgress, onExec, onTransfer)

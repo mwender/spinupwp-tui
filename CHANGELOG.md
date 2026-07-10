@@ -16,6 +16,50 @@ versions; such changes are called out here.
   no longer resolves, and the correct URL is account-specific (a company slug
   we can't know before the user has a token) — replaced with generic
   "Settings → API Tokens" navigation instructions in onboarding and the README.
+- **Bedrock detection now works at any nesting depth, everywhere it matters.**
+  A Bedrock install whose project root isn't directly under the site's files
+  root (e.g. moved into its own subdirectory) could go undetected — the
+  plugins/themes view (`p`) reported "no WordPress core found" even though the
+  site worked fine and SpinupWP itself knew it was WordPress. Detection now
+  anchors on the site's configured Public Folder (falling back to a bounded
+  search only when that's unset) instead of a fixed, shallow search depth:
+  - `p` (plugins/themes) finds core correctly.
+  - `d` (identify app) correctly labels it "Bedrock" again, not just generic
+    WordPress.
+  - The clone wizard's Bedrock pull no longer hardcodes `web/`. It detects the
+    real project root independently on both source and destination — they're
+    not assumed to match, since the destination's layout comes from the git
+    repo's own committed content, not the source's on-disk state. A cheap
+    pre-flight check also catches a source whose files don't match its own
+    configured Public Folder *before* a destination site gets created for a
+    clone that can't succeed; the pull chain's own detection step is the
+    real, authoritative check either way.
+  - The Stacks tab's default (pre-probe) "Bedrock" label also recognizes a
+    webroot like `site/web`, not just an exact `web`.
+- **A first-time local Bedrock pull now explains itself.** "Pull production →
+  local" (`p` in Search) backs up the local database before overwriting it —
+  on a fresh Bedrock checkout with no `vendor/` yet, that step failed with
+  wp-cli's generic "not a WordPress install" error. The message now adds
+  "Run `composer install` in your local checkout first" when that's the
+  likely cause.
+- **Clone-wizard error messages no longer get cut off at a fixed, often-too-
+  short length.** The site roster, Git-access deploy-key list, and DNS
+  cutover roster all truncated error text to a small fixed character count
+  regardless of how much space was actually available. Errors now fill
+  whatever room the row has, so a full-sentence error like the Bedrock
+  layout mismatch above is far more likely to be readable inline instead of
+  needing a drill-down for basic context.
+
+### Notes
+- Nested Bedrock layouts (where the project root isn't directly under the
+  site's files root) are now correctly detected in the plugins/themes view,
+  app identification, and the clone wizard's size estimate — all live-
+  tested. A standard (non-nested) Bedrock clone through the rewritten pull
+  chain was also live-tested end to end, including a real DNS cutover. The
+  clone wizard's pull for a *nested* Bedrock site detects a source/repo
+  mismatch and refuses cleanly before creating anything, but the success
+  path — a genuinely nested repo cloning through to completion — hasn't
+  been live-validated yet. If you hit this, we'd welcome a report.
 
 ## [0.21.1] - 2026-07-10
 
