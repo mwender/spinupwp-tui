@@ -40,13 +40,32 @@ export type SshAccessResult =
 const GRANT_KEY_REMEDY =
   "Run `spinuptui`, select this site in the Browser view, and press K to grant this device's key (sudo must be connected on the server first — press S)."
 
-export async function resolveSshAccess(
+// Resolved SSH connection details for a domain, without having tested them.
+export interface SshTargetInfo {
+  domain: string
+  primaryDomain: string
+  sshTarget: string
+  port: number | null
+  server: string
+}
+
+export type SshTargetResolution =
+  | { ok: true; info: SshTargetInfo }
+  | { ok: false; result: SshAccessResult & { ok: false } }
+
+// Domain -> site -> server -> SSH target/port, with no live connectivity check.
+// Split out of resolveSshAccess so callers that are about to run a real command
+// (which is itself a connectivity test) don't pay for a redundant probe first.
+export async function resolveSshTargetInfo(
   domain: string,
   client: SpinupWPClientLike,
   cfg: AppConfig,
-): Promise<SshAccessResult> {
+): Promise<SshTargetResolution> {
   if (!cfg.token) {
-    return { ok: false, domain, reason: "no_token", message: "No API token configured. Run `spinuptui login`." }
+    return {
+      ok: false,
+      result: { ok: false, domain, reason: "no_token", message: "No API token configured. Run `spinuptui login`." },
+    }
   }
 
   let site
@@ -59,9 +78,12 @@ export async function resolveSshAccess(
     if (matches.length === 0) {
       return {
         ok: false,
-        domain,
-        reason: "site_not_found",
-        message: `No site matching "${domain}" found in this SpinupWP account.`,
+        result: {
+          ok: false,
+          domain,
+          reason: "site_not_found",
+          message: `No site matching "${domain}" found in this SpinupWP account.`,
+        },
       }
     }
     if (matches.length > 1) {
@@ -73,10 +95,13 @@ export async function resolveSshAccess(
       )
       return {
         ok: false,
-        domain,
-        reason: "multiple_matches",
-        message: `"${domain}" matches ${matches.length} sites in this account — cannot pick one automatically.`,
-        candidates,
+        result: {
+          ok: false,
+          domain,
+          reason: "multiple_matches",
+          message: `"${domain}" matches ${matches.length} sites in this account — cannot pick one automatically.`,
+          candidates,
+        },
       }
     }
     site = matches[0]
@@ -85,27 +110,48 @@ export async function resolveSshAccess(
     if (err instanceof ApiError && err.status === 401) {
       return {
         ok: false,
-        domain,
-        reason: "token_rejected",
-        message: "Saved API token was rejected (401) — it may be expired or revoked.",
-        remedy: "Run `spinuptui login` to save a fresh token.",
+        result: {
+          ok: false,
+          domain,
+          reason: "token_rejected",
+          message: "Saved API token was rejected (401) — it may be expired or revoked.",
+          remedy: "Run `spinuptui login` to save a fresh token.",
+        },
       }
     }
     const message = err instanceof ApiError ? err.message : `Unexpected error: ${(err as Error).message}`
-    return { ok: false, domain, reason: "api_error", message }
+    return { ok: false, result: { ok: false, domain, reason: "api_error", message } }
   }
 
   if (!server.ip_address) {
     return {
       ok: false,
-      domain,
-      reason: "server_has_no_ip",
-      message: `Server "${server.name}" has no IP address on file.`,
+      result: {
+        ok: false,
+        domain,
+        reason: "server_has_no_ip",
+        message: `Server "${server.name}" has no IP address on file.`,
+      },
     }
   }
 
   const target = resolveSiteSshTarget(site, server, cfg.sshUser)
   const port = server.ssh_port && server.ssh_port !== 22 ? server.ssh_port : null
+
+  return {
+    ok: true,
+    info: { domain, primaryDomain: site.domain, sshTarget: target, port, server: server.name },
+  }
+}
+
+export async function resolveSshAccess(
+  domain: string,
+  client: SpinupWPClientLike,
+  cfg: AppConfig,
+): Promise<SshAccessResult> {
+  const resolution = await resolveSshTargetInfo(domain, client, cfg)
+  if (!resolution.ok) return resolution.result
+  const { primaryDomain, sshTarget: target, port, server: serverName } = resolution.info
   const portOpt = port ? ["-p", String(port)] : []
 
   let proc: ReturnType<typeof Bun.spawn>
@@ -132,7 +178,7 @@ export async function resolveSshAccess(
   const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text()
 
   if (exitCode === 0) {
-    return { ok: true, domain, primaryDomain: site.domain, sshTarget: target, port, server: server.name }
+    return { ok: true, domain, primaryDomain, sshTarget: target, port, server: serverName }
   }
 
   if (/permission denied/i.test(stderr)) {
