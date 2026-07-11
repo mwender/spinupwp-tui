@@ -64,6 +64,8 @@ export function CloneWizard() {
     cloneSizeSites,
     startClone,
     cloneRetrySite,
+    cloneRetryTls,
+    cloneRenewTls,
     cloneContinueToCutover,
     cloneGoBack,
     toggleCutoverExclude,
@@ -350,6 +352,12 @@ export function CloneWizard() {
       if (name === "r") {
         for (const s of job.sites) if (s.selected && s.step === "error") cloneRetrySite(s.sourceSiteId)
         return
+      }
+      // T retries TLS alone when the data pull already completed, or renews the
+      // destination-managed LE cert after cutover without touching the source.
+      if (name === "T" && cur?.sourceHttps && cur.tls?.status !== "managed") {
+        if (cur.tls?.status === "error" && cur.step !== "error") return cloneRenewTls(cur.sourceSiteId)
+        return cloneRetryTls(cur.sourceSiteId)
       }
       // c — the explicit continue to DNS cutover (only once the roster settled
       // with at least one success; cutover moves live traffic).
@@ -761,14 +769,21 @@ export function CloneWizard() {
             const active = !["queued", "done", "error"].includes(s.step)
             const cur = i === idx
             const vmark = s.verify ? (s.verify.ok ? " ✓verified" : " ✕mismatch") : s.verifying ? " verifying…" : ""
+            const tlsMark = s.tls?.status === "skipped" ? " · HTTP"
+              : s.tls?.status === "handing-off" ? " · TLS…"
+              : s.tls?.status === "handed-off" ? " · TLS staged"
+              : s.tls?.status === "renewing" ? " · TLS renewing…"
+              : s.tls?.status === "managed" ? " · TLS managed"
+              : s.tls?.status === "error" ? " · TLS needs retry"
+              : ""
             return (
               <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1, backgroundColor: cur ? theme.bgAlt : undefined }}>
                 {active ? <Spinner color={theme.brand} /> : <text content={s.step === "done" ? "✓" : s.step === "error" ? "✕" : "○"} fg={s.step === "done" ? theme.good : s.step === "error" ? theme.bad : theme.textFaint} style={{ flexShrink: 0 }} />}
                 <text content={` ${s.domain}`} fg={cur || s.step === "error" || s.step === "done" ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
                 <box style={{ flexGrow: 1 }} />
                 <text
-                  content={(s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? "done" : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}${s.transferBytes != null ? ` · ${formatBytes(s.transferBytes)}${s.transferTarget ? ` of ${s.transferExact ? "" : "~"}${formatBytes(s.transferTarget)}` : ""}${s.transferExact && s.transferTarget ? ` (${Math.min(100, Math.round((s.transferBytes / s.transferTarget) * 100))}%)` : ""}${s.transferRate ? ` · ${formatBytes(s.transferRate)}/s` : ""}` : ""}${s.stageStartedAt ? " · " + fmtElapsed(now - s.stageStartedAt) : ""}`) + vmark}
-                  fg={s.step === "error" || (s.verify && !s.verify.ok) ? theme.bad : s.verify?.ok ? theme.good : s.step === "done" ? theme.good : theme.textFaint}
+                  content={(s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? `done${tlsMark}` : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}${s.transferBytes != null ? ` · ${formatBytes(s.transferBytes)}${s.transferTarget ? ` of ${s.transferExact ? "" : "~"}${formatBytes(s.transferTarget)}` : ""}${s.transferExact && s.transferTarget ? ` (${Math.min(100, Math.round((s.transferBytes / s.transferTarget) * 100))}%)` : ""}${s.transferRate ? ` · ${formatBytes(s.transferRate)}/s` : ""}` : ""}${s.stageStartedAt ? " · " + fmtElapsed(now - s.stageStartedAt) : ""}`) + vmark}
+                  fg={s.step === "error" || s.tls?.status === "error" || (s.verify && !s.verify.ok) ? theme.bad : s.verify?.ok ? theme.good : s.step === "done" ? theme.good : theme.textFaint}
                   wrapMode="none"
                   style={{ flexShrink: 0 }}
                 />
@@ -779,6 +794,7 @@ export function CloneWizard() {
           <text content={`✓ ${done} done · ⠹ ${running} running · ${queued} queued${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
           {done > 0 ? <text content="↑↓ select · v verify a done site" fg={theme.textFaint} wrapMode="none" /> : null}
           {errored > 0 ? <text content={`⏎ on a failed site — full error${job!.logPath ? ` · log: ${job!.logPath}` : ""}`} fg={theme.textFaint} wrapMode="none" /> : null}
+          {selected.some((s) => s.sourceHttps && s.tls?.status !== "managed") ? <text content="T stage/retry TLS on the highlighted HTTPS site (keeps copied data intact)" fg={theme.warn} wrapMode="none" /> : null}
           {settled && done > 0 && job!.step === "clone" ? (
             <text content={`❯ c — continue to DNS cutover (${done} of ${selected.length} cloned; cutover moves LIVE traffic)`} fg={theme.brand} wrapMode="none" />
           ) : null}

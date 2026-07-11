@@ -49,6 +49,8 @@ import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnl
 import { inventoryDatabases, matchFinalizeDestinationSite, rollbackSourceMaintenance, runFinalizeDbSync, type FinalizeStage } from "../lib/finalizeMove.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
+import { pollEvent } from "../lib/cloneDomains.ts"
+import { readActiveTlsMaterial, probeDestinationTls, type TlsCertificateKind } from "../lib/cloneTls.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
 import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
@@ -248,13 +250,21 @@ export interface RepoKeyState {
   privateKey?: string
   error?: string
 }
-export type CloneSiteStep = "queued" | "create" | "pull" | "config" | "deploy" | "verify" | "done" | "error"
+export type CloneSiteStep = "queued" | "create" | "pull" | "config" | "deploy" | "verify" | "tls" | "done" | "error"
+export type CloneTlsStatus = "pending" | "skipped" | "handing-off" | "handed-off" | "renewing" | "managed" | "error"
+export interface CloneTlsState {
+  status: CloneTlsStatus
+  kind?: TlsCertificateKind
+  fingerprint?: string // SHA-256 only; certificate/key bodies never enter job state.
+  error?: string
+}
 export interface CloneSiteState {
   sourceSiteId: number
   domain: string
   siteUser: string // source site_user — reused on the dest + for the source-side pull
   selected: boolean // unchecked in Plan → skipped entirely
   isWordPress: boolean // API is_wordpress — false (non-git) = redirect/static site the WP chain can't clone
+  sourceHttps: boolean // captured from the source API; controls the TLS handoff stage
   sizeBytes?: number // webroot + DB estimate (sizing + progress); undefined until sized
   sizeWebBytes?: number // webroot-only bytes (uncompressed) — the files-transfer soft ceiling
   stack: "wp" | "bedrock" | "files" // git repo → bedrock; is_wordpress → wp; else files-only (redirect shells, static/PHP sites)
@@ -285,6 +295,7 @@ export interface CloneSiteState {
   verifying?: boolean // slice 5: verify drill-down in flight
   verify?: CloneVerifyResult // source-vs-clone comparison + HTTP check
   verifyError?: string
+  tls?: CloneTlsState
   cutover?: CloneCutoverState // slice 6: DNS repoint state for this site's domain
 }
 // Slice 6: per-site DNS cutover. Each A record among the site's domains (primary +
@@ -361,12 +372,14 @@ export interface FinalizeMoveSiteState {
   destPublicFolder?: string | null
   selected: boolean
   isWordPress: boolean
+  sourceHttps: boolean
   ready: boolean
   step: FinalizeMoveSiteStep
   detail?: string
   failedStage?: FinalizeStage
   error?: string
   destDbName?: string
+  tls?: CloneTlsState
 }
 export interface FinalizeMoveInventory {
   active: string[]
@@ -620,6 +633,8 @@ interface StoreValue extends DataState {
   cloneSizeSites: () => Promise<void> // measure source sites' webroot+DB over source sudo → sizeBytes
   startClone: () => void // run the fan-out (worker pool, cap = concurrency) over selected sites
   cloneRetrySite: (siteId: number) => void // re-run one failed site
+  cloneRetryTls: (siteId: number) => void // re-run just the TLS handoff after a successful data clone
+  cloneRenewTls: (siteId?: number) => void // post-cutover Let’s Encrypt reconciliation; source not required
   cloneContinueToCutover: () => void // explicit user continue: settled roster → DNS cutover
   cloneGoBack: () => void // ← one screen back (config steps freely; post-fan-out only cutover → roster)
   toggleCutoverExclude: (siteId: number, name: string) => void // space: include/exclude a ready cutover record
@@ -640,6 +655,7 @@ interface StoreValue extends DataState {
   toggleFinalizeMoveAll: () => void
   finalizeMoveGoBack: () => void
   startFinalizeMoveSync: () => void
+  finalizeRetryTls: (siteId: number) => void
   finalizeMoveFinishCutover: () => void
   clearFinalizeMove: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
@@ -3408,6 +3424,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // they're often vanity/placeholder sites nobody wants copied.
           selected: stack !== "files",
           isWordPress,
+          sourceHttps: s.https?.enabled === true,
           stack,
           gitRepo: s.git?.repo ?? undefined,
           gitBranch: s.git?.branch ?? undefined,
@@ -3663,6 +3680,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         sourcePublicFolder: s.public_folder,
         selected: s.is_wordpress,
         isWordPress: s.is_wordpress,
+        sourceHttps: s.https?.enabled === true,
         ready: false,
         step: s.is_wordpress ? "queued" : "skipped",
       }))
@@ -3735,6 +3753,45 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return j
     })
   }, [])
+
+  // Finalize also supports the TLS handoff so older, already-cloned sites can be
+  // made cutover-ready without starting a second full clone. PEM never reaches the
+  // finalize logger or state.
+  const finalizeRetryTls = useCallback(
+    (siteId: number) => {
+      const j = finalizeMoveJob
+      if (!j || j.destServerId == null) return
+      const site = j.sites.find((s) => s.sourceSiteId === siteId)
+      const source = sudoCtxFor(j.sourceServerId)
+      const dest = sudoCtxFor(j.destServerId)
+      if (!site || !source || !dest || !site.destSiteId || !site.sourceHttps) return
+      void (async () => {
+        mutateFinalizeSite(siteId, (s) => ({ ...s, detail: "TLS handoff", tls: { status: "handing-off" } }))
+        const materialResult = await readActiveTlsMaterial(source, site.domain)
+        if (!materialResult.ok) {
+          return mutateFinalizeSite(siteId, (s) => ({ ...s, detail: undefined, tls: { status: "error", error: materialResult.error } }))
+        }
+        const material = materialResult.material
+        try {
+          const existing = await probeDestinationTls(dest, site.domain, dest.server.ip_address ?? "")
+          if (!existing.ok || existing.fingerprint !== material.fingerprint) {
+            const ev = await client.installCustomHttps(site.destSiteId!, material.certificate, material.privateKey)
+            const settled = await pollEvent(client, ev.event_id)
+            if (settled.outcome !== "done") throw new Error("HTTPS install did not finish")
+          }
+          const probe = await probeDestinationTls(dest, site.domain, dest.server.ip_address ?? "")
+          if (!probe.ok || probe.fingerprint !== material.fingerprint) throw new Error("destination HTTPS probe failed")
+          mutateFinalizeSite(siteId, (s) => ({ ...s, detail: undefined, tls: { status: "handed-off", kind: material.kind, fingerprint: material.fingerprint } }))
+        } catch {
+          mutateFinalizeSite(siteId, (s) => ({ ...s, detail: undefined, tls: { status: "error", error: "TLS handoff failed; retry with T" } }))
+        } finally {
+          material.certificate = ""
+          material.privateKey = ""
+        }
+      })()
+    },
+    [finalizeMoveJob, sudoCtxFor, mutateFinalizeSite, client],
+  )
 
   const startFinalizeMoveSync = useCallback(() => {
     const j = finalizeMoveJob
@@ -3830,6 +3887,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setFinalizeMoveJob(null)
   }, [])
 
+  // TLS material intentionally bypasses CloneLogger. Its PEM values are held only
+  // while the SpinupWP custom-certificate request is in flight.
+  const handoffCloneTls = useCallback(
+    async (site: CloneSiteState, source: SudoCtx, dest: SudoCtx, destSiteId: number): Promise<{ ok: true } | { ok: false; error: string }> => {
+      if (!site.sourceHttps) {
+        setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { status: "skipped" } }))
+        return { ok: true }
+      }
+      const destIp = dest.server.ip_address ?? ""
+      setCloneSite(site.sourceSiteId, (s) => ({ ...s, step: "tls", detail: "reading certificate", stageStartedAt: Date.now(), tls: { status: "handing-off" } }))
+      const materialResult = await readActiveTlsMaterial(source, site.domain, [site.domain, ...(site.additionalDomains ?? [])])
+      if (!materialResult.ok) return materialResult
+      const material = materialResult.material
+      try {
+        // A completed prior attempt needs no mutation. Compare only the fingerprint,
+        // never the certificate/key body, and require a real SNI HTTPS probe too.
+        const existing = await probeDestinationTls(dest, site.domain, destIp)
+        if (existing.ok && existing.fingerprint === material.fingerprint) {
+          setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { status: "handed-off", kind: material.kind, fingerprint: material.fingerprint } }))
+          return { ok: true }
+        }
+        setCloneSite(site.sourceSiteId, (s) => ({ ...s, step: "tls", detail: "installing certificate", tls: { status: "handing-off", kind: material.kind } }))
+        const ev = await client.installCustomHttps(destSiteId, material.certificate, material.privateKey)
+        const settled = await pollEvent(client, ev.event_id)
+        if (settled.outcome !== "done") return { ok: false, error: "SpinupWP did not finish installing the HTTPS certificate" }
+        const verified = await probeDestinationTls(dest, site.domain, destIp)
+        if (!verified.ok || verified.fingerprint !== material.fingerprint) return { ok: false, error: "destination HTTPS certificate did not pass the pre-cutover probe" }
+        setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { status: "handed-off", kind: material.kind, fingerprint: material.fingerprint } }))
+        return { ok: true }
+      } finally {
+        // The local references fall out of scope immediately; do not add logging here.
+        material.certificate = ""
+        material.privateKey = ""
+      }
+    },
+    [client, setCloneSite],
+  )
+
   // Drive ONE site: create the dest site (event-polled), then the stack-appropriate
   // pull chain. Standard WP is wired; Bedrock is slice 4d.
   const driveCloneSite = useCallback(
@@ -3838,7 +3933,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const logger = cloneLogRef.current
       const fail = (failedStep: CloneSiteStep, error: string) => {
         logger?.log({ event: "site-failed", domain: site.domain, failedStep, error })
-        set((s) => ({ ...s, step: "error", failedStep, error, detail: undefined }))
+        set((s) => ({ ...s, step: "error", failedStep, error, detail: undefined, ...(failedStep === "tls" ? { tls: { ...s.tls, status: "error" as const, error } } : {}) }))
       }
       try {
         if (site.stack === "bedrock" && !site.gitRepo) return fail("create", "the source Bedrock site has no git repo to clone from.")
@@ -3975,13 +4070,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return fail(stageToStep(stage), res.error ?? "pull failed")
         }
         const { sourceWebrootRel, destWebrootRel } = res as { sourceWebrootRel?: string; destWebrootRel?: string }
+        if (destSiteId == null) return fail("tls", "couldn't identify the destination site for HTTPS setup")
+        const tls = await handoffCloneTls(site, source, dest, destSiteId)
+        if (!tls.ok) return fail("tls", tls.error)
         logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel })
         set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel }))
       } catch (err) {
         fail(site.step, (err as Error).message)
       }
     },
-    [client, setCloneSite],
+    [client, setCloneSite, handoffCloneTls],
   )
 
   // Run the fan-out: a worker pool (cap = concurrency) over the selected sites.
@@ -4024,6 +4122,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void driveCloneSite(site, source, dest, j.destServerId)
     },
     [cloneJob, sudoCtxFor, driveCloneSite],
+  )
+
+  // TLS-only recovery avoids an expensive files/database re-pull once the clone
+  // itself is complete. It still reads the live source certificate anew so a renewal
+  // between attempts is picked up safely.
+  const cloneRetryTls = useCallback(
+    (siteId: number) => {
+      const j = cloneJob
+      if (!j || j.destServerId == null) return
+      const site = j.sites.find((s) => s.sourceSiteId === siteId)
+      const source = sudoCtxFor(j.sourceServerId)
+      const dest = sudoCtxFor(j.destServerId)
+      if (!site || !source || !dest || site.destSiteId == null) return
+      void (async () => {
+        const result = await handoffCloneTls(site, source, dest, site.destSiteId!)
+        if (result.ok) {
+          setCloneSite(siteId, (s) => ({ ...s, step: "done", detail: undefined, failedStep: undefined, error: undefined }))
+        } else {
+          setCloneSite(siteId, (s) => ({ ...s, step: "error", failedStep: "tls", error: result.error, detail: undefined, tls: { ...s.tls, status: "error", error: result.error } }))
+        }
+      })()
+    },
+    [cloneJob, sudoCtxFor, handoffCloneTls, setCloneSite],
   )
 
   // Verify one cloned site (slice 5): read-only source-vs-clone comparison + HTTP
@@ -4225,9 +4346,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [cloneJob, destIpOf, resolveZoneConn, getZoneRecord, setCutoverRecord])
 
+  // Once the domain resolves to the destination, replace a temporary handed-off LE
+  // certificate with SpinupWP-managed webroot HTTPS. A failure keeps the custom cert
+  // active, so retrying this operation never needs the source server.
+  const cloneRenewTls = useCallback(
+    (siteId?: number) => {
+      const j = cloneJob
+      if (!j || j.destServerId == null) return
+      const targetIp = destIpOf(j)
+      const candidates = j.sites.filter((s) => s.selected && s.destSiteId != null && s.tls?.status !== "managed" && s.tls?.kind === "letsencrypt" && (siteId == null || s.sourceSiteId === siteId))
+      for (const site of candidates) {
+        void (async () => {
+          const names = [site.domain, ...(site.additionalDomains ?? [])]
+          if (!(await Promise.all(names.map((name) => aRecordResolves(name, targetIp)))).every(Boolean)) {
+            setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { ...s.tls, status: "error", error: "DNS has not resolved to the destination yet; retry TLS renewal shortly." } }))
+            return
+          }
+          setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { ...s.tls, status: "renewing", error: undefined } }))
+          try {
+            const ev = await client.updateHttps(site.destSiteId!, "webroot")
+            const settled = await pollEvent(client, ev.event_id)
+            if (settled.outcome !== "done") throw new Error("SpinupWP did not finish issuing the managed certificate")
+            setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { ...s.tls, status: "managed", error: undefined } }))
+          } catch {
+            setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { ...s.tls, status: "error", error: "managed Let’s Encrypt renewal failed; the handed-off certificate remains active" } }))
+          }
+        })()
+      }
+    },
+    [cloneJob, destIpOf, client, setCloneSite],
+  )
+
   const cloneCutoverFinish = useCallback(() => {
+    cloneRenewTls()
     setCloneJob((j) => (j && j.step === "cutover" ? { ...j, step: "done" } : j))
-  }, [])
+  }, [cloneRenewTls])
 
   // Resume persisted jobs after a restart. Runs exactly once (the ref guards
   // against dep churn re-firing it). Iterates every in-flight job and dispatches by
@@ -4390,6 +4543,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneSizeSites,
     startClone,
     cloneRetrySite,
+    cloneRetryTls,
+    cloneRenewTls,
     cloneContinueToCutover,
     cloneGoBack,
     toggleCutoverExclude,
@@ -4408,6 +4563,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     toggleFinalizeMoveAll,
     finalizeMoveGoBack,
     startFinalizeMoveSync,
+    finalizeRetryTls,
     finalizeMoveFinishCutover,
     clearFinalizeMove,
     providerMetadata,

@@ -38,7 +38,12 @@ over SSH). The steps:
 6. **Verify** — drill into any cloned site for a source-vs-clone comparison (wp-cli
    facts + an HTTP check that hits the **new** server while DNS still points at the old
    one; files-only sites compare file count, size, and HTTP instead).
-7. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
+7. **HTTPS handoff** — HTTPS sites carry their active certificate into SpinupWP as a
+   temporary custom certificate, so the destination serves the same trusted TLS before
+   DNS moves. Certificate bodies and keys are never written to the clone log or job.
+   After cutover, Let’s Encrypt sites are switched back to SpinupWP-managed renewal;
+   custom source certificates remain custom.
+8. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
    settles, then repoints `A` records across each site's domains (apex + additional)
    to the new server in one batched, partial-aware pass; `↑↓`/`space` include or
    exclude individual records first. `www`-style records that follow the apex are
@@ -53,7 +58,8 @@ roster. `←` (or `h`) steps **back a screen**: the setup steps go back freely, 
 once cloning has started the one back edge is DNS cutover → the clone roster — so
 you can re-verify or retry a site before flipping live traffic. **Every job writes a full log** (`~/.config/spinupwp-tui/logs/`, passwords
 redacted, self-pruning) — `⏎` on a failed site shows the complete error and `r`
-retries just that site. Pairs naturally with the DNS module: **lower the TTLs**
+retries just that site. A TLS-only failure can be retried with `T` without copying
+files or the database again. Pairs naturally with the DNS module: **lower the TTLs**
 (`n`/`N` → `⏎`) a day or two ahead so the cutover propagates fast.
 
 For the under-the-hood design (why it's structured this way, what's safe/reversible
@@ -67,3 +73,6 @@ credential, restores the source configuration, then resumes the dependency build
 uploads, and database import. This makes a failed or interrupted clone resumable
 without deleting the destination site. The destination DB credential changes during
 this repair; source files and database remain read-only.
+
+For sites cloned before HTTPS handoff existed, run **Finalize move** and press `T`
+at the Cutover step to stage their certificates before moving traffic.

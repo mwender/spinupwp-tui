@@ -29,6 +29,7 @@ export function FinalizeMove() {
     toggleFinalizeMoveAll,
     finalizeMoveGoBack,
     startFinalizeMoveSync,
+    finalizeRetryTls,
     finalizeMoveFinishCutover,
     clearFinalizeMove,
     isSudoConnected,
@@ -94,10 +95,16 @@ export function FinalizeMove() {
       if (n > 0 && (name === "down" || name === "j")) return setIdx((i) => (i + 1) % n)
       if (n > SITES_PER_PAGE && (name === "pageup" || name === "[")) return moveSitePage(-1)
       if (n > SITES_PER_PAGE && (name === "pagedown" || name === "]")) return moveSitePage(1)
+      const cur = job.sites[idx]
+      if (name === "T" && cur?.sourceHttps && cur.destSiteId) return finalizeRetryTls(cur.sourceSiteId)
       return
     }
 
     if (job.step === "cutover") {
+      if (name === "T") {
+        for (const s of job.sites) if (s.selected && s.sourceHttps && s.destSiteId) finalizeRetryTls(s.sourceSiteId)
+        return
+      }
       if (name === "return" || name === "f") return finalizeMoveFinishCutover()
     }
   })
@@ -228,6 +235,7 @@ export function FinalizeMove() {
             </>
           ) : null}
           <box style={{ flexGrow: 1 }} />
+          {job!.sites.some((s) => s.sourceHttps && s.destSiteId) ? <text content="T stage/retry HTTPS on the highlighted site" fg={theme.warn} wrapMode="none" /> : null}
           {job!.step === "done" ? <text content="The workflow is complete." fg={theme.good} wrapMode="none" /> : null}
         </box>
       </Panel>
@@ -245,6 +253,7 @@ export function FinalizeMove() {
           <box style={{ height: 1 }} />
           <text content={`Destination IP: ${job!.destServerIp || "unknown"}`} fg={theme.textDim} wrapMode="none" />
           <text content={`Domains: ${selected.map((s) => s.domain).join(", ")}`} fg={theme.textDim} wrapMode="none" />
+          {selected.some((s) => s.sourceHttps) ? <text content="T — stage/retry HTTPS certificates before traffic moves" fg={theme.warn} wrapMode="none" /> : null}
           <box style={{ height: 1 }} />
           <text content="Destination DB inventory" fg={theme.text} wrapMode="none" />
           {!inv ? <text content="Reading databases…" fg={theme.textFaint} wrapMode="none" /> : inv.error ? <text content={inv.error} fg={theme.bad} wrapMode="none" /> : null}
@@ -260,7 +269,8 @@ export function FinalizeMove() {
   function siteRow(s: FinalizeMoveSiteState, focused: boolean, selectable: boolean) {
     const glyph = s.step === "done" ? "✓" : s.step === "error" ? "✕" : s.step === "syncing" ? "⠹" : s.selected ? "●" : "○"
     const color = s.step === "done" ? theme.good : s.step === "error" ? theme.bad : s.step === "syncing" ? theme.brand : s.ready ? theme.text : theme.textFaint
-    const meta = !s.isWordPress ? "not WordPress" : !s.ready ? s.error ?? "not matched" : s.step === "syncing" ? s.detail ?? "syncing" : s.destDbName ? `DB ${s.destDbName}` : s.selected ? "selected" : "skipped"
+    const tls = s.tls?.status === "handing-off" ? " · TLS…" : s.tls?.status === "handed-off" ? " · TLS staged" : s.tls?.status === "error" ? " · TLS retry" : ""
+    const meta = (!s.isWordPress ? "not WordPress" : !s.ready ? s.error ?? "not matched" : s.step === "syncing" ? s.detail ?? "syncing" : s.destDbName ? `DB ${s.destDbName}` : s.selected ? "selected" : "skipped") + tls
     return (
       <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1, backgroundColor: focused ? theme.bgAlt : undefined }}>
         <text content={`${glyph} `} fg={color} style={{ flexShrink: 0 }} />
@@ -275,7 +285,7 @@ export function FinalizeMove() {
   function hints() {
     if (job!.step === "plan") return [{ key: "↑↓", label: "select dest" }, { key: "⏎", label: "use server" }, { key: "esc", label: "close" }]
     if (job!.step === "connect") return [{ key: "S/D", label: "connect sudo" }, { key: "space", label: "toggle site" }, { key: "a", label: "toggle all" }, { key: "Pg↑↓/[ ]", label: "page" }, { key: "⏎", label: "sync DBs" }, { key: "esc", label: "close" }]
-    if (job!.step === "cutover") return [{ key: "⏎", label: "finish" }, { key: "esc", label: "close" }]
-    return [{ key: "↑↓", label: "select" }, { key: "Pg↑↓/[ ]", label: "page" }, { key: "esc", label: "close" }]
+    if (job!.step === "cutover") return [{ key: "T", label: "stage HTTPS" }, { key: "⏎", label: "finish" }, { key: "esc", label: "close" }]
+    return [{ key: "↑↓", label: "select" }, { key: "T", label: "stage HTTPS" }, { key: "Pg↑↓/[ ]", label: "page" }, { key: "esc", label: "close" }]
   }
 }

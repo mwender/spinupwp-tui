@@ -57,7 +57,7 @@ live traffic, and it's gated behind its own explicit confirmation.
 
 ## The per-site chain (step 5, in detail)
 
-Each site's clone is its own state machine: `create → pull → done` (or `error`, with a
+Each site's clone is its own state machine: `create → pull → TLS → done` (or `error`, with a
 per-site retry that doesn't block the rest of the fleet). "Pull" itself has several
 sub-stages, and they run in a specific order for a reason:
 
@@ -70,6 +70,7 @@ sub-stages, and they run in a specific order for a reason:
 | **config** | Standard WP: `wp config set` re-stamps `DB_NAME`/`DB_USER`/`DB_PASSWORD` in `wp-config.php` to the destination's own generated credentials. Bedrock: the source's `.env` is pulled verbatim and its `DB_*` values (and any `DATABASE_URL`) are swapped to the destination's — everything else (salts, `WP_HOME`, custom app vars) survives untouched. This runs **before** the database import, deliberately — the import needs the site already pointing at its own database. | both |
 | **db** | On the source: `wp db export` to a file (never straight to stdout — plugin output on stdout has corrupted dumps before), gzipped. On the destination: pulled over the same SSH hop and `wp db import`ed. | both |
 | **verify** | `wp core is-installed` on the destination, as a fast sanity check before the fuller source-vs-clone comparison in step 6. | both |
+| **TLS** | For a source site already using HTTPS, read the active Nginx certificate/key, install it through SpinupWP's custom-certificate API, then prove it against the destination with SNI and `curl --resolve`. Only a SHA-256 fingerprint is retained; PEM bodies never enter the job or log. Let’s Encrypt handoffs are switched back to webroot-managed renewal after DNS cutover; custom certificates stay custom. | HTTPS sites |
 | **revoke** | Always runs, even on failure: the ephemeral key is stripped from the source's `authorized_keys` by its comment marker (not a full-key match, which is brittle through shell quoting), and every temp file on the destination is removed. | both |
 
 ## Decisions worth knowing about
