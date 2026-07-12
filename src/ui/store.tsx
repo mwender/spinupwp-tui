@@ -51,6 +51,7 @@ import { CloneLogger } from "../lib/cloneLog.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
 import { pollEvent } from "../lib/cloneDomains.ts"
 import { readActiveTlsMaterial, probeDestinationTls, type TlsCertificateKind } from "../lib/cloneTls.ts"
+import { syncPortablePhpPool } from "../lib/clonePhp.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
 import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
@@ -250,7 +251,7 @@ export interface RepoKeyState {
   privateKey?: string
   error?: string
 }
-export type CloneSiteStep = "queued" | "create" | "pull" | "config" | "deploy" | "verify" | "tls" | "done" | "error"
+export type CloneSiteStep = "queued" | "create" | "pull" | "config" | "deploy" | "verify" | "php" | "tls" | "done" | "error"
 export type CloneTlsStatus = "pending" | "skipped" | "handing-off" | "handed-off" | "renewing" | "managed" | "error"
 export interface CloneTlsState {
   status: CloneTlsStatus
@@ -4070,6 +4071,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return fail(stageToStep(stage), res.error ?? "pull failed")
         }
         const { sourceWebrootRel, destWebrootRel } = res as { sourceWebrootRel?: string; destWebrootRel?: string }
+        if (!site.phpVersion) return fail("php", "source PHP version is unavailable; can't copy its PHP-FPM settings")
+        set((s) => ({ ...s, step: "php", detail: "copying pool settings", stageStartedAt: Date.now() }))
+        // This uses its own sudo transport rather than `run`/CloneLogger: pool
+        // directives can contain private application values, so they must not land
+        // in the JSONL command log or clone state.
+        const php = await syncPortablePhpPool(source, dest, site.phpVersion, site.siteUser, site.siteUser)
+        if (!php.ok) return fail("php", php.error)
         if (destSiteId == null) return fail("tls", "couldn't identify the destination site for HTTPS setup")
         const tls = await handoffCloneTls(site, source, dest, destSiteId)
         if (!tls.ok) return fail("tls", tls.error)

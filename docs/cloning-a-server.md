@@ -38,12 +38,15 @@ over SSH). The steps:
 6. **Verify** — drill into any cloned site for a source-vs-clone comparison (wp-cli
    facts + an HTTP check that hits the **new** server while DNS still points at the old
    one; files-only sites compare file count, size, and HTTP instead).
-7. **HTTPS handoff** — HTTPS sites carry their active certificate into SpinupWP as a
+7. **PHP parity** — each site's portable PHP-FPM overrides (including memory limits,
+   timeouts, uploads, and worker controls) are copied, validated, and reloaded on the
+   destination. Destination socket/user/environment configuration stays untouched.
+8. **HTTPS handoff** — HTTPS sites carry their active certificate into SpinupWP as a
    temporary custom certificate, so the destination serves the same trusted TLS before
    DNS moves. Certificate bodies and keys are never written to the clone log or job.
    After cutover, Let’s Encrypt sites are switched back to SpinupWP-managed renewal;
    custom source certificates remain custom.
-8. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
+9. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
    settles, then repoints `A` records across each site's domains (apex + additional)
    to the new server in one batched, partial-aware pass; `↑↓`/`space` include or
    exclude individual records first. `www`-style records that follow the apex are
