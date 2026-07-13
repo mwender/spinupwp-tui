@@ -29,8 +29,10 @@
 
 - **Fleet dashboard** — connection status, disk usage, pending reboots/upgrades,
   WP update counts, EOL Ubuntu flags, and a recent-activity feed for every server.
-- **Server & site browser** — a three-pane navigator with an at-a-glance status
-  column (SSH keys, HTTPS, cache, backups, linked copy, pending updates).
+- **Server & site browser** — a three-pane navigator (servers → sites →
+  details) with a full-width Control strip below showing every action for
+  whatever's selected — Site Control or Server Control, grouped and always
+  visible, no hidden key combos.
 - **Stack detection & fleet composition** — classifies every site as Standard WP,
   Bedrock, or Non-WP, with a PHP-version breakdown and an on-demand SSH probe for
   precise identification. → [docs/stack-detection.md](docs/stack-detection.md)
@@ -262,6 +264,7 @@ These can be set in `config.json` or via an environment variable:
 | `H` | Enable / disable HTTPS on a site (Servers / Stacks / Search; needs a Read/Write token) |
 | `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
 | `m` / `M` | Site/server monitoring — a two-pane browser of this site's Uptime Kuma monitors (`M` is an alias, since lowercase `m` is taken in Search/Stacks). Inside: `↑`/`↓` selects a monitor, `a` registers/recalibrates/repairs it (Front page and Cache bypass open a check-window picker), `x` removes Front page or Cache bypass, `o` opens the selected monitor in Kuma, `d` runs the site doctor, `n` shows/edits alert wiring, and vanity sites add `R`/`r` for page refresh/secret rotation (Servers / Stacks / Search) |
+| `R` | Refresh a vanity page's HTML to the currently bundled version — no need to open `m` first. Shown under Vanity in the Servers tab's Control strip and Search's Actions list, for the one site per server whose domain is the server's own hostname |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
 | `V` | Add a vanity site at the server's own hostname — DNS + site + HTTPS + SSH-key handoff (Servers tab; offered when no hostname site exists; needs a Read/Write token) |

@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-13
+
 ### Added
 - **`spinuptui ssh-exec <domain> -- <command>`** — resolves the domain's SSH
   target (same as `spinuptui ssh`) and runs `<command>` on it, but only if
@@ -1164,7 +1166,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.21.2...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/mwender/spinupwp-tui/compare/v0.21.2...v0.22.0
 [0.21.2]: https://github.com/mwender/spinupwp-tui/compare/v0.21.1...v0.21.2
 [0.21.1]: https://github.com/mwender/spinupwp-tui/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/mwender/spinupwp-tui/compare/v0.20.1...v0.21.0
