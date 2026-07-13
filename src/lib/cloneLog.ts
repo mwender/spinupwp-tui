@@ -19,11 +19,11 @@ const FIELD_CAP = 16_000
 const MAX_AGE_DAYS = 30
 const MAX_LOGS = 20
 
-function pruneOldLogs(dir: string): void {
+function pruneOldLogs(dir: string, prefix = "clone"): void {
   try {
     const cutoff = Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000
     const logs = readdirSync(dir)
-      .filter((f) => f.startsWith("clone-") && f.endsWith(".jsonl"))
+      .filter((f) => f.startsWith(`${prefix}-`) && f.endsWith(".jsonl"))
       .map((f) => {
         const path = join(dir, f)
         return { path, mtime: statSync(path).mtimeMs }
@@ -48,17 +48,17 @@ export class CloneLogger {
   readonly path: string
   private secrets: string[] = []
 
-  constructor(label: string) {
+  constructor(label: string, prefix = "clone") {
     const dir = join(configDir(), "logs")
     try {
       mkdirSync(dir, { recursive: true })
     } catch {
       /* logging is best-effort */
     }
-    pruneOldLogs(dir)
+    pruneOldLogs(dir, prefix)
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
     const slug = label.replace(/[^a-zA-Z0-9.-]+/g, "_").slice(0, 60)
-    this.path = join(dir, `clone-${stamp}-${slug}.jsonl`)
+    this.path = join(dir, `${prefix}-${stamp}-${slug}.jsonl`)
   }
 
   // Register strings that must never reach disk (passwords). Call before log().

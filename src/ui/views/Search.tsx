@@ -34,7 +34,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, beginFinalizeMove, setSudoConnectServer, setKumaSite } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -228,6 +228,9 @@ export function Search({ rows }: { rows: number }) {
       case "C":
         if (current?.kind === "server") beginClone(current.server)
         return
+      case "F":
+        if (current?.kind === "server") beginFinalizeMove(current.server)
+        return
       case "S":
         if (current?.kind === "server") setSudoConnectServer(current.server)
         return
@@ -250,6 +253,7 @@ export function Search({ rows }: { rows: number }) {
             { key: "↑↓", label: "select" },
             { key: "w", label: "SpinupWP" },
             { key: "a", label: "actions" },
+            { key: "F", label: "finalize move" },
             { key: "h", label: "health" },
             { key: "←/esc", label: "back" },
           ]

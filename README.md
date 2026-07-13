@@ -63,6 +63,9 @@
   copies, verifies, and cuts over DNS on your word.
   → [docs/cloning-a-server.md](docs/cloning-a-server.md) ·
   [how it works](docs/clone-wizard-explained.md)
+- **Finalize a moved server** (`F`) — final DB sync for already-copied sites,
+  destination verification, stale DB report, and provider-neutral cutover handoff.
+  → [docs/finalize-server-move.md](docs/finalize-server-move.md)
 - **Privileged writes over SSH** (`S` / `K`) — grant or revoke SSH keys directly,
   since the API can't. → [docs/privileged-ssh-writes.md](docs/privileged-ssh-writes.md)
 - **Site & server monitoring** (`m`) — a two-pane browser of a site's Uptime
@@ -266,6 +269,7 @@ These can be set in `config.json` or via an environment variable:
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
 | `V` | Add a vanity site at the server's own hostname — DNS + site + HTTPS + SSH-key handoff (Servers tab; offered when no hostname site exists; needs a Read/Write token) |
 | `C` | Clone a server's sites to a new/existing destination (Servers tab; needs a Read/Write token + sudo) |
+| `F` | Finalize an already-moved server: final DB sync + cutover checklist (Servers / Search; needs sudo) |
 | `S` | Connect sudo on a server for privileged writes — optionally remembered in the macOS Keychain (Servers tab) |
 | `K` | Grant / revoke an SSH key on a site, or every site on the server (needs sudo connected) |
 | `w` | Open the selected server/site in the SpinupWP web app |

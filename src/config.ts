@@ -35,6 +35,10 @@ export interface AppConfig {
   // (WP-CLI + a local DB). The read-only DB backup (`d`) needs neither and stays
   // available without this. Set "localSync": true in config to enable.
   localSync: boolean
+  // How new Bedrock clone destinations authenticate to Git. "server" assumes
+  // the destination server's SSH key is authorized on the user's Git account;
+  // "deploy-key" uses the stricter per-repository onboarding flow.
+  cloneGitAuth: "server" | "deploy-key"
   // Directories to (eventually) scan for local working copies. Reserved for the
   // Phase 2 auto-discovery pass; unused by Phase 1's manual linking.
   localRoots: string[]
@@ -178,6 +182,7 @@ export interface StoredConfig {
   localRoots?: string[]
   localSites?: Record<string, LocalLink>
   localSync?: boolean
+  cloneGitAuth?: "server" | "deploy-key"
   providers?: StoredProviders
   serverProviders?: Record<string, ServerProviderRef>
   jobs?: Record<string, StoredJob>
@@ -269,6 +274,7 @@ export function loadConfig(): AppConfig {
       if (env != null && env !== "") return /^(1|true|yes|on)$/i.test(env)
       return stored.localSync === true
     })(),
+    cloneGitAuth: stored.cloneGitAuth === "deploy-key" ? "deploy-key" : "server",
     localRoots: stored.localRoots ?? [],
     localSites: stored.localSites ?? {},
     providerConnections,

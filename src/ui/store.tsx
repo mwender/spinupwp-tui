@@ -46,8 +46,12 @@ import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, preflightBedrockSource, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
+import { inventoryDatabases, matchFinalizeDestinationSite, rollbackSourceMaintenance, runFinalizeDbSync, type FinalizeStage } from "../lib/finalizeMove.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
+import { pollEvent } from "../lib/cloneDomains.ts"
+import { readActiveTlsMaterial, probeDestinationTls, type TlsCertificateKind } from "../lib/cloneTls.ts"
+import { syncPortablePhpPool } from "../lib/clonePhp.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
 import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
@@ -56,6 +60,7 @@ import { resolveUbuntuEolDates, refreshUbuntuEolDates, isUbuntuEol as isUbuntuEo
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
 import { planDbSync, runDbSync, type DbSyncProgress, type SyncPlanResult } from "../lib/dbSync.ts"
 import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
+import { backupSnapshotSite, writeBackupSnapshot, type BackupSnapshot } from "../lib/backupSnapshot.ts"
 
 export type Route = "dashboard" | "servers" | "stacks" | "search" | "events"
 
@@ -234,6 +239,7 @@ export interface KumaDomainStatus {
 // per-site roster. See docs/2026-06-24_clone-to-server-spec.md. (Slice 2 = shell +
 // Plan; server/trust/clone/cutover orchestration land in later slices.)
 export type CloneStep = "plan" | "server" | "trust" | "gitaccess" | "clone" | "cutover" | "done" | "error"
+export type CloneGitAuth = "server" | "deploy-key"
 // Deploy-key onboarding state for one repo (git-native Bedrock dest). Each repo gets
 // its OWN locally-generated keypair — GitHub attaches a deploy key to exactly ONE repo
 // account-wide, so the server-wide git_publickey can never cover a second repo on the
@@ -254,19 +260,29 @@ export interface RepoKeyState {
   privateKey?: string
   error?: string
 }
-export type CloneSiteStep = "queued" | "create" | "pull" | "config" | "deploy" | "verify" | "done" | "error"
+export type CloneSiteStep = "queued" | "create" | "pull" | "config" | "deploy" | "verify" | "php" | "tls" | "done" | "error"
+export type CloneTlsStatus = "pending" | "skipped" | "handing-off" | "handed-off" | "renewing" | "managed" | "error"
+export interface CloneTlsState {
+  status: CloneTlsStatus
+  kind?: TlsCertificateKind
+  fingerprint?: string // SHA-256 only; certificate/key bodies never enter job state.
+  error?: string
+}
 export interface CloneSiteState {
   sourceSiteId: number
   domain: string
   siteUser: string // source site_user — reused on the dest + for the source-side pull
   selected: boolean // unchecked in Plan → skipped entirely
   isWordPress: boolean // API is_wordpress — false (non-git) = redirect/static site the WP chain can't clone
+  sourceHttps: boolean // captured from the source API; controls the TLS handoff stage
+  backup?: Site["backups"] // API summary only; written to the local backup handoff manifest
   sizeBytes?: number // webroot + DB estimate (sizing + progress); undefined until sized
   sizeWebBytes?: number // webroot-only bytes (uncompressed) — the files-transfer soft ceiling
   stack: "wp" | "bedrock" | "files" // git repo → bedrock; is_wordpress → wp; else files-only (redirect shells, static/PHP sites)
   gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
   gitBranch?: string // source git.branch
   gitDeployKey?: { privateKey: string; publicKey: string } // unique per-site key (stamped leaving gitaccess) → create payload
+  adoptedDestination?: boolean // matching site existed when this job chose its destination; repair it rather than POSTing a duplicate
   additionalDomains?: string[] // extra domains served by the site → extra cutover records
   additionalDomainConfigs?: AdditionalDomain[] // full source configs (redirects) — re-created on the dest
   excludeUploads: boolean // per-site opt-out (default false = sync uploads/)
@@ -290,6 +306,7 @@ export interface CloneSiteState {
   verifying?: boolean // slice 5: verify drill-down in flight
   verify?: CloneVerifyResult // source-vs-clone comparison + HTTP check
   verifyError?: string
+  tls?: CloneTlsState
   cutover?: CloneCutoverState // slice 6: DNS repoint state for this site's domain
 }
 // Slice 6: per-site DNS cutover. Each A record among the site's domains (primary +
@@ -334,6 +351,7 @@ export interface CloneJob {
   specs: { providerName: string; region: string; size: string; cost?: number; enableBackups?: boolean }
   destServerName: string
   concurrency: number // default 3 (protects the live source's I/O)
+  gitAuth: CloneGitAuth
   lowerTtlEarly: boolean
   destServerId?: number
   destServerIp?: string
@@ -342,14 +360,66 @@ export interface CloneJob {
   fanoutStarted?: boolean // startClone ran — survives the wizard being backgrounded/reopened
   startedAt: number
   logPath?: string // per-job JSONL log (full stage output; the roster only shows truncated errors)
+  backupSnapshotPath?: string // sanitized local handoff manifest; never sent to a server
 }
 
 // The gitaccess step is only needed when a selected site is Bedrock (a git repo whose
 // dest the new server must be authorized to clone).
 export function cloneNeedsGitAccess(j: CloneJob): boolean {
-  return j.sites.some((s) => s.selected && s.stack === "bedrock" && !!s.gitRepo)
+  return j.gitAuth === "deploy-key" && j.sites.some((s) => s.selected && !s.adoptedDestination && s.stack === "bedrock" && !!s.gitRepo)
 }
 export function isCloneInFlight(j: CloneJob | null | undefined): boolean {
+  return j != null && j.step !== "done" && j.step !== "error"
+}
+
+export type FinalizeMoveStep = "plan" | "connect" | "sync" | "cutover" | "done" | "error"
+export type FinalizeMoveSiteStep = "queued" | "syncing" | "done" | "error" | "skipped"
+export interface FinalizeMoveSiteState {
+  sourceSiteId: number
+  destSiteId?: number
+  domain: string
+  sourceSiteUser: string
+  destSiteUser?: string
+  sourcePublicFolder?: string | null
+  destPublicFolder?: string | null
+  sourcePhpVersion?: string | null
+  destPhpVersion?: string | null
+  selected: boolean
+  isWordPress: boolean
+  sourceHttps: boolean
+  backup?: Site["backups"] // API summary only; written to the local backup handoff manifest
+  ready: boolean
+  step: FinalizeMoveSiteStep
+  detail?: string
+  failedStage?: FinalizeStage
+  error?: string
+  destDbName?: string
+  tls?: CloneTlsState
+}
+export interface FinalizeMoveInventory {
+  active: string[]
+  stale: string[]
+  databases: string[]
+  error?: string
+}
+export interface FinalizeMoveJob {
+  sourceServerId: number
+  sourceServerName: string
+  destServerId?: number
+  destServerName?: string
+  destServerIp?: string
+  step: FinalizeMoveStep
+  failedStep?: FinalizeMoveStep
+  error?: string
+  sites: FinalizeMoveSiteState[]
+  startedAt: number
+  fanoutStarted?: boolean
+  inventory?: FinalizeMoveInventory
+  logPath?: string
+  backupSnapshotPath?: string
+  enableSourceMaintenance: boolean // false = testing sync; never a cutover-safe snapshot
+}
+export function isFinalizeMoveInFlight(j: FinalizeMoveJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
 }
 // Alphanumeric token for generated dest DB passwords (never printed/persisted).
@@ -569,6 +639,8 @@ interface StoreValue extends DataState {
   cloneJob: CloneJob | null
   beginClone: (server: Server) => void // build the Plan draft (sites[] from the source)
   toggleCloneSite: (sourceSiteId: number) => void // include/exclude a site in Plan
+  toggleCloneAll: () => void // include every site / clear the Plan selection
+  toggleCloneGitAuth: () => void
   toggleCloneSiteUploads: (sourceSiteId: number) => void // per-site uploads opt-out
   setCloneConcurrency: (n: number) => void // throttle (1..N, protects the source)
   toggleCloneLowerTtl: () => void // drop apex/www TTLs at the start so cutover is fast
@@ -581,6 +653,8 @@ interface StoreValue extends DataState {
   cloneSizeSites: () => Promise<void> // measure source sites' webroot+DB over source sudo → sizeBytes
   startClone: () => void // run the fan-out (worker pool, cap = concurrency) over selected sites
   cloneRetrySite: (siteId: number) => void // re-run one failed site
+  cloneRetryTls: (siteId: number) => void // re-run just the TLS handoff after a successful data clone
+  cloneRenewTls: (siteId?: number) => void // post-cutover Let’s Encrypt reconciliation; source not required
   cloneContinueToCutover: () => void // explicit user continue: settled roster → DNS cutover
   cloneGoBack: () => void // ← one screen back (config steps freely; post-fan-out only cutover → roster)
   toggleCutoverExclude: (siteId: number, name: string) => void // space: include/exclude a ready cutover record
@@ -590,6 +664,21 @@ interface StoreValue extends DataState {
   cloneCutoverFinish: () => void // slice 6: cutover → done summary
   backgroundClone: () => void // hide the wizard, keep the in-flight clone running (reopen with C)
   clearClone: () => void
+  // Finalize an already-moved server: final DB sync, destination verification,
+  // stale DB report, then provider-neutral cutover guidance.
+  finalizeMoveServer: Server | null
+  setFinalizeMoveServer: (s: Server | null) => void
+  finalizeMoveJob: FinalizeMoveJob | null
+  beginFinalizeMove: (server: Server) => void
+  finalizeMoveSetDest: (server: Server) => void
+  toggleFinalizeMoveSite: (sourceSiteId: number) => void
+  toggleFinalizeMoveAll: () => void
+  toggleFinalizeSourceMaintenance: () => void
+  finalizeMoveGoBack: () => void
+  startFinalizeMoveSync: () => void
+  finalizeRetryTls: (siteId: number) => void
+  finalizeMoveFinishCutover: () => void
+  clearFinalizeMove: () => void
   // Provider size/region catalog (with pricing), cached per provider key for the
   // session. loadProviderMetadata fetches lazily on demand.
   providerMetadata: Map<string, ProviderMetadata>
@@ -948,8 +1037,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Plan draft (and, in later slices, the running fan-out).
   const [cloneServer, setCloneServer] = useState<Server | null>(null)
   const [cloneJob, setCloneJob] = useState<CloneJob | null>(null)
+  const [finalizeMoveServer, setFinalizeMoveServer] = useState<Server | null>(null)
+  const [finalizeMoveJob, setFinalizeMoveJob] = useState<FinalizeMoveJob | null>(null)
   // Per-job clone log (survives backgrounding/retries; a new job gets a new file).
   const cloneLogRef = useRef<CloneLogger | null>(null)
+  const finalizeLogRef = useRef<CloneLogger | null>(null)
   const [providerMetadata, setProviderMetadata] = useState<Map<string, ProviderMetadata>>(new Map())
   const [providerMetadataLoading, setProviderMetadataLoading] = useState<Set<string>>(new Set())
   const [providerMetadataError, setProviderMetadataError] = useState<Map<string, string>>(new Map())
@@ -3454,6 +3546,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // they're often vanity/placeholder sites nobody wants copied.
           selected: stack !== "files",
           isWordPress,
+          sourceHttps: s.https?.enabled === true,
+          backup: s.backups,
           stack,
           gitRepo: s.git?.repo ?? undefined,
           gitBranch: s.git?.branch ?? undefined,
@@ -3473,6 +3567,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         specs: { providerName: server.provider_name ?? "", region: server.region ?? "", size: server.size ?? "" },
         destServerName: "",
         concurrency: 3,
+        gitAuth: cfgRef.current.cloneGitAuth,
         lowerTtlEarly: false,
         sites,
         startedAt: Date.now(),
@@ -3496,6 +3591,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     (id: number) => mutateCloneSite(id, (s) => ({ ...s, selected: !s.selected })),
     [mutateCloneSite],
   )
+  const toggleCloneAll = useCallback(() => {
+    setCloneJob((j) => {
+      if (!j || j.step !== "plan" || j.sites.length === 0) return j
+      const select = !j.sites.every((s) => s.selected)
+      return { ...j, sites: j.sites.map((s) => ({ ...s, selected: select })) }
+    })
+  }, [])
+  const toggleCloneGitAuth = useCallback(() => {
+    setCloneJob((j) => {
+      if (!j || j.step !== "plan") return j
+      const gitAuth: CloneGitAuth = j.gitAuth === "server" ? "deploy-key" : "server"
+      void saveConfig({ cloneGitAuth: gitAuth })
+      return { ...j, gitAuth }
+    })
+  }, [])
   const toggleCloneSiteUploads = useCallback(
     (id: number) => mutateCloneSite(id, (s) => ({ ...s, excludeUploads: !s.excludeUploads })),
     [mutateCloneSite],
@@ -3513,12 +3623,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // NewServer flow, or an existing box in the dev-override path) and move to the
   // Connect-dest step. Idempotent — re-setting the same dest is a no-op advance.
   const cloneSetDest = useCallback((server: Server) => {
+    const destinationSites = new Map(sitesForServer(server.id).map((s) => [s.domain.trim().toLowerCase(), s]))
     setCloneJob((j) =>
       j && (j.step === "server" || j.step === "trust")
-        ? { ...j, destServerId: server.id, destServerName: server.name, destServerIp: server.ip_address ?? "", step: j.step === "server" ? "trust" : j.step }
+        ? {
+            ...j,
+            destServerId: server.id,
+            destServerName: server.name,
+            destServerIp: server.ip_address ?? "",
+            step: j.step === "server" ? "trust" : j.step,
+            sites: j.sites.map((site) => {
+              const existing = destinationSites.get(site.domain.trim().toLowerCase())
+              return existing ? { ...site, destSiteId: existing.id, adoptedDestination: true } : { ...site, destSiteId: undefined, adoptedDestination: false }
+            }),
+          }
         : j,
     )
-  }, [])
+  }, [sitesForServer])
   // Advance to the fan-out. The caller (wizard) gates this on sudo being connected
   // on BOTH ends (it has live isSudoConnected); we just move the step.
   const cloneTrustContinue = useCallback(() => {
@@ -3667,6 +3788,316 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [servers, sudoUsers],
   )
 
+  // ---- Finalize server move ----------------------------------------------
+
+  const beginFinalizeMove = useCallback(
+    (server: Server) => {
+      if (finalizeMoveJob && isFinalizeMoveInFlight(finalizeMoveJob)) {
+        setFinalizeMoveServer(servers.find((s) => s.id === finalizeMoveJob.sourceServerId) ?? server)
+        return
+      }
+      const sites: FinalizeMoveSiteState[] = sitesForServer(server.id).map((s) => ({
+        sourceSiteId: s.id,
+        domain: s.domain,
+        sourceSiteUser: s.site_user ?? "",
+        sourcePublicFolder: s.public_folder,
+        sourcePhpVersion: s.php_version,
+        selected: s.is_wordpress,
+        isWordPress: s.is_wordpress,
+        sourceHttps: s.https?.enabled === true,
+        backup: s.backups,
+        ready: false,
+        step: s.is_wordpress ? "queued" : "skipped",
+      }))
+      setFinalizeMoveServer(server)
+      setFinalizeMoveJob({
+        sourceServerId: server.id,
+        sourceServerName: server.name,
+        step: "plan",
+        sites,
+        enableSourceMaintenance: true,
+        startedAt: Date.now(),
+      })
+    },
+    [finalizeMoveJob, servers, sitesForServer],
+  )
+
+  const finalizeMoveSetDest = useCallback(
+    (server: Server) => {
+      setFinalizeMoveJob((j) => {
+        if (!j || j.step !== "plan") return j
+        const destinationSites = sitesForServer(server.id)
+        const mapped = j.sites.map((src) => {
+          const dest = matchFinalizeDestinationSite(src.domain, destinationSites)
+          // The source's WordPress status determines eligibility. A server that
+          // was moved outside SpinupWP can legitimately have a stale
+          // `is_wordpress: false` flag even though its files and database are
+          // already in place. runFinalizeDbSync verifies the actual destination
+          // install over SSH before it ever enables source maintenance.
+          const ready = !!dest && !!src.sourceSiteUser && !!dest.site_user
+          return {
+            ...src,
+            destSiteId: dest?.id,
+            destSiteUser: dest?.site_user ?? undefined,
+            destPublicFolder: dest?.public_folder,
+            destPhpVersion: dest?.php_version,
+            ready,
+            selected: src.selected && ready,
+            step: ready ? ("queued" as FinalizeMoveSiteStep) : ("skipped" as FinalizeMoveSiteStep),
+            error: dest ? undefined : "No matching destination site.",
+          }
+        })
+        return { ...j, destServerId: server.id, destServerName: server.name, destServerIp: server.ip_address ?? "", sites: mapped, step: "connect" }
+      })
+    },
+    [sitesForServer],
+  )
+
+  const mutateFinalizeSite = useCallback((sourceSiteId: number, fn: (s: FinalizeMoveSiteState) => FinalizeMoveSiteState) => {
+    setFinalizeMoveJob((j) => (j ? { ...j, sites: j.sites.map((s) => (s.sourceSiteId === sourceSiteId ? fn(s) : s)) } : j))
+  }, [])
+
+  const toggleFinalizeMoveSite = useCallback(
+    (sourceSiteId: number) => mutateFinalizeSite(sourceSiteId, (s) => (s.ready ? { ...s, selected: !s.selected } : s)),
+    [mutateFinalizeSite],
+  )
+
+  const toggleFinalizeMoveAll = useCallback(() => {
+    setFinalizeMoveJob((j) => {
+      if (!j || j.step !== "connect") return j
+      const ready = j.sites.filter((s) => s.ready)
+      if (ready.length === 0) return j
+      const select = !ready.every((s) => s.selected)
+      return { ...j, sites: j.sites.map((s) => (s.ready ? { ...s, selected: select } : s)) }
+    })
+  }, [])
+
+  const toggleFinalizeSourceMaintenance = useCallback(() => {
+    setFinalizeMoveJob((j) => (j && j.step === "connect" && !j.fanoutStarted ? { ...j, enableSourceMaintenance: !j.enableSourceMaintenance } : j))
+  }, [])
+
+  const finalizeMoveGoBack = useCallback(() => {
+    setFinalizeMoveJob((j) => {
+      if (!j) return j
+      if (j.fanoutStarted) return j.step === "cutover" ? { ...j, step: "sync" } : j
+      if (j.step === "connect") return { ...j, step: "plan", destServerId: undefined, destServerName: undefined, destServerIp: undefined }
+      return j
+    })
+  }, [])
+
+  // Finalize also supports the TLS handoff so older, already-cloned sites can be
+  // made cutover-ready without starting a second full clone. PEM never reaches the
+  // finalize logger or state.
+  const finalizeRetryTls = useCallback(
+    (siteId: number) => {
+      const j = finalizeMoveJob
+      if (!j || j.destServerId == null) return
+      const site = j.sites.find((s) => s.sourceSiteId === siteId)
+      const source = sudoCtxFor(j.sourceServerId)
+      const dest = sudoCtxFor(j.destServerId)
+      if (!site || !source || !dest || !site.destSiteId || !site.sourceHttps) return
+      void (async () => {
+        mutateFinalizeSite(siteId, (s) => ({ ...s, detail: "TLS handoff", tls: { status: "handing-off" } }))
+        const materialResult = await readActiveTlsMaterial(source, site.domain)
+        if (!materialResult.ok) {
+          return mutateFinalizeSite(siteId, (s) => ({ ...s, detail: undefined, tls: { status: "error", error: materialResult.error } }))
+        }
+        const material = materialResult.material
+        try {
+          const existing = await probeDestinationTls(dest, site.domain, dest.server.ip_address ?? "")
+          if (!existing.ok || existing.fingerprint !== material.fingerprint) {
+            const ev = await client.installCustomHttps(site.destSiteId!, material.certificate, material.privateKey)
+            const settled = await pollEvent(client, ev.event_id)
+            if (settled.outcome !== "done") throw new Error("HTTPS install did not finish")
+          }
+          const probe = await probeDestinationTls(dest, site.domain, dest.server.ip_address ?? "")
+          if (!probe.ok || probe.fingerprint !== material.fingerprint) throw new Error("destination HTTPS probe failed")
+          mutateFinalizeSite(siteId, (s) => ({ ...s, detail: undefined, tls: { status: "handed-off", kind: material.kind, fingerprint: material.fingerprint } }))
+        } catch {
+          mutateFinalizeSite(siteId, (s) => ({ ...s, detail: undefined, tls: { status: "error", error: "TLS handoff failed; retry with T" } }))
+        } finally {
+          material.certificate = ""
+          material.privateKey = ""
+        }
+      })()
+    },
+    [finalizeMoveJob, sudoCtxFor, mutateFinalizeSite, client],
+  )
+
+  const startFinalizeMoveSync = useCallback(() => {
+    const j = finalizeMoveJob
+    if (!j || j.destServerId == null || j.fanoutStarted) return
+    const source = sudoCtxFor(j.sourceServerId)
+    const dest = sudoCtxFor(j.destServerId)
+    if (!source || !dest) return
+    const queue = j.sites.filter((s) => s.selected && s.ready)
+    if (queue.length === 0) return
+    const logger = new CloneLogger(`${j.sourceServerName}-to-${j.destServerName || j.destServerId}`, "finalize")
+    logger.redact(source.sudoPassword, dest.sudoPassword)
+    logger.log({ event: "job-start", source: j.sourceServerName, dest: j.destServerName, destServerId: j.destServerId, sites: queue.map((s) => s.domain) })
+    finalizeLogRef.current = logger
+    // Backup configuration is dashboard-owned and has no supported mutation API.
+    // Capture the source API summary locally before maintenance begins, so a
+    // separate opt-in automation tool can recreate it later without secrets.
+    const snapshot: BackupSnapshot = {
+      schema_version: 1,
+      exported_at: new Date().toISOString(),
+      workflow: "finalize",
+      source_server: { id: j.sourceServerId, name: j.sourceServerName },
+      destination_server: { id: j.destServerId, name: j.destServerName ?? null },
+      sites: queue.map((s) => backupSnapshotSite(s.domain, s.sourceSiteId, s.destSiteId, s.backup)),
+    }
+    void writeBackupSnapshot(snapshot)
+      .then((path) => setFinalizeMoveJob((cur) => (cur ? { ...cur, backupSnapshotPath: path } : cur)))
+      .catch((err) => logger.log({ event: "backup-snapshot-failed", error: (err as Error).message }))
+    setFinalizeMoveJob((cur) =>
+      cur
+        ? {
+            ...cur,
+            step: "sync",
+            fanoutStarted: true,
+            logPath: logger.path,
+            error: undefined,
+            sites: cur.sites.map((s) => (s.selected && s.ready ? { ...s, step: "queued" as FinalizeMoveSiteStep, detail: undefined, error: undefined, failedStage: undefined } : s)),
+          }
+        : cur,
+    )
+
+    let cursor = 0
+    const importedDbs: string[] = []
+    let failed = false
+    const mark = (siteId: number, fn: (s: FinalizeMoveSiteState) => FinalizeMoveSiteState) => {
+      setFinalizeMoveJob((cur) => (cur ? { ...cur, sites: cur.sites.map((s) => (s.sourceSiteId === siteId ? fn(s) : s)) } : cur))
+    }
+    const worker = async () => {
+      while (cursor < queue.length) {
+        const site = queue[cursor++]
+        if (!site || !site.destSiteUser) continue
+        mark(site.sourceSiteId, (s) => ({ ...s, step: "syncing", detail: "starting" }))
+        const spec = {
+          domain: site.domain,
+          sourceSiteUser: site.sourceSiteUser,
+          destSiteUser: site.destSiteUser,
+          sourcePublicFolder: site.sourcePublicFolder,
+          destPublicFolder: site.destPublicFolder,
+          enableSourceMaintenance: j.enableSourceMaintenance,
+        }
+        logger.log({ event: "site-start", domain: site.domain })
+        const res = await runFinalizeDbSync(
+          source,
+          dest,
+          spec,
+          (stage, status, detail) => {
+            mark(site.sourceSiteId, (s) => ({ ...s, detail: status === "start" ? stage : detail ?? stage, ...(status === "fail" ? { failedStage: stage } : {}) }))
+          },
+          (entry) => logger.log({ ...entry }),
+        )
+        if (res.ok) {
+          // Finalize is also a repair path for sites cloned before PHP parity was
+          // added. Do this after the destination DB verifies but before we mark the
+          // site cutover-ready; pool values deliberately bypass the finalize log.
+          if (!site.sourcePhpVersion || !site.destPhpVersion || site.sourcePhpVersion !== site.destPhpVersion) {
+            failed = true
+            const error = "source and destination PHP versions differ; can't safely copy PHP-FPM settings"
+            logger.log({ event: "site-php-failed", domain: site.domain, error })
+            if (j.enableSourceMaintenance) await rollbackSourceMaintenance(source, spec).catch(() => {})
+            mark(site.sourceSiteId, (s) => ({ ...s, step: "error", detail: undefined, error, failedStage: "php" }))
+            continue
+          }
+          mark(site.sourceSiteId, (s) => ({ ...s, detail: "copying PHP-FPM settings", failedStage: undefined }))
+          const php = await syncPortablePhpPool(source, dest, site.sourcePhpVersion, site.sourceSiteUser, site.destSiteUser)
+          if (!php.ok) {
+            failed = true
+            logger.log({ event: "site-php-failed", domain: site.domain, error: php.error })
+            if (j.enableSourceMaintenance) await rollbackSourceMaintenance(source, spec).catch(() => {})
+            mark(site.sourceSiteId, (s) => ({ ...s, step: "error", detail: undefined, error: php.error, failedStage: "php" }))
+            continue
+          }
+          if (res.destDbName) importedDbs.push(res.destDbName)
+          logger.log({ event: "site-done", domain: site.domain, destDbName: res.destDbName })
+          mark(site.sourceSiteId, (s) => ({ ...s, step: "done", detail: undefined, error: undefined, destDbName: res.destDbName }))
+        } else {
+          failed = true
+          logger.log({ event: "site-failed", domain: site.domain, error: res.error })
+          await rollbackSourceMaintenance(source, spec).catch(() => {})
+          mark(site.sourceSiteId, (s) => ({ ...s, step: "error", detail: undefined, error: res.error, failedStage: s.failedStage }))
+        }
+      }
+    }
+    const done = async () => {
+      const workers = Array.from({ length: Math.min(2, queue.length) }, () => worker())
+      await Promise.all(workers)
+      setFinalizeMoveJob((cur) => {
+        if (!cur || cur.step !== "sync") return cur
+        const active = Array.from(new Set(importedDbs)).sort()
+        if (failed) {
+          logger.log({ event: "job-failed" })
+          return {
+            ...cur,
+            step: "error",
+            failedStep: "sync",
+            error: j.enableSourceMaintenance
+              ? "One or more database syncs failed. Source maintenance was rolled back for failed sites."
+              : "One or more testing syncs failed. Source sites were left unchanged.",
+          }
+        }
+        logger.log({ event: "job-synced", activeDatabases: active })
+        void inventoryDatabases(dest.server, dest.sudoUser, dest.sudoPassword, active)
+          .then((inv) => setFinalizeMoveJob((latest) => (latest ? { ...latest, inventory: inv } : latest)))
+          .catch((err) => setFinalizeMoveJob((latest) => (latest ? { ...latest, inventory: { active, stale: [], databases: [], error: (err as Error).message } } : latest)))
+        return { ...cur, step: "cutover" }
+      })
+    }
+    void done()
+  }, [finalizeMoveJob, sudoCtxFor])
+
+  const finalizeMoveFinishCutover = useCallback(() => {
+    setFinalizeMoveJob((j) => (j && j.step === "cutover" ? { ...j, step: "done" } : j))
+  }, [])
+
+  const clearFinalizeMove = useCallback(() => {
+    setFinalizeMoveServer(null)
+    setFinalizeMoveJob(null)
+  }, [])
+
+  // TLS material intentionally bypasses CloneLogger. Its PEM values are held only
+  // while the SpinupWP custom-certificate request is in flight.
+  const handoffCloneTls = useCallback(
+    async (site: CloneSiteState, source: SudoCtx, dest: SudoCtx, destSiteId: number): Promise<{ ok: true } | { ok: false; error: string }> => {
+      if (!site.sourceHttps) {
+        setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { status: "skipped" } }))
+        return { ok: true }
+      }
+      const destIp = dest.server.ip_address ?? ""
+      setCloneSite(site.sourceSiteId, (s) => ({ ...s, step: "tls", detail: "reading certificate", stageStartedAt: Date.now(), tls: { status: "handing-off" } }))
+      const materialResult = await readActiveTlsMaterial(source, site.domain, [site.domain, ...(site.additionalDomains ?? [])])
+      if (!materialResult.ok) return materialResult
+      const material = materialResult.material
+      try {
+        // A completed prior attempt needs no mutation. Compare only the fingerprint,
+        // never the certificate/key body, and require a real SNI HTTPS probe too.
+        const existing = await probeDestinationTls(dest, site.domain, destIp)
+        if (existing.ok && existing.fingerprint === material.fingerprint) {
+          setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { status: "handed-off", kind: material.kind, fingerprint: material.fingerprint } }))
+          return { ok: true }
+        }
+        setCloneSite(site.sourceSiteId, (s) => ({ ...s, step: "tls", detail: "installing certificate", tls: { status: "handing-off", kind: material.kind } }))
+        const ev = await client.installCustomHttps(destSiteId, material.certificate, material.privateKey)
+        const settled = await pollEvent(client, ev.event_id)
+        if (settled.outcome !== "done") return { ok: false, error: "SpinupWP did not finish installing the HTTPS certificate" }
+        const verified = await probeDestinationTls(dest, site.domain, destIp)
+        if (!verified.ok || verified.fingerprint !== material.fingerprint) return { ok: false, error: "destination HTTPS certificate did not pass the pre-cutover probe" }
+        setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { status: "handed-off", kind: material.kind, fingerprint: material.fingerprint } }))
+        return { ok: true }
+      } finally {
+        // The local references fall out of scope immediately; do not add logging here.
+        material.certificate = ""
+        material.privateKey = ""
+      }
+    },
+    [client, setCloneSite],
+  )
+
   // Drive ONE site: create the dest site (event-polled), then the stack-appropriate
   // pull chain. Standard WP is wired; Bedrock is slice 4d.
   const driveCloneSite = useCallback(
@@ -3675,7 +4106,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const logger = cloneLogRef.current
       const fail = (failedStep: CloneSiteStep, error: string) => {
         logger?.log({ event: "site-failed", domain: site.domain, failedStep, error })
-        set((s) => ({ ...s, step: "error", failedStep, error, detail: undefined }))
+        set((s) => ({ ...s, step: "error", failedStep, error, detail: undefined, ...(failedStep === "tls" ? { tls: { ...s.tls, status: "error" as const, error } } : {}) }))
       }
       try {
         if (site.stack === "bedrock" && !site.gitRepo) return fail("create", "the source Bedrock site has no git repo to clone from.")
@@ -3812,22 +4243,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const onExec = logger ? (e: CloneExecRecord) => logger.log({ event: "exec", ...e }) : undefined
         const res =
           site.stack === "bedrock"
-            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads, publicFolder: site.publicFolder }, onProgress, onExec, onTransfer)
+            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads, publicFolder: site.publicFolder, repairDestinationDatabase: site.adoptedDestination }, onProgress, onExec, onTransfer)
             : site.stack === "files"
               ? await runFilesOnlyPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, approxFilesBytes: site.sizeWebBytes }, onProgress, onExec, onTransfer)
-              : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder, approxFilesBytes: site.sizeWebBytes }, onProgress, onExec, onTransfer)
+              : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder, approxFilesBytes: site.sizeWebBytes, repairDestinationDatabase: site.adoptedDestination }, onProgress, onExec, onTransfer)
         if (!res.ok) {
           const stage = (res.error?.split(":")[0] ?? "pull") as CloneStage
           return fail(stageToStep(stage), res.error ?? "pull failed")
         }
         const { sourceWebrootRel, destWebrootRel } = res as { sourceWebrootRel?: string; destWebrootRel?: string }
+        if (!site.phpVersion) return fail("php", "source PHP version is unavailable; can't copy its PHP-FPM settings")
+        set((s) => ({ ...s, step: "php", detail: "copying pool settings", stageStartedAt: Date.now() }))
+        // This uses its own sudo transport rather than `run`/CloneLogger: pool
+        // directives can contain private application values, so they must not land
+        // in the JSONL command log or clone state.
+        const php = await syncPortablePhpPool(source, dest, site.phpVersion, site.siteUser, site.siteUser)
+        if (!php.ok) return fail("php", php.error)
+        if (destSiteId == null) return fail("tls", "couldn't identify the destination site for HTTPS setup")
+        const tls = await handoffCloneTls(site, source, dest, destSiteId)
+        if (!tls.ok) return fail("tls", tls.error)
         logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel })
         set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel }))
       } catch (err) {
         fail(site.step, (err as Error).message)
       }
     },
-    [client, setCloneSite],
+    [client, setCloneSite, handoffCloneTls],
   )
 
   // Run the fan-out: a worker pool (cap = concurrency) over the selected sites.
@@ -3845,6 +4286,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     logger.redact(source.sudoPassword, dest.sudoPassword)
     logger.log({ event: "job-start", source: j.sourceServerName, dest: j.destServerName, destServerId, sites: j.sites.filter((s) => s.selected).map((s) => s.domain), concurrency: j.concurrency })
     cloneLogRef.current = logger
+    // The public API does not let us apply backups. Write its source summary to a
+    // visible local handoff file while the selected site set is still exact.
+    const snapshot: BackupSnapshot = {
+      schema_version: 1,
+      exported_at: new Date().toISOString(),
+      workflow: "clone",
+      source_server: { id: j.sourceServerId, name: j.sourceServerName },
+      destination_server: { id: destServerId, name: j.destServerName || null },
+      sites: j.sites.filter((s) => s.selected).map((s) => backupSnapshotSite(s.domain, s.sourceSiteId, s.destSiteId, s.backup)),
+    }
+    void writeBackupSnapshot(snapshot)
+      .then((path) => setCloneJob((cur) => (cur ? { ...cur, backupSnapshotPath: path } : cur)))
+      .catch((err) => logger.log({ event: "backup-snapshot-failed", error: (err as Error).message }))
     setCloneJob((cur) => (cur ? { ...cur, step: "clone", fanoutStarted: true, logPath: logger.path, sites: cur.sites.map((s) => (s.selected ? { ...s, step: "queued" as CloneSiteStep, error: undefined, failedStep: undefined } : s)) } : cur))
     const queue = j.sites.filter((s) => s.selected)
     let cursor = 0
@@ -3870,6 +4324,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void driveCloneSite(site, source, dest, j.destServerId)
     },
     [cloneJob, sudoCtxFor, driveCloneSite],
+  )
+
+  // TLS-only recovery avoids an expensive files/database re-pull once the clone
+  // itself is complete. It still reads the live source certificate anew so a renewal
+  // between attempts is picked up safely.
+  const cloneRetryTls = useCallback(
+    (siteId: number) => {
+      const j = cloneJob
+      if (!j || j.destServerId == null) return
+      const site = j.sites.find((s) => s.sourceSiteId === siteId)
+      const source = sudoCtxFor(j.sourceServerId)
+      const dest = sudoCtxFor(j.destServerId)
+      if (!site || !source || !dest || site.destSiteId == null) return
+      void (async () => {
+        const result = await handoffCloneTls(site, source, dest, site.destSiteId!)
+        if (result.ok) {
+          setCloneSite(siteId, (s) => ({ ...s, step: "done", detail: undefined, failedStep: undefined, error: undefined }))
+        } else {
+          setCloneSite(siteId, (s) => ({ ...s, step: "error", failedStep: "tls", error: result.error, detail: undefined, tls: { ...s.tls, status: "error", error: result.error } }))
+        }
+      })()
+    },
+    [cloneJob, sudoCtxFor, handoffCloneTls, setCloneSite],
   )
 
   // Verify one cloned site (slice 5): read-only source-vs-clone comparison + HTTP
@@ -4071,9 +4548,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [cloneJob, destIpOf, resolveZoneConn, getZoneRecord, setCutoverRecord])
 
+  // Once the domain resolves to the destination, replace a temporary handed-off LE
+  // certificate with SpinupWP-managed webroot HTTPS. A failure keeps the custom cert
+  // active, so retrying this operation never needs the source server.
+  const cloneRenewTls = useCallback(
+    (siteId?: number) => {
+      const j = cloneJob
+      if (!j || j.destServerId == null) return
+      const targetIp = destIpOf(j)
+      const candidates = j.sites.filter((s) => s.selected && s.destSiteId != null && s.tls?.status !== "managed" && s.tls?.kind === "letsencrypt" && (siteId == null || s.sourceSiteId === siteId))
+      for (const site of candidates) {
+        void (async () => {
+          const names = [site.domain, ...(site.additionalDomains ?? [])]
+          if (!(await Promise.all(names.map((name) => aRecordResolves(name, targetIp)))).every(Boolean)) {
+            setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { ...s.tls, status: "error", error: "DNS has not resolved to the destination yet; retry TLS renewal shortly." } }))
+            return
+          }
+          setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { ...s.tls, status: "renewing", error: undefined } }))
+          try {
+            const ev = await client.updateHttps(site.destSiteId!, "webroot")
+            const settled = await pollEvent(client, ev.event_id)
+            if (settled.outcome !== "done") throw new Error("SpinupWP did not finish issuing the managed certificate")
+            setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { ...s.tls, status: "managed", error: undefined } }))
+          } catch {
+            setCloneSite(site.sourceSiteId, (s) => ({ ...s, tls: { ...s.tls, status: "error", error: "managed Let’s Encrypt renewal failed; the handed-off certificate remains active" } }))
+          }
+        })()
+      }
+    },
+    [cloneJob, destIpOf, client, setCloneSite],
+  )
+
   const cloneCutoverFinish = useCallback(() => {
+    cloneRenewTls()
     setCloneJob((j) => (j && j.step === "cutover" ? { ...j, step: "done" } : j))
-  }, [])
+  }, [cloneRenewTls])
 
   // Resume persisted jobs after a restart. Runs exactly once (the ref guards
   // against dep churn re-firing it). Iterates every in-flight job and dispatches by
@@ -4227,6 +4736,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneJob,
     beginClone,
     toggleCloneSite,
+    toggleCloneAll,
+    toggleCloneGitAuth,
     toggleCloneSiteUploads,
     setCloneConcurrency,
     toggleCloneLowerTtl,
@@ -4239,6 +4750,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneSizeSites,
     startClone,
     cloneRetrySite,
+    cloneRetryTls,
+    cloneRenewTls,
     cloneContinueToCutover,
     cloneGoBack,
     toggleCutoverExclude,
@@ -4248,6 +4761,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     cloneCutoverFinish,
     backgroundClone,
     clearClone,
+    finalizeMoveServer,
+    setFinalizeMoveServer,
+    finalizeMoveJob,
+    beginFinalizeMove,
+    finalizeMoveSetDest,
+    toggleFinalizeMoveSite,
+    toggleFinalizeMoveAll,
+    toggleFinalizeSourceMaintenance,
+    finalizeMoveGoBack,
+    startFinalizeMoveSync,
+    finalizeRetryTls,
+    finalizeMoveFinishCutover,
+    clearFinalizeMove,
     providerMetadata,
     providerMetadataLoading,
     providerMetadataError,

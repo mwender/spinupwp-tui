@@ -49,6 +49,8 @@ export interface SpinupWPClientLike {
   getSite(id: number): Promise<Site>
   createSite(payload: CreateSitePayload): Promise<{ event_id: number }>
   enableHttps(siteId: number): Promise<{ event_id: number }>
+  installCustomHttps(siteId: number, certificate: string, privateKey: string): Promise<{ event_id: number }>
+  updateHttps(siteId: number, type: "webroot" | "custom", certificate?: string, privateKey?: string): Promise<{ event_id: number }>
   disableHttps(siteId: number): Promise<{ event_id: number } | undefined>
   purgePageCache(siteId: number): Promise<{ event_id: number }>
   purgeObjectCache(siteId: number): Promise<{ event_id: number }>
@@ -291,6 +293,24 @@ export class SpinupWPClient implements SpinupWPClientLike {
   // Read/Write token.
   enableHttps(siteId: number): Promise<{ event_id: number }> {
     return this.mutate<{ event_id: number }>(`/sites/${siteId}/https`, "POST", { type: "webroot" })
+  }
+
+  // Install an already-valid certificate during a server move. The caller owns the
+  // sensitive PEM values and must never log or persist them.
+  installCustomHttps(siteId: number, certificate: string, privateKey: string): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/https`, "POST", { type: "custom", certificate, private_key: privateKey })
+  }
+
+  // Switch an existing HTTPS setup between a temporary custom handoff and normal
+  // SpinupWP-managed Let's Encrypt (`webroot`) after cutover.
+  updateHttps(siteId: number, type: "webroot" | "custom", certificate?: string, privateKey?: string): Promise<{ event_id: number }> {
+    const body: Record<string, string> = { type }
+    if (type === "custom") {
+      if (!certificate || !privateKey) throw new Error("A custom HTTPS update requires a certificate and private key.")
+      body.certificate = certificate
+      body.private_key = privateKey
+    }
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/https`, "PUT", body)
   }
 
   // Disable HTTPS on a site (removes the certificate). May return an event_id to

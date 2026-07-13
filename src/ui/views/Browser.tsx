@@ -23,7 +23,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, beginFinalizeMove, isServerOsEol, setKumaSite } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -186,6 +186,12 @@ export function Browser({ rows }: { rows: number }) {
           beginClone(server)
         }
         return
+      case "F":
+        // Finalize an already-moved server: final DB sync + cutover checklist.
+        if (focus === "servers" && server && sitesForServer(server.id).length > 0) {
+          beginFinalizeMove(server)
+        }
+        return
       case "V":
         // Create the vanity site at the server's own hostname. Offered whenever
         // the server doesn't already HAVE a site there — a busy server benefits
@@ -229,6 +235,7 @@ export function Browser({ rows }: { rows: number }) {
           { key: "S", label: "connect sudo" },
           { key: "a", label: "server actions" },
           { key: "N", label: "DNS hosts" },
+          { key: "F", label: "finalize move" },
           { key: "h", label: "health" },
           { key: "w", label: "SpinupWP" },
         ]

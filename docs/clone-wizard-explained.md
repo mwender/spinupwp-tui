@@ -34,10 +34,10 @@ whole copy runs as a **pull**: the destination authenticates *into* the source a
 initiates every read. Nothing is relayed through your laptop; bytes move
 datacenter-to-datacenter.
 
-**4. Gitaccess** *(Bedrock sites only)*. If a selected site deploys from git, the
-destination server's own deploy key needs read access to that repo before SpinupWP can
-clone it at site-creation time. Spinup checks and, if needed, walks you through adding
-it.
+**4. Git access** *(Bedrock sites only)*. The default assumes the destination
+server's SSH key already has access through the user's GitHub account. Plan can switch
+to unique per-repository deploy keys when that is preferred; GitHub restricts a deploy
+key to one repository, so those keys cannot be shared server-wide.
 
 **5. Clone.** The fan-out — every selected site runs an independent chain, several at
 once (capped at a concurrency limit so the *source* isn't hammered while it's still
@@ -57,19 +57,21 @@ live traffic, and it's gated behind its own explicit confirmation.
 
 ## The per-site chain (step 5, in detail)
 
-Each site's clone is its own state machine: `create → pull → done` (or `error`, with a
+Each site's clone is its own state machine: `create → pull → TLS → done` (or `error`, with a
 per-site retry that doesn't block the rest of the fleet). "Pull" itself has several
 sub-stages, and they run in a specific order for a reason:
 
 | Stage | What happens | Applies to |
 |---|---|---|
-| **create** | `POST /sites` on the destination — `blank` for Standard WP (files pulled in later), `git` for Bedrock (SpinupWP clones the repo using the destination server's deploy key). Same domain as the source, since DNS hasn't moved yet. | both |
+| **create / adopt** | A missing destination gets `POST /sites` — `blank` for Standard WP and `git` for Bedrock. A matching existing domain is adopted instead: Spinup resets its destination DB credential and resumes the pull without a duplicate API create. | both |
 | **auth** | An ephemeral SSH keypair is generated on the destination and its public half is appended to the source site user's `authorized_keys`, marked with a unique comment so it can be found and removed later. | both |
-| **build** *(Bedrock only)* | SpinupWP's git deploy clones the repo but never runs the deploy script, so a fresh Bedrock destination has no `vendor/` or `web/wp`. Spinup pulls `auth.json` (needed for private Composer repos) and runs `composer install -o --no-dev` itself, over the SSH connection from step 3. | Bedrock |
+| **build** *(Bedrock only)* | SpinupWP's git deploy clones the repo but never runs the deploy script, so a fresh Bedrock destination has no `vendor/` or `web/wp`. Spinup pulls project `auth.json` plus the site user's Composer auth file when present, runs `composer install --no-scripts`, imports the DB, then runs optional post-install hooks. A hook failure is logged as a warning; WordPress/DB verification determines clone success. | Bedrock |
 | **files** | Standard WP: a `tar`-over-SSH stream of the whole webroot (excluding caches), pulled and extracted on the destination. Bedrock: just the gitignored `web/app/uploads/` directory, since the code already arrived via the git deploy. **`rsync` is not used** — it was found to hang over this transport; `tar` piped through SSH doesn't. | both |
 | **config** | Standard WP: `wp config set` re-stamps `DB_NAME`/`DB_USER`/`DB_PASSWORD` in `wp-config.php` to the destination's own generated credentials. Bedrock: the source's `.env` is pulled verbatim and its `DB_*` values (and any `DATABASE_URL`) are swapped to the destination's — everything else (salts, `WP_HOME`, custom app vars) survives untouched. This runs **before** the database import, deliberately — the import needs the site already pointing at its own database. | both |
 | **db** | On the source: `wp db export` to a file (never straight to stdout — plugin output on stdout has corrupted dumps before), gzipped. On the destination: pulled over the same SSH hop and `wp db import`ed. | both |
 | **verify** | `wp core is-installed` on the destination, as a fast sanity check before the fuller source-vs-clone comparison in step 6. | both |
+| **PHP** | Copies portable per-site PHP-FPM overrides (memory, timeouts, upload limits, PHP flags, and worker controls), validates the destination FPM configuration, and reloads that PHP version. Socket, site-user, log, chroot, and environment lines remain destination-owned. Pool values never enter the clone log or job state. | both |
+| **TLS** | For a source site already using HTTPS, read the active Nginx certificate/key, install it through SpinupWP's custom-certificate API, then prove it against the destination with SNI and `curl --resolve`. Only a SHA-256 fingerprint is retained; PEM bodies never enter the job or log. Let’s Encrypt handoffs are switched back to webroot-managed renewal after DNS cutover; custom certificates stay custom. | HTTPS sites |
 | **revoke** | Always runs, even on failure: the ephemeral key is stripped from the source's `authorized_keys` by its comment marker (not a full-key match, which is brittle through shell quoting), and every temp file on the destination is removed. | both |
 
 ## Decisions worth knowing about

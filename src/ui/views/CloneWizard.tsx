@@ -42,6 +42,7 @@ function stepsFor(needsGit: boolean): { step: CloneStep; label: string }[] {
     : [STEP_PLAN, STEP_SERVER, STEP_TRUST, STEP_CLONE, STEP_CUTOVER]
 }
 const RAIL_W = 24
+const SITES_PER_PAGE = 25
 
 export function CloneWizard() {
   const {
@@ -51,6 +52,8 @@ export function CloneWizard() {
     sitesForServer,
     accountSlug,
     toggleCloneSite,
+    toggleCloneAll,
+    toggleCloneGitAuth,
     toggleCloneSiteUploads,
     cloneAdvanceFromPlan,
     cloneSetDest,
@@ -61,6 +64,8 @@ export function CloneWizard() {
     cloneSizeSites,
     startClone,
     cloneRetrySite,
+    cloneRetryTls,
+    cloneRenewTls,
     cloneContinueToCutover,
     cloneGoBack,
     toggleCutoverExclude,
@@ -87,6 +92,9 @@ export function CloneWizard() {
   const [verifyOpen, setVerifyOpen] = useState<number | null>(null) // slice 5: drilled-into site
   const [pickExisting, setPickExisting] = useState(false) // dest step: choosing an existing server
   const [destIdx, setDestIdx] = useState(0) // cursor in the existing-server picker
+  const sitePageCount = Math.max(1, Math.ceil((job?.sites.length ?? 0) / SITES_PER_PAGE))
+  const sitePage = Math.min(sitePageCount - 1, Math.floor(idx / SITES_PER_PAGE))
+  const sitePageStart = sitePage * SITES_PER_PAGE
 
   // Kick the fan-out once, when we land on the Clone step. Guarded by the job's
   // fanoutStarted flag (not component state) so reopening a backgrounded wizard
@@ -179,6 +187,20 @@ export function CloneWizard() {
 
   const close = () => clearClone()
 
+  function moveSitePage(delta: number) {
+    setIdx((current) => {
+      const count = job!.sites.length
+      const pages = Math.ceil(count / SITES_PER_PAGE)
+      const slot = current % SITES_PER_PAGE
+      const targetPage = (Math.floor(current / SITES_PER_PAGE) + delta + pages) % pages
+      return Math.min(targetPage * SITES_PER_PAGE + slot, count - 1)
+    })
+  }
+
+  function planPageLabel() {
+    return job!.sites.length > SITES_PER_PAGE ? `Page ${sitePage + 1}/${sitePageCount} · ${sitePageStart + 1}–${Math.min(sitePageStart + SITES_PER_PAGE, job!.sites.length)} of ${job!.sites.length}` : null
+  }
+
   // Existing servers eligible as a clone destination (anything but the source),
   // name-sorted. The DEV override (SPINUP_DEV_CLONE_DEST) just pre-points the cursor.
   const eligibleDests = servers.filter((s) => s.id !== job?.sourceServerId).slice().sort((a, b) => a.name.localeCompare(b.name))
@@ -214,9 +236,13 @@ export function CloneWizard() {
       const n = job.sites.length
       if (name === "up" || name === "k") return setIdx((i) => (i - 1 + n) % n)
       if (name === "down" || name === "j") return setIdx((i) => (i + 1) % n)
+      if (n > SITES_PER_PAGE && (name === "pageup" || name === "[")) return moveSitePage(-1)
+      if (n > SITES_PER_PAGE && (name === "pagedown" || name === "]")) return moveSitePage(1)
       const cur = job.sites[idx]
       if (name === "space" && cur) return toggleCloneSite(cur.sourceSiteId)
+      if (name === "a") return toggleCloneAll()
       if (name === "u" && cur) return toggleCloneSiteUploads(cur.sourceSiteId)
+      if (name === "g") return toggleCloneGitAuth()
       if (name === "t") return toggleCloneLowerTtl()
       if (name === "return") return cloneAdvanceFromPlan()
     }
@@ -326,6 +352,12 @@ export function CloneWizard() {
       if (name === "r") {
         for (const s of job.sites) if (s.selected && s.step === "error") cloneRetrySite(s.sourceSiteId)
         return
+      }
+      // T retries TLS alone when the data pull already completed, or renews the
+      // destination-managed LE cert after cutover without touching the source.
+      if (name === "T" && cur?.sourceHttps && cur.tls?.status !== "managed") {
+        if (cur.tls?.status === "error" && cur.step !== "error") return cloneRenewTls(cur.sourceSiteId)
+        return cloneRetryTls(cur.sourceSiteId)
       }
       // c — the explicit continue to DNS cutover (only once the roster settled
       // with at least one success; cutover moves live traffic).
@@ -498,6 +530,7 @@ export function CloneWizard() {
     const srcOn = isSudoConnected(server!.id)
     const destOn = destServer != null && isSudoConnected(destServer.id)
     const both = srcOn && destOn
+    const adopted = job!.sites.filter((s) => s.selected && s.adoptedDestination).length
     const row = (ok: boolean, label: string) => (
       <box style={{ flexDirection: "row", height: 1 }}>
         <text content={ok ? "✓ " : "○ "} fg={ok ? theme.good : theme.warn} style={{ flexShrink: 0 }} />
@@ -514,6 +547,8 @@ export function CloneWizard() {
           <box style={{ height: 1 }} />
           {row(srcOn, srcOn ? "Source sudo connected" : "Source sudo not connected — press G")}
           {row(destOn, destOn ? "Dest sudo connected" : "Dest sudo not connected — create a sudo user (w), then press S")}
+          {adopted > 0 ? <text content={`↻ ${adopted} existing destination site${adopted === 1 ? "" : "s"} will be repaired in place (DB credentials reset, then clone resumes).`} fg={theme.warn} wrapMode="none" /> : null}
+          <text content={job!.gitAuth === "server" ? "Git: use destination server's account key (change with g on Plan)." : "Git: use per-repository deploy keys (change with g on Plan)."} fg={theme.textFaint} wrapMode="none" />
           <box style={{ flexGrow: 1 }} />
           {both ? (
             <text content="❯ Enter — both ends connected, continue to clone" fg={theme.brand} wrapMode="none" />
@@ -619,8 +654,8 @@ export function CloneWizard() {
             <text content={`${selected.length} of ${job!.sites.length} selected`} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
           </box>
           <box style={{ height: 1 }} />
-          {job!.sites.map((s, i) => {
-            const sel = i === idx
+          {job!.sites.slice(sitePageStart, sitePageStart + SITES_PER_PAGE).map((s, offset) => {
+            const sel = sitePageStart + offset === idx
             const mark = s.selected ? "◉" : "◯"
             const markColor = s.selected ? theme.good : theme.textFaint
             const size = s.sizeBytes != null ? formatBytes(s.sizeBytes) : "—"
@@ -637,6 +672,7 @@ export function CloneWizard() {
               </box>
             )
           })}
+          {planPageLabel() ? <text content={planPageLabel()!} fg={theme.textFaint} wrapMode="none" /> : null}
           <box style={{ flexGrow: 1 }} />
           <text content={payloadLine()} fg={theme.textFaint} wrapMode="none" />
           <box style={{ height: 1 }} />
@@ -648,6 +684,10 @@ export function CloneWizard() {
           <box style={{ flexDirection: "row", height: 1 }}>
             <text content={job!.lowerTtlEarly ? "◉ " : "◯ "} fg={job!.lowerTtlEarly ? theme.good : theme.textFaint} style={{ flexShrink: 0 }} />
             <text content="Lower DNS TTL now (t) — makes cutover near-instant later" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
+          </box>
+          <box style={{ flexDirection: "row", height: 1 }}>
+            <text content={job!.gitAuth === "server" ? "◉ " : "◯ "} fg={job!.gitAuth === "server" ? theme.good : theme.textFaint} style={{ flexShrink: 0 }} />
+            <text content={job!.gitAuth === "server" ? "Use destination server's GitHub account key (g)" : "Use per-repo deploy keys (g)"} fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 1 }} />
           </box>
         </box>
       </Panel>
@@ -727,13 +767,20 @@ export function CloneWizard() {
             const active = !["queued", "done", "error"].includes(s.step)
             const cur = i === idx
             const vmark = s.verify ? (s.verify.ok ? " ✓verified" : " ✕mismatch") : s.verifying ? " verifying…" : ""
+            const tlsMark = s.tls?.status === "skipped" ? " · HTTP"
+              : s.tls?.status === "handing-off" ? " · TLS…"
+              : s.tls?.status === "handed-off" ? " · TLS staged"
+              : s.tls?.status === "renewing" ? " · TLS renewing…"
+              : s.tls?.status === "managed" ? " · TLS managed"
+              : s.tls?.status === "error" ? " · TLS needs retry"
+              : ""
             return (
               <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1, backgroundColor: cur ? theme.bgAlt : undefined }}>
                 {active ? <Spinner color={theme.brand} /> : <text content={s.step === "done" ? "✓" : s.step === "error" ? "✕" : "○"} fg={s.step === "done" ? theme.good : s.step === "error" ? theme.bad : theme.textFaint} style={{ flexShrink: 0 }} />}
                 <text content={` ${s.domain}`} fg={cur || s.step === "error" || s.step === "done" ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
                 <text
-                  content={" " + ((s.step === "error" ? s.error ?? "failed" : s.step === "done" ? "done" : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}${s.transferBytes != null ? ` · ${formatBytes(s.transferBytes)}${s.transferTarget ? ` of ${s.transferExact ? "" : "~"}${formatBytes(s.transferTarget)}` : ""}${s.transferExact && s.transferTarget ? ` (${Math.min(100, Math.round((s.transferBytes / s.transferTarget) * 100))}%)` : ""}${s.transferRate ? ` · ${formatBytes(s.transferRate)}/s` : ""}` : ""}${s.stageStartedAt ? " · " + fmtElapsed(now - s.stageStartedAt) : ""}`) + vmark)}
-                  fg={s.step === "error" || (s.verify && !s.verify.ok) ? theme.bad : s.verify?.ok ? theme.good : s.step === "done" ? theme.good : theme.textFaint}
+                  content={" " + ((s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? `done${tlsMark}` : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}${s.transferBytes != null ? ` · ${formatBytes(s.transferBytes)}${s.transferTarget ? ` of ${s.transferExact ? "" : "~"}${formatBytes(s.transferTarget)}` : ""}${s.transferExact && s.transferTarget ? ` (${Math.min(100, Math.round((s.transferBytes / s.transferTarget) * 100))}%)` : ""}${s.transferRate ? ` · ${formatBytes(s.transferRate)}/s` : ""}` : ""}${s.stageStartedAt ? " · " + fmtElapsed(now - s.stageStartedAt) : ""}`) + vmark)}
+                  fg={s.step === "error" || s.tls?.status === "error" || (s.verify && !s.verify.ok) ? theme.bad : s.verify?.ok ? theme.good : s.step === "done" ? theme.good : theme.textFaint}
                   wrapMode="none"
                   style={{ flexGrow: 1, flexShrink: 1 }}
                 />
@@ -742,8 +789,10 @@ export function CloneWizard() {
           })}
           <box style={{ flexGrow: 1 }} />
           <text content={`✓ ${done} done · ⠹ ${running} running · ${queued} queued${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
+          {job!.backupSnapshotPath ? <text content={`Backup snapshot: ${job!.backupSnapshotPath}`} fg={theme.textFaint} wrapMode="none" /> : null}
           {done > 0 ? <text content="↑↓ select · v verify a done site" fg={theme.textFaint} wrapMode="none" /> : null}
           {errored > 0 ? <text content={`⏎ on a failed site — full error${job!.logPath ? ` · log: ${job!.logPath}` : ""}`} fg={theme.textFaint} wrapMode="none" /> : null}
+          {selected.some((s) => s.sourceHttps && s.tls?.status !== "managed") ? <text content="T stage/retry TLS on the highlighted HTTPS site (keeps copied data intact)" fg={theme.warn} wrapMode="none" /> : null}
           {settled && done > 0 && job!.step === "clone" ? (
             <text content={`❯ c — continue to DNS cutover (${done} of ${selected.length} cloned; cutover moves LIVE traffic)`} fg={theme.brand} wrapMode="none" />
           ) : null}
@@ -829,7 +878,10 @@ export function CloneWizard() {
     if (job!.step === "plan") {
       return [
         { key: "space", label: "toggle" },
+        { key: "a", label: "toggle all" },
+        { key: "Pg↑↓/[ ]", label: "page" },
         { key: "u", label: "uploads" },
+        { key: "g", label: "Git auth" },
         { key: "t", label: "lower TTL" },
         ...(sudoOn ? [] : [{ key: "S", label: "connect sudo" }]),
         ...(selected.length > 0 ? [{ key: "⏎", label: "continue" }] : []),

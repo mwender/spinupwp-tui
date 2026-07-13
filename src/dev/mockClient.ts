@@ -139,6 +139,18 @@ export function createMockClient(): SpinupWPClientLike {
       return { event_id }
     },
 
+    async installCustomHttps(siteId) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.https = { enabled: true }
+      return { event_id: pushEvent("site.https.custom", site?.server_id ?? null, `Custom HTTPS installed for ${site?.domain ?? siteId}`) }
+    },
+
+    async updateHttps(siteId, type) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.https = { enabled: true }
+      return { event_id: pushEvent(`site.https.${type}`, site?.server_id ?? null, `HTTPS updated for ${site?.domain ?? siteId}`) }
+    },
+
     async disableHttps(siteId) {
       const site = sites.find((s) => s.id === siteId)
       if (site) site.https = { enabled: false }
