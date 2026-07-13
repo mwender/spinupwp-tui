@@ -74,10 +74,13 @@
   [docs/uptime-kuma.md](docs/uptime-kuma.md)
 - **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
   resolves a domain to a live SSH target with a live connectivity probe;
-  `spinuptui incidents <domain>` / `--all` surfaces Uptime Kuma's down/up
-  history as JSON. Built so another agent/script can go from just a domain to
-  "what's wrong and how do I get in" with no manual lookup.
-  → [CLI subcommands](#cli-subcommands)
+  `spinuptui ssh-exec <domain> -- <command>` runs a command over SSH, but only
+  if it's read-only — anything that looks like a write/restart/destructive
+  action is denied rather than run, so any agent using it inherits that
+  guarantee without building its own guard; `spinuptui incidents <domain>` /
+  `--all` surfaces Uptime Kuma's down/up history as JSON. Built so another
+  agent/script can go from just a domain to "what's wrong and how do I get
+  in" with no manual lookup. → [CLI subcommands](#cli-subcommands)
 - **Completion toasts** — a non-focus-stealing toast when a background write
   (PHP upgrade, reboot, DNS resolve, …) finishes.
 - **Release notes** — an in-app "what's new" after every update, sourced
@@ -166,6 +169,17 @@ spinuptui ssh <domain>  Print SSH access info for a site as JSON (resolves the
                      site's server, builds its SSH target, and runs a live
                      connectivity probe — for external tooling, e.g. an
                      incident-diagnostics agent handed only a domain)
+spinuptui ssh-exec <domain> -- <command>  Resolve the domain's SSH target and
+                     run <command> on it, but only if the command is
+                     read-only — anything matching a write/restart/destructive
+                     pattern (plugin/theme changes, DB writes, service
+                     restarts, file redirection to a real path, etc.) is
+                     denied instead of run. Prints JSON: on success,
+                     {ok:true, exitCode, stdout, stderr, ...}; on denial,
+                     {ok:false, reason:"command_denied", message}. Every
+                     attempt (allowed, denied, or unresolved) is appended to
+                     <config dir>/logs/ssh-exec-audit.jsonl. Quote <command>
+                     as one shell argument if it needs pipes or redirects.
 spinuptui incidents <domain> | --all [--hours N]  Print Uptime Kuma down/up
                      incidents as JSON, scoped to sites SpinupTUI manages
                      monitoring for (config.json's kumaMonitors) — --all

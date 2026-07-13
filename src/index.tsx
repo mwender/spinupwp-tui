@@ -15,6 +15,7 @@ import { isDevMode } from "./dev/devMode.ts"
 import { SpinupWPClient } from "./api/client.ts"
 import { resolveSshAccess } from "./lib/cliSsh.ts"
 import { resolveIncidents } from "./lib/cliIncidents.ts"
+import { execSshCommand } from "./lib/sshExec.ts"
 
 const args = process.argv.slice(2)
 const positionals = args.filter((a) => !a.startsWith("-"))
@@ -29,6 +30,8 @@ Usage:
   spinuptui login      Set or update your saved API token
   spinuptui where      Print the config file path and token source
   spinuptui ssh <domain>  Print SSH access info for a site (JSON)
+  spinuptui ssh-exec <domain> -- <command>  Run a read-only command over SSH
+                       (JSON); denies anything that looks like a remote write
   spinuptui incidents <domain> | --all [--hours N]  Print Uptime Kuma
                        down/up incidents for a site or the whole fleet (JSON)
   spinuptui --version  Print the version
@@ -64,6 +67,23 @@ if (command === "ssh") {
   const cfg = loadConfig()
   const client = new SpinupWPClient(cfg)
   const result = await resolveSshAccess(domain, client, cfg)
+  console.log(JSON.stringify(result))
+  process.exit(result.ok ? 0 : 1)
+}
+
+if (command === "ssh-exec") {
+  const dashIdx = args.indexOf("--")
+  const domain = positionals[1]
+  const remoteCmd = dashIdx !== -1 ? args.slice(dashIdx + 1).join(" ") : ""
+  if (!domain || dashIdx === -1 || !remoteCmd.trim()) {
+    console.error(
+      JSON.stringify({ ok: false, reason: "usage", message: "Usage: spinuptui ssh-exec <domain> -- <command>" }),
+    )
+    process.exit(1)
+  }
+  const cfg = loadConfig()
+  const client = new SpinupWPClient(cfg)
+  const result = await execSshCommand(domain, remoteCmd, client, cfg)
   console.log(JSON.stringify(result))
   process.exit(result.ok ? 0 : 1)
 }

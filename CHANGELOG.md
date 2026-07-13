@@ -11,6 +11,19 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **`spinuptui ssh-exec <domain> -- <command>`** — resolves the domain's SSH
+  target (same as `spinuptui ssh`) and runs `<command>` on it, but only if
+  it's read-only: anything matching a write/restart/destructive pattern
+  (plugin/theme changes, DB writes, service restarts, redirecting output to
+  a real file, package installs, etc.) is denied before it ever reaches the
+  server. Built for external tooling that needs to run diagnostic commands
+  unattended — any agent configured to touch a server only through this
+  command inherits the read-only guarantee without building its own guard.
+  Prints structured JSON (`stdout`/`stderr`/`exitCode` on success,
+  `reason:"command_denied"` on refusal) and logs every attempt — allowed,
+  denied, or unresolved — to `<config dir>/logs/ssh-exec-audit.jsonl`.
+
 ## [0.21.2] - 2026-07-10
 
 ### Fixed
