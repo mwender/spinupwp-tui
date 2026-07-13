@@ -128,12 +128,17 @@ export function Browser({ rows }: { rows: number }) {
         }
         return
       }
-      case "K":
-        // Grant Spinup's machine key to the selected site over SSH (privileged
-        // write via the server's sudo user — the API can't do this). Capital K
-        // (like L/V/N) since lowercase k is the vim "move up" binding.
-        if (focus === "sites" && sites[siteIndex]) setGrantKeySite(sites[siteIndex])
+      case "K": {
+        // Grant Spinup's machine key to a site over SSH (privileged write via the
+        // server's sudo user — the API can't do this). Capital K (like L/V/N)
+        // since lowercase k is the vim "move up" binding. Site-anchored (the
+        // overlay itself picks the scope: just this site, or every site on the
+        // server) but works from either pane like S/h — the Servers pane falls
+        // back to the server's first key-eligible site as the anchor.
+        const anchor = focus === "sites" ? sites[siteIndex] : server ? sitesForServer(server.id).find((s) => s.site_user) : undefined
+        if (anchor) setGrantKeySite(anchor)
         return
+      }
       case "L":
         // Link / view the selected site's local working copy (Phase 1).
         if (focus === "sites" && sites[siteIndex]) setLocalLinkSite(sites[siteIndex])

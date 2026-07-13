@@ -436,6 +436,7 @@ export function ControlPanel({ heading, groups, layout = "list" }: { heading: st
 export function siteGroups(isWordpress: boolean, localSync: boolean, isVanity: boolean): ActionGroup[] {
   const remote: [string, string][] = [
     ["s", "SSH"],
+    ["K", "Grant SSH key"],
     ["n", "DNS"],
   ]
   if (isWordpress) {
