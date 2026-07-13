@@ -93,10 +93,13 @@ Connect your Kuma instance once and Spinup registers monitors itself:
   monitor: dead-man's-switch semantics. Regular sites get a homepage monitor
   plus two further opt-in checks (front-page fingerprint, cache-bypass);
   Spinup never touches a client site's files.
-- **Vanity pages published before this feature** need one `R` (refresh) from the
-  `m` overlay to gain the health endpoints, then everything above applies. `R`
-  doesn't require a Kuma connection — unconnected it just re-publishes the
-  current page; connected it also registers the monitors and cron in one go.
+- **Vanity pages published before this feature** need one `R` (refresh) to gain
+  the health endpoints, then everything above applies. `R` doesn't require a
+  Kuma connection — unconnected it just re-publishes the current page;
+  connected it also registers the monitors and cron in one go. Available from
+  the `m` overlay, and directly on the vanity site's own row in the Servers
+  tab's bottom Control strip and via Search (its "Site Control" list) — no need
+  to open `m` first.
 - **The vanity wizard (`V`) does all of this automatically** as its final two
   steps whenever a Kuma connection is configured.
 

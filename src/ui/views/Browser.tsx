@@ -10,9 +10,9 @@ import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { effectiveStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel, PhpVersionCell, Spinner, SiteStatusColumn } from "../components.tsx"
+import { Panel, PhpVersionCell, Spinner } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
-import { ServerDetail, SiteDetail, SiteContextStrip, SITE_CONTEXT_STRIP_HEIGHT } from "../Details.tsx"
+import { ServerDetail, SiteDetail, ControlStrip, CONTROL_STRIP_HEIGHT } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl, siteWebUrl } from "../../lib/spinupweb.ts"
@@ -23,7 +23,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, grantedKeyKinds, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -117,6 +117,17 @@ export function Browser({ rows }: { rows: number }) {
         // is taken), so the capital works everywhere.
         if (focus === "sites" && sites[siteIndex]) setKumaSite(sites[siteIndex])
         return
+      case "R": {
+        // Refresh a vanity page's HTML — only the one site per server whose
+        // domain equals the server's own name. Same binding/behavior as the
+        // m-overlay's R (KumaSite.tsx): fires directly, no confirm, since it
+        // just republishes the same bundled page that's already live.
+        const s = sites[siteIndex]
+        if (focus === "sites" && s && server && isVanityPair(s.domain, server.name)) {
+          return kumaConfigured ? startKumaSetup(s, { reseed: true }) : startVanityReseed(s)
+        }
+        return
+      }
       case "K":
         // Grant Spinup's machine key to the selected site over SSH (privileged
         // write via the server's sudo user — the API can't do this). Capital K
@@ -217,41 +228,32 @@ export function Browser({ rows }: { rows: number }) {
     }
   })
 
-  const listRows = Math.max(3, rows - 6 - SITE_CONTEXT_STRIP_HEIGHT)
+  const listRows = Math.max(3, rows - 6 - CONTROL_STRIP_HEIGHT)
   const focusedSite = sites[Math.min(siteIndex, Math.max(0, sites.length - 1))]
 
   const hints =
     focus === "servers"
       ? [
+          // The Control strip's Server Control list now shows every per-server
+          // key (S/a/N/h/w) — only nav + list-level actions stay here so the
+          // two can't drift out of sync. `c` isn't in Server Control (it's not
+          // an action ON the selected server, it creates a new one).
           { key: "↑↓/jk", label: "select" },
           { key: "→/⏎", label: "view sites" },
           { key: "c", label: "new server" },
-          { key: "S", label: "connect sudo" },
-          { key: "a", label: "server actions" },
-          { key: "N", label: "DNS hosts" },
-          { key: "h", label: "health" },
-          { key: "w", label: "SpinupWP" },
         ]
       : [
+          // The Control strip's Site Control list now shows every per-site
+          // key — this footer is nav-only so the two can't drift out of sync.
           { key: "↑↓/jk", label: "select site" },
           { key: "←/esc", label: "back" },
-          { key: "d", label: "identify app" },
-          { key: "n", label: "DNS host" },
-          { key: "u", label: "change PHP" },
-          { key: "m", label: "monitoring" },
-          { key: "K", label: "grant key" },
-          { key: "p", label: "plugins" },
-          { key: "o", label: "open" },
-          { key: "w", label: "SpinupWP" },
-          { key: "s", label: "ssh" },
-          { key: "h", label: "health" },
         ]
 
   return (
     <box style={{ flexGrow: 1, flexDirection: "column" }}>
       <box style={{ flexGrow: 1, flexDirection: "row", padding: 1, gap: 1 }}>
         {/* Servers pane */}
-        <Panel title={` Servers (${sortedServers.length}) `} active={focus === "servers"} width={44}>
+        <Panel title={` Servers (${sortedServers.length}) `} active={focus === "servers"} width="18%">
           <List
             items={sortedServers}
             selectedIndex={serverIndex}
@@ -291,11 +293,7 @@ export function Browser({ rows }: { rows: number }) {
 
         {/* Sites pane */}
         <Panel
-          title={
-            server
-              ? ` Sites · ${truncate(server.name, 20)} (${sites.length})   👤🔑 keys · H·C·B https/cache/backup `
-              : " Sites "
-          }
+          title={server ? ` Sites · ${truncate(server.name, 20)} (${sites.length}) ` : " Sites "}
           active={focus === "sites"}
           flexGrow={1}
         >
@@ -307,13 +305,11 @@ export function Browser({ rows }: { rows: number }) {
             keyFor={(s) => s.id}
             emptyText="No sites yet — press V to create a vanity site and connect this server"
             renderRow={(s, selected) => {
-              const updates = (s.wp_plugin_updates || 0) + (s.wp_theme_updates || 0) + (s.wp_core_update ? 1 : 0)
               // Use the DETECTED stack (probe result) so the tag reflects `d identify`
               // — SpinupWP's is_wordpress/git shape misclassifies some sites (e.g. a
               // /public/ WP install shown as "app" until probed). Falls back to the
               // API classification when unprobed. Matches the Stacks / Forgotten views.
               const stack = effectiveStack(s, probes.get(s.id)?.result.kind)
-              const keyKinds = grantedKeyKinds(s.id)
               // The server's own vanity/health page blends in perfectly when servers
               // are named like domains — mark it (⌂ + brand tint) so it can't hide.
               const vanity = !!server && isVanityPair(s.domain, server.name)
@@ -326,19 +322,11 @@ export function Browser({ rows }: { rows: number }) {
                     wrapMode="none"
                     style={{ flexGrow: 1, flexShrink: 1 }}
                   />
-                  <SiteStatusColumn
-                    linked={localLinks.has(s.id)}
-                    personalKey={keyKinds.personal > 0}
-                    machineKey={keyKinds.machine > 0}
-                    https={!!s.https?.enabled}
-                    cache={!!s.page_cache?.enabled}
-                    backup={!!(s.backups?.files || s.backups?.database)}
-                    updates={updates}
-                    selected={selected}
-                  />
-                  {/* Fixed-width stack column (widest tag = "bedrock" = 7) so the
-                      icon columns to its left, and the PHP column to its right,
-                      stay vertically aligned across every row regardless of tag. */}
+                  {/* Fixed-width stack column (widest tag = "bedrock" = 7) so it and
+                      the PHP column stay vertically aligned across every row. Per-site
+                      linked/key/HTTPS/cache/backup/updates badges moved to the Details
+                      pane (already shown there for the selected site) to give the
+                      domain name room on narrower terminals. */}
                   <text content={stackTag(stack).padEnd(7) + " "} fg={stackColor(stack, selected)} wrapMode="none" style={{ flexShrink: 0 }} />
                   <PhpVersionCell version={s.php_version} upgrade={phpUpgrades.get(s.id)} selected={selected} />
                 </>
@@ -348,17 +336,21 @@ export function Browser({ rows }: { rows: number }) {
         </Panel>
 
         {/* Detail pane */}
-        <Panel title=" Details " width={44}>
+        <Panel title=" Details " width="32%">
           {focus === "sites" && focusedSite ? (
             <SiteDetail site={focusedSite} serverName={server?.name ?? "—"} />
           ) : server ? (
-            <ServerDetail server={server} siteCount={sites.length} showControl />
+            <ServerDetail server={server} siteCount={sites.length} />
           ) : (
             <text content="No data" fg={theme.textFaint} />
           )}
         </Panel>
       </box>
-      <SiteContextStrip site={focus === "sites" ? focusedSite ?? null : null} />
+      <ControlStrip
+        site={focus === "sites" ? focusedSite ?? null : null}
+        server={focus === "servers" ? server ?? null : null}
+        serverName={server?.name ?? "—"}
+      />
       <StatusBar hints={hints} message={flash ?? undefined} messageColor={theme.brand} />
     </box>
   )

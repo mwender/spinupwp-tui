@@ -9,7 +9,7 @@ import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel, Field, StatusBadge, SiteMetaCell, Spinner, ControlPanel } from "../components.tsx"
+import { Panel, Field, StatusBadge, SiteMetaCell, Spinner, ControlPanel, siteGroups } from "../components.tsx"
 import { isDbBackupInFlight } from "../../lib/dbBackup.ts"
 import { isDbSyncInFlight } from "../../lib/dbSync.ts"
 import { List, moveSelection } from "../List.tsx"
@@ -17,6 +17,7 @@ import { ServerDetail, SiteDetail, SERVER_CONTROL } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl, siteWebUrl } from "../../lib/spinupweb.ts"
+import { isVanityPair } from "../../lib/vanitySite.ts"
 import { useStore } from "../store.tsx"
 import type { Server, Site } from "../../api/types.ts"
 
@@ -34,7 +35,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -195,6 +196,14 @@ export function Search({ rows }: { rows: number }) {
         // fallback here; M matches the same overlay's binding in Stacks.
         if (current?.kind === "site") setKumaSite(current.site)
         return
+      case "R":
+        // Refresh a vanity page's HTML (site-only, and only for the one site per
+        // server whose domain equals the server's own name). Same binding/behavior
+        // as the m-overlay's R (KumaSite.tsx) — fires directly, no confirm, since
+        // it just republishes the same bundled page that's already live.
+        if (current?.kind === "site" && isVanityPair(current.site.domain, serverById(current.site.server_id)?.name ?? ""))
+          return kumaConfigured ? startKumaSetup(current.site, { reseed: true }) : startVanityReseed(current.site)
+        return
       case "n":
         // DNS inventory scoped to this site (its domains + records) — the migrate
         // lens for moving one site to another server.
@@ -241,7 +250,7 @@ export function Search({ rows }: { rows: number }) {
     focus === "query"
       ? [
           { key: "↑↓", label: "select" },
-          { key: "⏎", label: "open site" },
+          ...(current?.kind === "site" ? [{ key: "⏎", label: "open site" }] : []),
           { key: "Tab/→", label: "actions" },
           { key: "esc", label: "dashboard" },
         ]
@@ -254,15 +263,9 @@ export function Search({ rows }: { rows: number }) {
             { key: "←/esc", label: "back" },
           ]
         : [
+            // The Actions panel (Details pane) already lists every per-site key —
+            // this footer is nav-only now, so the two can't drift out of sync.
             { key: "↑↓", label: "select" },
-            { key: "o", label: "open" },
-            { key: "s", label: "SSH" },
-            { key: "n", label: "DNS" },
-            { key: "d", label: "DB backup" },
-            ...(localSync ? [{ key: "p", label: "pull to local" }] : []),
-            ...(current?.kind === "site" && current.site.is_wordpress && localLinks.has(current.site.id) ? [{ key: "m", label: "media fallback" }] : []),
-            { key: "M", label: "monitoring" },
-            { key: "a", label: "server actions" },
             { key: "←/esc", label: "back" },
           ]
 
@@ -352,7 +355,7 @@ export function Search({ rows }: { rows: number }) {
           />
         </Panel>
 
-        <Panel title={focus === "actions" ? " Actions " : " Details "} active={focus === "actions"} width={44}>
+        <Panel title={focus === "actions" ? " Actions " : " Details "} active={focus === "actions"} width={64}>
           {!current ? (
             <text content="No selection" fg={theme.textFaint} />
           ) : focus === "actions" ? (
@@ -374,48 +377,12 @@ export function Search({ rows }: { rows: number }) {
   )
 }
 
-// Site Control panel shown in the Details pane while in "actions" focus. Groups
-// the live single-key actions (Open / Remote / Local / Server) so the suite is
-// discoverable and scales as more actions land. A site gets the full set; a
-// server gets just the open + server actions.
-type ActionGroup = { title: string; items: [string, string][] }
-
-// The DB backup/sync use wp-cli, so they only apply to WordPress sites — omitted
-// for non-WP sites (their `d`/`p` keypresses are also guarded in the handler). DNS
-// (`n`) and the rest apply to any site.
-function siteGroups(isWordpress: boolean, localSync: boolean): ActionGroup[] {
-  const remote: [string, string][] = [
-    ["s", "SSH into the site"],
-    ["n", "DNS records (migrate lens)"],
-  ]
-  if (isWordpress) {
-    remote.push(["d", "Download DB backup"])
-    if (localSync) remote.push(["p", "Pull production DB to local"])
-  }
-  const local: [string, string][] = [
-    ["t", "Open working copy in a terminal"],
-    ["v", "Open the local URL"],
-    ["L", "Link / edit local copy"],
-  ]
-  if (isWordpress) local.push(["m", "Media: serve missing images from production"])
-  remote.push(["u", "Upgrade PHP version"])
-  remote.push(["H", "Enable/disable HTTPS"])
-  remote.push(["P", "Purge page + object cache"])
-  remote.push(["M", "Monitoring (Uptime Kuma + front-page check)"])
-  return [
-    { title: "Open", items: [["o", "Open site in browser"], ["w", "Open in SpinupWP"]] },
-    { title: "Remote", items: remote },
-    { title: "Local", items: local },
-    { title: "Server", items: [["a", "Server actions (reboot / restart)"], ["h", "Server health"]] },
-  ]
-}
-
 function ActionsCard({ result, serverName, localSync }: { result: Result; serverName: string; localSync: boolean }) {
   const isSite = result.kind === "site"
   const name = isSite ? result.site.domain : result.server.name
   const status = isSite ? result.site.status : result.server.connection_status
   // Server results reuse the SAME Server Control suite as the Browser detail pane.
-  const groups = isSite ? siteGroups(result.site.is_wordpress, localSync) : SERVER_CONTROL
+  const groups = isSite ? siteGroups(result.site.is_wordpress, localSync, isVanityPair(result.site.domain, serverName)) : SERVER_CONTROL
   return (
     <box style={{ flexDirection: "column" }}>
       <box style={{ flexDirection: "row" }}>

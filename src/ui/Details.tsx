@@ -3,17 +3,18 @@
 import { useEffect } from "react"
 import { theme, statusColor, diskColor } from "../lib/theme.ts"
 import { formatBytes, diskUsedPct, bar, formatDate, timeAgo, truncate } from "../lib/format.ts"
-import { Field, StatusBadge, ControlPanel, type ActionGroup } from "./components.tsx"
+import { Field, StatusBadge, ControlPanel, siteGroups, type ActionGroup } from "./components.tsx"
 import { effectiveStack, stackColor } from "../lib/stack.ts"
 import { probeKindColor } from "../lib/probe.ts"
-import { resolveLocalLink } from "../lib/local.ts"
+import { resolveLocalLink, type LocalLink } from "../lib/local.ts"
 import { normalizeDomain } from "../lib/dns.ts"
+import { isVanityPair } from "../lib/vanitySite.ts"
 import type { Drift } from "../lib/gitStatus.ts"
 import { useStore, isUpgradeInFlight, isServerOpInFlight, isHttpsToggleInFlight, isPurgeCacheInFlight, purgeCacheFailed } from "./store.tsx"
 import type { Server, Site } from "../api/types.ts"
 
-export function ServerDetail({ server, siteCount, showControl = false }: { server: Server; siteCount: number; showControl?: boolean }) {
-  const { rebootInfo, serverOps, isServerOsEol, sitesForServer, vanityJob } = useStore()
+export function ServerDetail({ server, siteCount }: { server: Server; siteCount: number }) {
+  const { rebootInfo, serverOps, isServerOsEol } = useStore()
   const ds = server.disk_space
   const pct = diskUsedPct(ds?.used, ds?.total)
   const op = serverOps.get(server.id)
@@ -74,48 +75,53 @@ export function ServerDetail({ server, siteCount, showControl = false }: { serve
         valueColor={server.upgrade_required ? theme.warn : theme.good}
       />
       <Field label="Created" value={formatDate(server.created_at)} />
-
-      {/* Server Control — mirrors Search's Site Control. Only rendered where the keys
-          actually fire (the Browser's Servers pane), via showControl; Search's query
-          mode passes it off and surfaces the pressable list in its actions focus. */}
-      {showControl ? (
-        <>
-          <box style={{ height: 1 }} />
-          <ControlPanel heading="Server Control" groups={serverControlGroups()} />
-        </>
-      ) : null}
     </box>
   )
-
-  // The static groups, plus a Manage "V" row whenever the V key would actually do
-  // something: the server has no site at its own hostname yet (busy servers
-  // benefit from a vanity site just like empty ones), or an unfinished build for
-  // this server can be reopened.
-  function serverControlGroups(): ActionGroup[] {
-    const resumable = vanityJob != null && vanityJob.step !== "done" && vanityJob.serverId === server.id
-    const hasVanity = sitesForServer(server.id).some((s) => s.domain.toLowerCase() === server.name.toLowerCase())
-    if (!resumable && hasVanity) return SERVER_CONTROL
-    const vanityItem: [string, string] = ["V", resumable ? "Resume vanity-site build" : "Vanity site at hostname"]
-    return SERVER_CONTROL.map((g) => (g.title === "Manage" ? { ...g, items: [...g.items, vanityItem] } : g))
-  }
 }
 
+// Server Control groups, rendered by the Browser's bottom ControlStrip (layout
+// "flow") or Search's Actions pane (layout "list", the default). Search's
+// query-focus Details still shows ServerDetail without this.
+export function ServerControl({ server, layout }: { server: Server; layout?: "list" | "flow" }) {
+  const { vanityJob, sitesForServer } = useStore()
+  return <ControlPanel heading="Server Control" groups={serverControlGroups(server, vanityJob, sitesForServer)} layout={layout} />
+}
+
+// The static groups, plus a Manage "V" row whenever the V key would actually do
+// something: the server has no site at its own hostname yet (busy servers
+// benefit from a vanity site just like empty ones), or an unfinished build for
+// this server can be reopened.
+function serverControlGroups(
+  server: Server,
+  vanityJob: ReturnType<typeof useStore>["vanityJob"],
+  sitesForServer: ReturnType<typeof useStore>["sitesForServer"],
+): ActionGroup[] {
+  const resumable = vanityJob != null && vanityJob.step !== "done" && vanityJob.serverId === server.id
+  const hasVanity = sitesForServer(server.id).some((s) => s.domain.toLowerCase() === server.name.toLowerCase())
+  if (!resumable && hasVanity) return SERVER_CONTROL
+  const vanityItem: [string, string] = ["V", resumable ? "Resume vanity build" : "Vanity at hostname"]
+  return SERVER_CONTROL.map((g) => (g.title === "Manage" ? { ...g, items: [...g.items, vanityItem] } : g))
+}
+
+// Labels stay terse and avoid repeating their group's title — see siteGroups().
 export const SERVER_CONTROL: ActionGroup[] = [
-  { title: "Clone", items: [["C", "Clone this server →"]] },
-  { title: "Access", items: [["S", "Connect sudo"]] },
+  { title: "Clone", items: [["C", "Clone →"]] },
+  { title: "Access", items: [["S", "Sudo"]] },
   {
     title: "Manage",
     items: [
-      ["a", "Reboot / restart services"],
-      ["h", "Server health"],
-      ["N", "DNS records (migrate lens)"],
+      ["a", "Reboot / restart"],
+      ["h", "Health"],
+      ["N", "DNS"],
     ],
   },
-  { title: "Open", items: [["w", "Open in SpinupWP"]] },
+  { title: "Open", items: [["w", "In SpinupWP"]] },
 ]
 
 export function SiteDetail({ site, serverName }: { site: Site; serverName: string }) {
-  const { probes, probingIds, isProbeStale, phpUpgrades, httpsToggles, purgeCacheProgress, localLinks, grantedKeyKinds, kumaStatus, kumaMonitorFor } = useStore()
+  const { probes, probingIds, isProbeStale, phpUpgrades, httpsToggles, purgeCacheProgress, localLinks, grantedKeyKinds, kumaStatus, kumaMonitorFor, kumaOps, localSync } = useStore()
+  const isVanity = isVanityPair(site.domain, serverName)
+  const reseedOp = kumaOps.get(site.id)
   const kuma = kumaStatus.get(site.domain)
   // The fingerprint check failing while HTTP is up means the site is answering
   // 200 with the WRONG page (stale/corrupt page cache) — a distinct, worse state
@@ -195,6 +201,8 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       <Field label="Granted" value={keyValue} valueColor={keyParts.length ? theme.good : theme.textFaint} />
       <Field label="Public dir" value={site.public_folder ?? "/"} />
       <Field label="Monitor" value={kumaValue} valueColor={kumaColor} />
+      {isVanity && reseedOp?.status === "running" && <Field label="Refresh" value="publishing…" valueColor={theme.warn} />}
+      {isVanity && reseedOp?.status === "error" && <Field label="Refresh" value={`failed: ${reseedOp.error ?? "unknown error"}`} valueColor={theme.bad} />}
       <Field label="Local" value={linkValue} valueColor={linkColor} />
       <SiteDnsSection site={site} />
       <Field
@@ -265,6 +273,16 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
   )
 }
 
+// Site Control groups — see ServerControl above. Recomputes stack/vanity
+// itself since it's not a child of SiteDetail; both derivations are cheap.
+export function SiteControl({ site, serverName, layout }: { site: Site; serverName: string; layout?: "list" | "flow" }) {
+  const { probes, localSync } = useStore()
+  const stack = effectiveStack(site, probes.get(site.id)?.result.kind)
+  const isWordPress = stack !== "Non-WP"
+  const isVanity = isVanityPair(site.domain, serverName)
+  return <ControlPanel heading="Site Control" groups={siteGroups(isWordPress, localSync, isVanity)} layout={layout} />
+}
+
 // DNS zone-host lines for a site's domains, populated on demand (key `n`). Each
 // distinct zone (www + apex collapsed) shows its resolved host; a separate-TLD
 // additional domain surfaces as its own line with its own host. Read-only.
@@ -325,6 +343,38 @@ function Act({ keyName, label, on }: { keyName: string; label: string; on: boole
   )
 }
 
+// Shared status line: the selected site's local-link state (not linked / missing
+// / linked, with path + local URL + git drift). Used by both SiteContextStrip
+// (Stacks — status + inline t/v/L only) and ControlStrip (Browser — status +
+// the full action-group list) so the two don't drift apart.
+function siteLinkStatusLine(site: Site, link: LocalLink | undefined, state: ReturnType<typeof resolveLocalLink> | null, d: Drift | null | undefined) {
+  if (!link) {
+    return (
+      <box style={{ flexDirection: "row" }}>
+        <text content={truncate(site.domain, 44)} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+        <text content="  not linked" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+      </box>
+    )
+  }
+  if (!state!.exists) {
+    return (
+      <box style={{ flexDirection: "row" }}>
+        <text content="missing  " fg={theme.bad} style={{ flexShrink: 0 }} />
+        <text content={link.path} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+      </box>
+    )
+  }
+  return (
+    <box style={{ flexDirection: "row" }}>
+      <text content={state!.label} fg={localLabelColor(state!.kind)} style={{ flexShrink: 0 }} />
+      <text content="  ·  " fg={theme.textFaint} style={{ flexShrink: 0 }} />
+      <text content={link.path} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+      {link.localUrl ? <text content={"   " + link.localUrl} fg={theme.accent} wrapMode="none" style={{ flexShrink: 1 }} /> : null}
+      {d && (d.ahead > 0 || d.dirty) ? <text content={"   " + driftLabel(d)} fg={theme.warn} wrapMode="none" style={{ flexShrink: 0 }} /> : null}
+    </box>
+  )
+}
+
 // Height (incl. border) of the contextual strip — views subtract this from their
 // list viewport so the panes shrink to make room. Border eats 2 rows → 2 content
 // lines (status + actions).
@@ -335,6 +385,10 @@ export const SITE_CONTEXT_STRIP_HEIGHT = 4
 // open-locally actions (which the host view's keyboard fires on the selection).
 // The space is always reserved (a placeholder when nothing is selected) so the
 // layout doesn't jump as the cursor moves.
+//
+// Used by views (Stacks) whose keyboard handler only implements a subset of
+// siteGroups()'s keys — ControlStrip below, which advertises the FULL action
+// list, would be misleading there (hints for keys that don't actually fire).
 export function SiteContextStrip({ site }: { site: Site | null }) {
   const { localLinks, drift, ensureDrift } = useStore()
   const link = site ? localLinks.get(site.id) : undefined
@@ -364,28 +418,8 @@ export function SiteContextStrip({ site }: { site: Site | null }) {
           <text content="↑N " fg={theme.warn} style={{ flexShrink: 0 }} />
           <text content="pending WordPress updates" fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
         </box>
-      ) : !link ? (
-        <box style={{ flexDirection: "row" }}>
-          <text content={truncate(site.domain, 44)} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
-          <text content="  not linked" fg={theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
-        </box>
-      ) : !state!.exists ? (
-        <box style={{ flexDirection: "row" }}>
-          <text content="missing  " fg={theme.bad} style={{ flexShrink: 0 }} />
-          <text content={link.path} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
-        </box>
       ) : (
-        <box style={{ flexDirection: "row" }}>
-          <text content={state!.label} fg={localLabelColor(state!.kind)} style={{ flexShrink: 0 }} />
-          <text content="  ·  " fg={theme.textFaint} style={{ flexShrink: 0 }} />
-          <text content={link.path} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
-          {link.localUrl ? (
-            <text content={"   " + link.localUrl} fg={theme.accent} wrapMode="none" style={{ flexShrink: 1 }} />
-          ) : null}
-          {d && (d.ahead > 0 || d.dirty) ? (
-            <text content={"   " + driftLabel(d)} fg={theme.warn} wrapMode="none" style={{ flexShrink: 0 }} />
-          ) : null}
-        </box>
+        siteLinkStatusLine(site, link, state, d)
       )}
 
       {/* Line 2 — inline actions (fired by the host view on the selection) */}
@@ -398,6 +432,70 @@ export function SiteContextStrip({ site }: { site: Site | null }) {
       ) : (
         <text content="Select a site to link a local copy and open it locally (t · v · L)" fg={theme.textFaint} wrapMode="none" />
       )}
+    </box>
+  )
+}
+
+// Height (incl. border) of the bottom control strip — views subtract this from
+// their list viewport so the panes shrink to make room. `ControlPanel`'s
+// layout="flow" skips its own heading (the strip's box title already says
+// "Site Control"/"Server Control") and puts each group's title in its own
+// column rather than its own line — both to keep this budget small even
+// though every group also gets a 1-row marginBottom for breathing room.
+// Sized for the worst realistic case (a WP + local-sync + vanity site — 5
+// groups: Open/Remote/Local/Vanity/Server, each ≤1 line of items given how
+// terse the labels are + its trailing blank row): 2 border + 1 status + 1
+// spacer + 5 groups × 2 (content + blank). A lighter site/server just leaves
+// blank rows — fixed and generous beats measuring actual wrapped height,
+// which would need a measure-then-rerender pass this app has no precedent for.
+export const CONTROL_STRIP_HEIGHT = 14
+
+// A full-width strip below the three panes (Browser's Servers tab only — see
+// the SiteContextStrip note above for why) showing whichever action list
+// applies to what's focused: the selected site's Site Control (status line +
+// Open/Remote/Local/Vanity/Server, `layout="flow"`) or, with focus on the
+// Servers pane, the selected server's Server Control (status line + Clone/
+// Access/Manage/Open). The space is always reserved (a placeholder when
+// nothing is selected) so the layout doesn't jump as the cursor moves.
+export function ControlStrip({ site, server, serverName }: { site: Site | null; server: Server | null; serverName: string }) {
+  const { localLinks, drift, ensureDrift } = useStore()
+  const link = site ? localLinks.get(site.id) : undefined
+  const state = link ? resolveLocalLink(link) : null
+  const d = site ? drift.get(site.id) : undefined
+
+  // Auto-compute (and cache) git drift when a linked, on-disk copy is shown.
+  useEffect(() => {
+    if (site && link && state?.exists) ensureDrift(site.id, link.path)
+  }, [site?.id, link?.path, state?.exists, ensureDrift])
+
+  return (
+    <box
+      title={site ? " Site Control " : server ? " Server Control " : " Control "}
+      titleColor={theme.brand}
+      border
+      borderColor={link && !state!.exists ? theme.bad : theme.border}
+      style={{ height: CONTROL_STRIP_HEIGHT, flexDirection: "column", paddingLeft: 1, paddingRight: 1 }}
+    >
+      {/* Status line */}
+      {site ? (
+        siteLinkStatusLine(site, link, state, d)
+      ) : server ? (
+        <box style={{ flexDirection: "row" }}>
+          <text content={truncate(server.name, 44)} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
+          <text content={"  " + (server.ip_address ?? "—")} fg={theme.accent} wrapMode="none" style={{ flexShrink: 0 }} />
+          <text content={"  · " + server.connection_status} fg={statusColor(server.connection_status)} wrapMode="none" style={{ flexShrink: 0 }} />
+        </box>
+      ) : (
+        <text content="Select a server or site to see what you can do with it" fg={theme.textFaint} wrapMode="none" />
+      )}
+      <box style={{ height: 1 }} />
+
+      {/* Action groups */}
+      {site ? (
+        <SiteControl site={site} serverName={serverName} layout="flow" />
+      ) : server ? (
+        <ServerControl server={server} layout="flow" />
+      ) : null}
     </box>
   )
 }

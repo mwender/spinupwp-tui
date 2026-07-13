@@ -368,25 +368,95 @@ export function Centered({ children }: { children: ReactNode }) {
   )
 }
 
+// Widest group title ("REMOTE"/"SERVER"/"VANITY"/"ACCESS"/"MANAGE" = 6 chars)
+// plus a little padding — the fixed label column width for layout="flow".
+const FLOW_LABEL_WIDTH = 8
+
 // A grouped, key-chipped action legend ("Site Control" / "Server Control"): a heading,
-// then dim group titles each over a list of `key → outcome` rows. Shared by the Search
-// actions pane and the Servers detail pane so the suite reads the same everywhere.
+// then dim group titles each over its `key → outcome` items. Shared by the Search
+// actions pane and the Servers tab's bottom Control strip so the suite reads the
+// same everywhere. `layout="list"` (default) puts the title on its own line above
+// one item per line — right for a narrow column. `layout="flow"` puts the title in
+// its own fixed-width left column (`alignItems: "flex-start"` keeps it pinned to
+// the top rather than stretching/centering when the row wraps) with items flowing
+// and wrapping in the remaining width — right for a full-width strip, where a long
+// group (e.g. REMOTE) can fit several items per line instead of one. Each item is
+// always its own box so "flow" wraps between whole items, never mid-label.
 export type ActionGroup = { title: string; items: [string, string][] }
-export function ControlPanel({ heading, groups }: { heading: string; groups: ActionGroup[] }) {
+export function ControlPanel({ heading, groups, layout = "list" }: { heading: string; groups: ActionGroup[]; layout?: "list" | "flow" }) {
   return (
     <box style={{ flexDirection: "column" }}>
-      <text content={heading} fg={theme.accent} />
-      {groups.map((group) => (
-        <box key={group.title} style={{ flexDirection: "column" }}>
-          <text content={group.title.toUpperCase()} fg={theme.textFaint} wrapMode="none" />
-          {group.items.map(([k, label]) => (
-            <box key={k} style={{ flexDirection: "row" }}>
-              <text content={` ${k} `} fg={theme.bg} bg={theme.brandDim} style={{ flexShrink: 0 }} />
-              <text content={`  ${label}`} fg={theme.text} wrapMode="none" />
+      {/* "flow" is only ever used inside a bordered box whose own title already
+          says "Site Control"/"Server Control" — skip the redundant heading line. */}
+      {layout === "list" && <text content={heading} fg={theme.accent} />}
+      {groups.map((group) =>
+        layout === "flow" ? (
+          <box key={group.title} style={{ flexDirection: "row", alignItems: "flex-start", marginBottom: 1 }}>
+            <box style={{ width: FLOW_LABEL_WIDTH, flexShrink: 0 }}>
+              <text content={group.title.toUpperCase()} fg={theme.textFaint} wrapMode="none" />
             </box>
-          ))}
-        </box>
-      ))}
+            <box style={{ flexDirection: "row", flexWrap: "wrap", flexGrow: 1 }}>
+              {group.items.map(([k, label]) => (
+                <box key={k} style={{ flexDirection: "row", marginRight: 2 }}>
+                  <text content={` ${k} `} fg={theme.bg} bg={theme.brandDim} style={{ flexShrink: 0 }} />
+                  <text content={`  ${label}`} fg={theme.text} wrapMode="none" />
+                </box>
+              ))}
+            </box>
+          </box>
+        ) : (
+          <box key={group.title} style={{ flexDirection: "column" }}>
+            <text content={group.title.toUpperCase()} fg={theme.textFaint} wrapMode="none" />
+            {group.items.map(([k, label]) => (
+              <box key={k} style={{ flexDirection: "row" }}>
+                <text content={` ${k} `} fg={theme.bg} bg={theme.brandDim} style={{ flexShrink: 0 }} />
+                <text content={`  ${label}`} fg={theme.text} wrapMode="none" />
+              </box>
+            ))}
+          </box>
+        ),
+      )}
     </box>
   )
+}
+
+// Site Control groups for ControlPanel — shared by Search's Actions pane and the
+// Browser tab's Details pane so the suite reads the same, and is discoverable,
+// everywhere a site can be selected. Labels are kept terse and avoid repeating
+// their group's title (e.g. "In browser" under OPEN, not "Open site in browser")
+// since the group label is always visible right next to them (as its own column
+// in layout="flow", or its own line in layout="list").
+//
+// The DB backup/sync use wp-cli, so they only apply to WordPress sites — omitted
+// for non-WP sites (their `d`/`p` keypresses are also guarded in the handler). DNS
+// (`n`) and the rest apply to any site. `isVanity` (the site's domain equals its
+// own server's name, per `isVanityPair`) adds the one-off page-refresh action —
+// vanity pages seeded before this app existed need a way to pick up the current
+// bundled HTML.
+export function siteGroups(isWordpress: boolean, localSync: boolean, isVanity: boolean): ActionGroup[] {
+  const remote: [string, string][] = [
+    ["s", "SSH"],
+    ["n", "DNS"],
+  ]
+  if (isWordpress) {
+    remote.push(["d", "↓ DB backup"])
+    if (localSync) remote.push(["p", "Pull prod. DB"])
+  }
+  const local: [string, string][] = [
+    ["t", "Terminal"],
+    ["v", "Local URL"],
+    ["L", "Link / edit"],
+  ]
+  if (isWordpress) local.push(["m", "Media fallback"])
+  remote.push(["u", "PHP ver."])
+  remote.push(["H", "Toggle HTTPS"])
+  remote.push(["P", "Purge cache"])
+  remote.push(["M", "Monitoring"])
+  return [
+    { title: "Open", items: [["o", "In browser"], ["w", "In SpinupWP"]] },
+    { title: "Remote", items: remote },
+    { title: "Local", items: local },
+    ...(isVanity ? [{ title: "Vanity", items: [["R", "Refresh"]] as [string, string][] }] : []),
+    { title: "Server", items: [["a", "Reboot / restart"], ["h", "Health"]] },
+  ]
 }
