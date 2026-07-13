@@ -444,6 +444,52 @@ async function runSudoSiteOp(
   return { ok: true, target: `${siteUser}@${ip}` }
 }
 
+export type SudoServerResult = { ok: true } | { ok: false; error: string }
+
+// Same probe → maybe-password → `sudo -S -p '' bash -s` idiom as runSudoSiteOp,
+// but scoped to the SERVER as root — no Site/site_user involved. Used for ops
+// that need to read/write across every site's directory (e.g. the fatal-log
+// monitor's cron, which globs /sites/* — a regular site user can't even list
+// that directory, confirmed live).
+export async function runSudoServerOp(
+  server: Server,
+  opts: { sudoUser: string; sudoPassword: string },
+  build: () => string,
+  marker: string,
+): Promise<SudoServerResult> {
+  const ip = server.ip_address
+  if (!ip) return { ok: false, error: "Server has no IP address." }
+  const target = `${opts.sudoUser}@${ip}`
+  const port = server.ssh_port ?? null
+
+  const probe = await runSshStdin(target, port, "sudo -n true 2>&1", null, 15000)
+  let needPassword = false
+  if (probe.code === 0) {
+    needPassword = false
+  } else if (probe.code === 255 || probe.code === -1) {
+    return { ok: false, error: lastErrorLine(probe.stdout + "\n" + probe.stderr, "Couldn't connect over SSH — is your key on the server for this user?") }
+  } else {
+    const out = (probe.stdout + " " + probe.stderr).toLowerCase()
+    if (/not in the sudoers|not allowed to run|may not run|unknown user|is not allowed/.test(out)) {
+      return { ok: false, error: `${opts.sudoUser} can't run sudo on this server.` }
+    }
+    needPassword = true
+    if (!opts.sudoPassword) return { ok: false, error: "A sudo password is required for this server." }
+  }
+
+  const script = build()
+  const payload = needPassword ? `${opts.sudoPassword}\n${script}\n` : `${script}\n`
+  const res = await runSshStdin(target, port, "sudo -S -p '' bash -s", payload, 30000)
+  if (res.code !== 0 || !res.stdout.includes(marker)) {
+    const out = (res.stderr + " " + res.stdout).toLowerCase()
+    if (/incorrect password|sorry, try again|authentication failure/.test(out)) {
+      return { ok: false, error: "Sudo password was rejected." }
+    }
+    return { ok: false, error: lastErrorLine(res.stderr || res.stdout, `The remote command failed (ssh exit ${res.code}).`) }
+  }
+  return { ok: true }
+}
+
 // Append the given public keys to a site user's authorized_keys, via the server's
 // sudo user. Idempotent (re-running never duplicates a line). The caller resolves
 // which keys to deploy (machine key via ensureSpinupKey, personal via listPersonalKeys).

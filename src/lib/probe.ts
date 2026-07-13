@@ -17,6 +17,7 @@
 // view's SSH usage.
 
 import type { Server, Site } from "../api/types.ts"
+import { detectWpDirScript } from "./serverClone.ts"
 import { theme } from "./theme.ts"
 
 export type ProbeKind = "wordpress" | "bedrock" | "whmcs" | "laravel" | "static" | "unknown"
@@ -60,7 +61,7 @@ export function resolveSiteSshTarget(site: Site, server: Server | undefined, ssh
   return `${user}@${ip}`
 }
 
-const SSH_OPTS = [
+export const SSH_OPTS = [
   "-o", "BatchMode=yes",
   "-o", "ConnectTimeout=7",
   "-o", "StrictHostKeyChecking=accept-new",
@@ -76,12 +77,21 @@ function safePublicFolder(pf: string | null): string {
   return pf
 }
 
-function buildRemoteScript(publicFolder: string | null): string {
+function buildRemoteScript(domain: string, publicFolder: string | null): string {
   const pf = safePublicFolder(publicFolder)
+  const root = `/sites/${domain}/files`
   return [
+    // detectWpDirScript anchors on the configured public folder (falling back to a
+    // bounded find), so Bedrock's project root — one level above wherever its core
+    // actually lives — is found at any nesting depth, not just when composer.json
+    // sits directly in the files root. $D/$W from this are shadowed below by the
+    // probe's own "webroot per public_folder" variables, which the rest of this
+    // script (WHMCS/index/WP-version checks) intentionally keeps using as-is.
+    detectWpDirScript(root, publicFolder ?? undefined),
+    `BEDROCKROOT="$B"`,
     'F="$HOME/files"',
     `W="$HOME/files${pf}"`,
-    'echo ===BEDROCK; grep -q "roots/bedrock" "$F/composer.json" 2>/dev/null && echo yes || echo no',
+    'echo ===BEDROCK; [ -n "$BEDROCKROOT" ] && echo yes || echo no',
     'echo ===APPLICATION; test -f "$F/config/application.php" && echo yes || echo no',
     'echo ===ARTISAN; test -f "$F/artisan" && echo yes || echo no',
     'echo ===WHMCSCONF; test -f "$W/configuration.php" && echo yes || echo no',
@@ -103,7 +113,7 @@ export async function probeSite(
 
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(["ssh", ...SSH_OPTS, target, buildRemoteScript(site.public_folder)], {
+    proc = Bun.spawn(["ssh", ...SSH_OPTS, target, buildRemoteScript(site.domain, site.public_folder)], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",

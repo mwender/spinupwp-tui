@@ -11,6 +11,148 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **`spinuptui ssh-exec <domain> -- <command>`** — resolves the domain's SSH
+  target (same as `spinuptui ssh`) and runs `<command>` on it, but only if
+  it's read-only: anything matching a write/restart/destructive pattern
+  (plugin/theme changes, DB writes, service restarts, redirecting output to
+  a real file, package installs, etc.) is denied before it ever reaches the
+  server. Built for external tooling that needs to run diagnostic commands
+  unattended — any agent configured to touch a server only through this
+  command inherits the read-only guarantee without building its own guard.
+  Prints structured JSON (`stdout`/`stderr`/`exitCode` on success,
+  `reason:"command_denied"` on refusal) and logs every attempt — allowed,
+  denied, or unresolved — to `<config dir>/logs/ssh-exec-audit.jsonl`.
+
+## [0.21.2] - 2026-07-10
+
+### Fixed
+- **Onboarding's API token link was a 404.** `https://spinupwp.app/account/api/`
+  no longer resolves, and the correct URL is account-specific (a company slug
+  we can't know before the user has a token) — replaced with generic
+  "Settings → API Tokens" navigation instructions in onboarding and the README.
+- **Bedrock detection now works at any nesting depth, everywhere it matters.**
+  A Bedrock install whose project root isn't directly under the site's files
+  root (e.g. moved into its own subdirectory) could go undetected — the
+  plugins/themes view (`p`) reported "no WordPress core found" even though the
+  site worked fine and SpinupWP itself knew it was WordPress. Detection now
+  anchors on the site's configured Public Folder (falling back to a bounded
+  search only when that's unset) instead of a fixed, shallow search depth:
+  - `p` (plugins/themes) finds core correctly.
+  - `d` (identify app) correctly labels it "Bedrock" again, not just generic
+    WordPress.
+  - The clone wizard's Bedrock pull no longer hardcodes `web/`. It detects the
+    real project root independently on both source and destination — they're
+    not assumed to match, since the destination's layout comes from the git
+    repo's own committed content, not the source's on-disk state. A cheap
+    pre-flight check also catches a source whose files don't match its own
+    configured Public Folder *before* a destination site gets created for a
+    clone that can't succeed; the pull chain's own detection step is the
+    real, authoritative check either way.
+  - The Stacks tab's default (pre-probe) "Bedrock" label also recognizes a
+    webroot like `site/web`, not just an exact `web`.
+- **A first-time local Bedrock pull now explains itself.** "Pull production →
+  local" (`p` in Search) backs up the local database before overwriting it —
+  on a fresh Bedrock checkout with no `vendor/` yet, that step failed with
+  wp-cli's generic "not a WordPress install" error. The message now adds
+  "Run `composer install` in your local checkout first" when that's the
+  likely cause.
+- **Clone-wizard error messages no longer get cut off at a fixed, often-too-
+  short length.** The site roster, Git-access deploy-key list, and DNS
+  cutover roster all truncated error text to a small fixed character count
+  regardless of how much space was actually available. Errors now fill
+  whatever room the row has, so a full-sentence error like the Bedrock
+  layout mismatch above is far more likely to be readable inline instead of
+  needing a drill-down for basic context.
+
+### Notes
+- Nested Bedrock layouts (where the project root isn't directly under the
+  site's files root) are now correctly detected in the plugins/themes view,
+  app identification, and the clone wizard's size estimate — all live-
+  tested. A standard (non-nested) Bedrock clone through the rewritten pull
+  chain was also live-tested end to end, including a real DNS cutover. The
+  clone wizard's pull for a *nested* Bedrock site detects a source/repo
+  mismatch and refuses cleanly before creating anything, but the success
+  path — a genuinely nested repo cloning through to completion — hasn't
+  been live-validated yet. If you hit this, we'd welcome a report.
+
+## [0.21.1] - 2026-07-10
+
+### Fixed
+- **Uptime Kuma connection now falls back to HTTP long-polling.** The client
+  previously connected over WebSocket only; a reverse proxy or CDN in front of
+  a Kuma instance that doesn't forward the WebSocket upgrade headers made the
+  connection fail outright instead of degrading gracefully. It now tries
+  polling as a fallback transport.
+- **Connection failures no longer swallow the real reason.** A failed connect
+  could render as `Couldn't reach Uptime Kuma at https://…: ` with nothing
+  after the colon — the underlying error's message was empty and got used
+  as-is. The error message now falls back through the error's description and
+  code before giving up, so a connection failure is actually diagnosable.
+
+## [0.21.0] - 2026-07-09
+
+### Added
+- **`spinuptui ssh <domain>`** — non-interactive CLI subcommand for external
+  tooling (e.g. an incident-diagnostics agent that's handed only a domain).
+  Resolves the domain to its site/server, builds the SSH target, and runs a
+  live connectivity probe, returning JSON with a classified failure reason
+  (site not found, ambiguous domain match, server has no IP, key not
+  granted, token rejected, etc.) when it can't connect.
+- **`spinuptui incidents <domain>` / `--all`** — surfaces Uptime Kuma's
+  down/up incident history as JSON, scoped to sites SpinupTUI manages
+  monitoring for. `--all` sweeps every such site over a single Kuma
+  connection; `--hours` sets the lookback window (default 24). Pairs with
+  `spinuptui ssh` for an external agent's discover → access → report loop.
+- **Server-wide PHP-fatal sentinel monitor.** Fixes a real monitoring blind
+  spot: SpinupWP's page cache keeps serving `/` even while PHP is fataling on
+  anything the cache doesn't already have, so the existing health/fingerprint
+  monitors can sleep through a real outage (confirmed against a 2026-07-07
+  incident that went undetected for 54 of its 68 minutes). A root-level cron
+  (one per server, added via the monitoring overlay's repair flow once sudo
+  is connected — same place the Redis sentinel is set up) tails every site's
+  error/debug logs each minute for new `PHP Fatal error` lines and reports
+  up/down to a single new Kuma push monitor, with the actually-affected
+  site domain(s) carried in the down message. Surfaces automatically in
+  `spinuptui incidents --all`.
+- **Cache-bypass monitor, opt-in per site.**
+  Closes the other half of the page-cache blind spot: a wedged PHP-FPM pool
+  that never logs a fatal is invisible to both the plain health monitor and
+  the new fatal sentinel above, since nginx serves the cache without ever
+  touching PHP-FPM. This registers an ordinary Kuma HTTP monitor with a
+  `Cookie: wordpress_no_cache=1` header — the same page-cache bypass
+  `siteDoctor.ts` already uses — so it actually exercises PHP on every check
+  (verified live: `fastcgi-cache-bypass-reason: COOKIE`). Deliberately opt-in
+  (not automatic) and defaults to a 1h check window (30m/1h/2h/4h/6h
+  choices), since forcing a real render costs the site something, unlike the
+  cache-served health/fingerprint checks — meant for sites with an actual
+  history of this failure mode, not the whole fleet.
+
+### Changed
+- **Site/server monitoring overlay rebuilt as a full-screen two-pane browser**
+  (`m` in the sites pane), replacing the small centered popover. A narrow
+  left list of the site's monitor kinds (with a live status dot) sits next
+  to a wide detail pane showing whichever one is selected — its one-line
+  definition, a longer explanation of the actual mechanism, live status, and
+  how to act on it. Grew out of real confusion testing the popover version:
+  six monitor kinds across two site contexts didn't fit legibly in a 68-col
+  box, and a separate glossary overlay left the explanation disconnected
+  from live status. Also **collapses the per-kind action keys into one `a`**
+  that acts on whichever monitor is currently highlighted (front page
+  selected → calibration picker; cache bypass selected → its picker;
+  anything else → register/repair) — fewer keys to remember now that the
+  detail pane shows which monitor you're acting on. The overlay also gained:
+  a passive "Alerts: …" header line (fetched once per open, not polled) so
+  notification wiring is visible without pressing `n`; `o` to deep-link
+  straight to the selected monitor's own page in Uptime Kuma; and `x` to
+  remove the front-page or cache-bypass monitor (confirm-gated) — scoped to
+  just those two kinds, since the other four re-derive themselves
+  automatically on the next repair and would silently reappear.
+- **The header's fleet-wide "N monitors down" badge now names the domain(s)**
+  (falling back to a bare count once there are too many to list) and points
+  at the Search tab to find them, instead of an unactionable number with no
+  way to tell which site it means.
+
 ## [0.20.1] - 2026-07-08
 
 ### Changed
@@ -996,7 +1138,10 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.21.2...HEAD
+[0.21.2]: https://github.com/mwender/spinupwp-tui/compare/v0.21.1...v0.21.2
+[0.21.1]: https://github.com/mwender/spinupwp-tui/compare/v0.21.0...v0.21.1
+[0.21.0]: https://github.com/mwender/spinupwp-tui/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/mwender/spinupwp-tui/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/mwender/spinupwp-tui/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/mwender/spinupwp-tui/compare/v0.19.0...v0.19.1

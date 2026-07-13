@@ -68,12 +68,22 @@
   → [docs/finalize-server-move.md](docs/finalize-server-move.md)
 - **Privileged writes over SSH** (`S` / `K`) — grant or revoke SSH keys directly,
   since the API can't. → [docs/privileged-ssh-writes.md](docs/privileged-ssh-writes.md)
-- **Uptime Kuma monitoring** (`m`) — wire a site into your own
-  [Uptime Kuma](https://github.com/louislam/uptime-kuma) for uptime, load, and
-  health checks. → [docs/uptime-kuma.md](docs/uptime-kuma.md)
-- **Site monitoring: fingerprints, a doctor, and a Redis sentinel** (`M`) — a
-  front-page identity check, a cache/outage doctor, and alert wiring.
-  → [docs/site-monitoring.md](docs/site-monitoring.md)
+- **Site & server monitoring** (`m`) — a two-pane browser of a site's Uptime
+  Kuma monitors (health, front-page fingerprint, an opt-in cache-bypass
+  check, and, for vanity/server sites, load/Redis/PHP-fatal sentinels), each
+  with a live status dot, an in-context explanation, and one action key to
+  register/recalibrate/remove it — plus a cache/outage doctor and alert
+  wiring. → [docs/site-monitoring.md](docs/site-monitoring.md) ·
+  [docs/uptime-kuma.md](docs/uptime-kuma.md)
+- **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
+  resolves a domain to a live SSH target with a live connectivity probe;
+  `spinuptui ssh-exec <domain> -- <command>` runs a command over SSH, but only
+  if it's read-only — anything that looks like a write/restart/destructive
+  action is denied rather than run, so any agent using it inherits that
+  guarantee without building its own guard; `spinuptui incidents <domain>` /
+  `--all` surfaces Uptime Kuma's down/up history as JSON. Built so another
+  agent/script can go from just a domain to "what's wrong and how do I get
+  in" with no manual lookup. → [CLI subcommands](#cli-subcommands)
 - **Completion toasts** — a non-focus-stealing toast when a background write
   (PHP upgrade, reboot, DNS resolve, …) finishes.
 - **Release notes** — an in-app "what's new" after every update, sourced
@@ -92,10 +102,9 @@
   ```sh
   curl -fsSL https://bun.sh/install | bash
   ```
-- A SpinupWP API token — create one at
-  [spinupwp.app/account/api](https://spinupwp.app/account/api/). **Read Only**
-  scope is enough to browse; use **Read/Write** if you want to upgrade a site's
-  PHP version.
+- A SpinupWP API token — create one in your SpinupWP dashboard under
+  **Settings → API Tokens**. **Read Only** scope is enough to browse; use
+  **Read/Write** if you want to upgrade a site's PHP version.
 
 ## Install & run
 
@@ -159,6 +168,26 @@ to the version in the header (and in the `?` About panel).
 spinuptui            Launch the dashboard
 spinuptui login      Set or update your saved API token
 spinuptui where      Show the config path and which source the token came from
+spinuptui ssh <domain>  Print SSH access info for a site as JSON (resolves the
+                     site's server, builds its SSH target, and runs a live
+                     connectivity probe — for external tooling, e.g. an
+                     incident-diagnostics agent handed only a domain)
+spinuptui ssh-exec <domain> -- <command>  Resolve the domain's SSH target and
+                     run <command> on it, but only if the command is
+                     read-only — anything matching a write/restart/destructive
+                     pattern (plugin/theme changes, DB writes, service
+                     restarts, file redirection to a real path, etc.) is
+                     denied instead of run. Prints JSON: on success,
+                     {ok:true, exitCode, stdout, stderr, ...}; on denial,
+                     {ok:false, reason:"command_denied", message}. Every
+                     attempt (allowed, denied, or unresolved) is appended to
+                     <config dir>/logs/ssh-exec-audit.jsonl. Quote <command>
+                     as one shell argument if it needs pipes or redirects.
+spinuptui incidents <domain> | --all [--hours N]  Print Uptime Kuma down/up
+                     incidents as JSON, scoped to sites SpinupTUI manages
+                     monitoring for (config.json's kumaMonitors) — --all
+                     sweeps every such site in one Kuma connection, --hours
+                     sets the lookback window (default 24)
 spinuptui --version  Print the version
 spinuptui --help     Show help
 ```
@@ -235,8 +264,7 @@ These can be set in `config.json` or via an environment variable:
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `H` | Enable / disable HTTPS on a site (Servers / Stacks / Search; needs a Read/Write token) |
 | `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
-| `m` | Site monitoring via Uptime Kuma (Servers tab, sites pane — same overlay as `M`) |
-| `M` | Site monitoring overlay — add monitors, `f` front-page check, `d` site doctor, `n` alert wiring, vanity refresh/rotation (Servers / Stacks / Search) |
+| `m` / `M` | Site/server monitoring — a two-pane browser of this site's Uptime Kuma monitors (`M` is an alias, since lowercase `m` is taken in Search/Stacks). Inside: `↑`/`↓` selects a monitor, `a` registers/recalibrates/repairs it (Front page and Cache bypass open a check-window picker), `x` removes Front page or Cache bypass, `o` opens the selected monitor in Kuma, `d` runs the site doctor, `n` shows/edits alert wiring, and vanity sites add `R`/`r` for page refresh/secret rotation (Servers / Stacks / Search) |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
 | `V` | Add a vanity site at the server's own hostname — DNS + site + HTTPS + SSH-key handoff (Servers tab; offered when no hostname site exists; needs a Read/Write token) |
@@ -290,9 +318,12 @@ Needs a Read/Write token. Full details: [docs/server-actions.md](docs/server-act
 
 ## Site monitoring
 
-`M` on a site opens the monitoring overlay — uptime/Redis monitors, a
-template-identity front-page check, a cache/outage doctor, and Kuma alert
-wiring, all against your own Uptime Kuma instance. Full details:
+`m` on a site opens a full-screen two-pane monitor browser — health,
+front-page fingerprint, an opt-in cache-bypass check, and (vanity/server
+sites) load/Redis/PHP-fatal sentinels, each with live status, an in-context
+explanation, and a single action key to register/recalibrate/remove it —
+plus a cache/outage doctor and Kuma alert wiring, all against your own
+Uptime Kuma instance. Full details:
 [docs/site-monitoring.md](docs/site-monitoring.md) ·
 [docs/uptime-kuma.md](docs/uptime-kuma.md).
 

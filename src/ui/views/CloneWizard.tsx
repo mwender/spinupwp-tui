@@ -597,7 +597,7 @@ export function CloneWizard() {
         case "adding":
           return "adding…"
         case "error":
-          return truncate(k.error ?? "failed", 36)
+          return k.error ?? "failed"
         default:
           return "add the key by hand, then r to re-check"
       }
@@ -614,9 +614,8 @@ export function CloneWizard() {
             return (
               <box key={k.repo} style={{ flexDirection: "row", height: 1 }}>
                 <text content={`${g} `} fg={c} style={{ flexShrink: 0 }} />
-                <text content={`${k.owner}/${k.name}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
-                <box style={{ flexGrow: 1 }} />
-                <text content={label(k)} fg={k.status === "error" ? theme.bad : k.status === "present" || k.status === "added" ? theme.good : theme.textFaint} wrapMode="none" style={{ flexShrink: 0 }} />
+                <text content={`${k.owner}/${k.name}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 0 }} />
+                <text content={" " + label(k)} fg={k.status === "error" ? theme.bad : k.status === "present" || k.status === "added" ? theme.good : theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
               </box>
             )
           })}
@@ -722,15 +721,14 @@ export function CloneWizard() {
         : st === "done" ? `now → ${r.targetValue ?? targetIp}`
         : st === "ready" ? `${r.currentValue ?? "?"} → ${r.targetValue ?? targetIp}${r.excluded ? "  (skipped)" : ""}`
         : st === "manual" ? `manual: ${r.reason ?? "edit by hand"}`
-        : st === "error" ? truncate(r.error ?? "failed", 28)
+        : st === "error" ? (r.error ?? "failed")
         : "pending"
       const dcolor = st === "error" ? theme.bad : st === "done" ? theme.good : st === "manual" ? theme.warn : cur ? theme.text : theme.textFaint
       return (
         <box key={`${siteId}|${r.name}`} style={{ flexDirection: "row", height: 1, backgroundColor: cur ? theme.bgAlt : undefined }}>
           {busy ? <Spinner color={theme.brand} /> : <text content={glyph} fg={gcolor} style={{ flexShrink: 0 }} />}
-          <text content={` ${r.name}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 1 }} />
-          <box style={{ flexGrow: 1 }} />
-          <text content={detail} fg={dcolor} wrapMode="none" style={{ flexShrink: 0 }} />
+          <text content={` ${r.name}`} fg={theme.text} wrapMode="none" style={{ flexShrink: 0 }} />
+          <text content={" " + detail} fg={dcolor} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
         </box>
       )
     }
@@ -779,13 +777,12 @@ export function CloneWizard() {
             return (
               <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1, backgroundColor: cur ? theme.bgAlt : undefined }}>
                 {active ? <Spinner color={theme.brand} /> : <text content={s.step === "done" ? "✓" : s.step === "error" ? "✕" : "○"} fg={s.step === "done" ? theme.good : s.step === "error" ? theme.bad : theme.textFaint} style={{ flexShrink: 0 }} />}
-                <text content={` ${s.domain}`} fg={cur || s.step === "error" || s.step === "done" ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
-                <box style={{ flexGrow: 1 }} />
+                <text content={` ${s.domain}`} fg={cur || s.step === "error" || s.step === "done" ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
                 <text
-                  content={(s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? `done${tlsMark}` : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}${s.transferBytes != null ? ` · ${formatBytes(s.transferBytes)}${s.transferTarget ? ` of ${s.transferExact ? "" : "~"}${formatBytes(s.transferTarget)}` : ""}${s.transferExact && s.transferTarget ? ` (${Math.min(100, Math.round((s.transferBytes / s.transferTarget) * 100))}%)` : ""}${s.transferRate ? ` · ${formatBytes(s.transferRate)}/s` : ""}` : ""}${s.stageStartedAt ? " · " + fmtElapsed(now - s.stageStartedAt) : ""}`) + vmark}
+                  content={" " + ((s.step === "error" ? truncate(s.error ?? "failed", 24) : s.step === "done" ? `done${tlsMark}` : s.step === "queued" ? "queued" : `${s.step}${s.detail ? " · " + s.detail : ""}${s.transferBytes != null ? ` · ${formatBytes(s.transferBytes)}${s.transferTarget ? ` of ${s.transferExact ? "" : "~"}${formatBytes(s.transferTarget)}` : ""}${s.transferExact && s.transferTarget ? ` (${Math.min(100, Math.round((s.transferBytes / s.transferTarget) * 100))}%)` : ""}${s.transferRate ? ` · ${formatBytes(s.transferRate)}/s` : ""}` : ""}${s.stageStartedAt ? " · " + fmtElapsed(now - s.stageStartedAt) : ""}`) + vmark)}
                   fg={s.step === "error" || s.tls?.status === "error" || (s.verify && !s.verify.ok) ? theme.bad : s.verify?.ok ? theme.good : s.step === "done" ? theme.good : theme.textFaint}
                   wrapMode="none"
-                  style={{ flexShrink: 0 }}
+                  style={{ flexGrow: 1, flexShrink: 1 }}
                 />
               </box>
             )

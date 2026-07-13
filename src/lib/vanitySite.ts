@@ -6,8 +6,10 @@
 // docs/vanity-site/index.php is the design reference; keep the two in sync.
 
 import { resolve4 } from "node:dns/promises"
+import type { Server } from "../api/types.ts"
 import { SSH_OPTS, sshPort, runProcess, meaningfulError, remoteDocRoot } from "./dbBackup.ts"
 import { pushUrl, LOAD_PUSH_SCALE } from "./uptimeKuma.ts"
+import { runSudoServerOp } from "./ssh.ts"
 
 // The vanity convention: the site living at the server's own hostname. Every
 // feature that special-cases vanity sites (full monitoring, page re-seed) keys
@@ -294,4 +296,76 @@ export async function seedVanityPushCron(t: PushCronTarget): Promise<{ ok: boole
   const r = await runProcess(["ssh", ...SSH_OPTS, ...sshPort(t.port), `${t.user}@${t.host}`, remote], 60_000)
   if (r.code !== 0) return { ok: false, error: meaningfulError(r.stderr, "Couldn't install the heartbeat cron over SSH.") }
   return { ok: true }
+}
+
+const FATAL_CRON_MARKER = "spinup-kuma-fatal"
+const FATAL_SCRIPT_PATH = "/root/spinup-fatal-check.sh"
+const FATAL_INSTALLED_MARKER = "===FATALCRON_INSTALLED"
+
+// Server-wide PHP-fatal sentinel (site monitoring blind-spot fix): SpinupWP's
+// page cache keeps serving `/` even while PHP is fataling on anything the
+// cache doesn't already have — the plain up/down and fingerprint monitors
+// never touch broken PHP as long as the cache stays warm (verified against a
+// real 2026-07-07 incident that sat undetected for 54 of its 68 minutes).
+//
+// Runs as ROOT (via sudo) because it globs every site on the box: a site's
+// own user can't even list `/sites` (confirmed live), let alone read a
+// sibling site's logs once logrotate recreates them `640 root adm`. One
+// monitor covers the whole server rather than one per site, to avoid Kuma
+// "monitor bloat" — a down beat's `msg` carries the actual affected
+// domain(s), since THIS monitor's own name is just the server's vanity
+// anchor, not the site that's actually broken.
+//
+// A PHP fatal can land in either logs/error.log (nginx) or logs/debug.log
+// (WordPress's own log, populated when WP_DEBUG_LOG is on) depending on that
+// site's config — verified live: the real incident above is in debug.log,
+// not error.log. Both are checked for every site.
+const FATAL_CHECK_SCRIPT = `#!/bin/bash
+STATE_DIR=/root/.spinup-fatal-state
+mkdir -p "$STATE_DIR"
+FOUND=""
+for site_dir in /sites/*/; do
+  domain=$(basename "$site_dir")
+  for logname in error.log debug.log; do
+    logfile="\${site_dir}logs/\${logname}"
+    [ -f "$logfile" ] || continue
+    state_file="$STATE_DIR/\${domain}__\${logname}.offset"
+    prev=$(cat "$state_file" 2>/dev/null || echo 0)
+    cur=$(stat -c %s "$logfile" 2>/dev/null || echo 0)
+    [ "$cur" -lt "$prev" ] && prev=0
+    if [ "$cur" -gt "$prev" ] && tail -c +"$((prev + 1))" "$logfile" | grep -q "PHP Fatal error"; then
+      FOUND="\${FOUND:+$FOUND,}$domain"
+    fi
+    echo "$cur" > "$state_file"
+  done
+done
+if [ -n "$FOUND" ]; then
+  curl -fsS --max-time 20 "__PUSH_URL__?status=down&msg=$FOUND" >/dev/null 2>&1
+else
+  curl -fsS --max-time 20 "__PUSH_URL__?status=up&msg=fatal-check-ok" >/dev/null 2>&1
+fi
+`
+
+// Adopt-or-refresh: writes the check script (push URL baked in) and installs
+// the one-line-per-minute crontab entry that invokes it, in ROOT's crontab.
+// Idempotent, same strip-marked-line-then-append idiom as seedVanityPushCron.
+export async function seedFatalMonitorCron(
+  server: Server,
+  opts: { sudoUser: string; sudoPassword: string; kumaUrl: string; pushToken: string },
+): Promise<{ ok: boolean; error?: string }> {
+  const push = pushUrl(opts.kumaUrl, opts.pushToken)
+  const script = FATAL_CHECK_SCRIPT.replace(/__PUSH_URL__/g, push)
+  const scriptB64 = Buffer.from(script, "utf8").toString("base64")
+  return runSudoServerOp(
+    server,
+    { sudoUser: opts.sudoUser, sudoPassword: opts.sudoPassword },
+    () =>
+      [
+        `printf '%s' '${scriptB64}' | base64 -d > ${FATAL_SCRIPT_PATH}`,
+        `chmod +x ${FATAL_SCRIPT_PATH}`,
+        `( crontab -l 2>/dev/null | grep -v -e '${FATAL_CRON_MARKER}' ; echo '* * * * * ${FATAL_SCRIPT_PATH} >/dev/null 2>&1 # ${FATAL_CRON_MARKER}' ) | crontab -`,
+        `echo ${FATAL_INSTALLED_MARKER}`,
+      ].join("\n"),
+    FATAL_INSTALLED_MARKER,
+  )
 }

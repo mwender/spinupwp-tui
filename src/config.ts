@@ -120,6 +120,9 @@ export interface KumaMonitorRef {
   pushToken?: string
   redisId?: number // "{server} redis" push monitor fed by the cron's redis-cli ping (vanity/server domains)
   redisToken?: string
+  fatalId?: number // "{server} php-fatal" server-wide sentinel fed by the root cron's error/debug.log tail (vanity/server domains)
+  fatalToken?: string
+  bypassId?: number // "{domain} cache-bypass" opt-in http monitor with a page-cache-bypass Cookie header (per-site, no token — Kuma polls it directly)
   fingerprintId?: number // keyword monitor asserting the front page serves its own template
   // What fingerprint calibration derived (lib/siteFingerprint.ts) — shown in the
   // overlay and kept so a recalibration can explain what it's replacing.
