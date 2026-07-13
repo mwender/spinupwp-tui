@@ -106,7 +106,7 @@ function serverControlGroups(
 // Labels stay terse and avoid repeating their group's title — see siteGroups().
 export const SERVER_CONTROL: ActionGroup[] = [
   { title: "Clone", items: [["C", "Clone →"]] },
-  { title: "Access", items: [["S", "Sudo"]] },
+  { title: "Access", items: [["S", "Sudo"], ["K", "Grant SSH key"]] },
   {
     title: "Manage",
     items: [
