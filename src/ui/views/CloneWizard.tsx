@@ -792,6 +792,7 @@ export function CloneWizard() {
           })}
           <box style={{ flexGrow: 1 }} />
           <text content={`✓ ${done} done · ⠹ ${running} running · ${queued} queued${errored ? ` · ✕ ${errored} failed` : ""}`} fg={theme.textDim} wrapMode="none" />
+          {job!.backupSnapshotPath ? <text content={`Backup snapshot: ${job!.backupSnapshotPath}`} fg={theme.textFaint} wrapMode="none" /> : null}
           {done > 0 ? <text content="↑↓ select · v verify a done site" fg={theme.textFaint} wrapMode="none" /> : null}
           {errored > 0 ? <text content={`⏎ on a failed site — full error${job!.logPath ? ` · log: ${job!.logPath}` : ""}`} fg={theme.textFaint} wrapMode="none" /> : null}
           {selected.some((s) => s.sourceHttps && s.tls?.status !== "managed") ? <text content="T stage/retry TLS on the highlighted HTTPS site (keeps copied data intact)" fg={theme.warn} wrapMode="none" /> : null}

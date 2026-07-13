@@ -46,7 +46,13 @@ over SSH). The steps:
    DNS moves. Certificate bodies and keys are never written to the clone log or job.
    After cutover, Let’s Encrypt sites are switched back to SpinupWP-managed renewal;
    custom source certificates remain custom.
-9. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
+9. **Backup snapshot** — because SpinupWP's public API cannot apply backup settings,
+   Clone writes a sanitized JSON handoff file for the selected sites under
+   `~/Documents/SpinupWP TUI/backup-snapshots/`. It includes only the API's backup
+   summary (files/database flags, retention, next run, and provider ID/region/bucket)
+   and explicitly marks schedules, excluded paths, and selected databases as unavailable.
+   It never contains credentials, tokens, certificates, or backup contents.
+10. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
    settles, then repoints `A` records across each site's domains (apex + additional)
    to the new server in one batched, partial-aware pass; `↑↓`/`space` include or
    exclude individual records first. `www`-style records that follow the apex are

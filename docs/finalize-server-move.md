@@ -16,6 +16,11 @@ Open it from a server row with `F`.
 5. Run the final DB sync.
 6. Complete cutover by DNS, provider IP reassignment, or your provider console.
 
+When final sync starts, Finalize also writes a sanitized backup handoff manifest to
+`~/Documents/SpinupWP TUI/backup-snapshots/` for the selected sites. This records the
+backup information available from the public API without exporting any credentials;
+it is intended as input to a separate backup-configuration tool.
+
 For each selected site, SpinupTUI activates maintenance mode on the source,
 exports a clean SQL dump outside the web root, imports it into the destination
 site's configured database, flushes cache when available, disables destination

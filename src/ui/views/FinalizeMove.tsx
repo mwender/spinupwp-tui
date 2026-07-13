@@ -234,6 +234,7 @@ export function FinalizeMove() {
               {job!.logPath ? <text content={`Full stage output: ${job!.logPath}`} fg={theme.textFaint} wrapMode="none" /> : null}
             </>
           ) : null}
+          {job!.backupSnapshotPath ? <text content={`Backup snapshot: ${job!.backupSnapshotPath}`} fg={theme.textFaint} wrapMode="none" /> : null}
           <box style={{ flexGrow: 1 }} />
           {job!.sites.some((s) => s.sourceHttps && s.destSiteId) ? <text content="T stage/retry HTTPS on the highlighted site" fg={theme.warn} wrapMode="none" /> : null}
           {job!.step === "done" ? <text content="The workflow is complete." fg={theme.good} wrapMode="none" /> : null}
@@ -250,6 +251,7 @@ export function FinalizeMove() {
           <text content="DB sync and PHP-FPM parity passed. Source sites are still in maintenance mode." fg={theme.text} wrapMode="none" />
           <text content="Point traffic at the destination using DNS, IP reassignment, or your provider console." fg={theme.textFaint} wrapMode="none" />
           {job!.logPath ? <text content={`Log: ${job!.logPath}`} fg={theme.textFaint} wrapMode="none" /> : null}
+          {job!.backupSnapshotPath ? <text content={`Backup snapshot: ${job!.backupSnapshotPath}`} fg={theme.textFaint} wrapMode="none" /> : null}
           <box style={{ height: 1 }} />
           <text content={`Destination IP: ${job!.destServerIp || "unknown"}`} fg={theme.textDim} wrapMode="none" />
           <text content={`Domains: ${selected.map((s) => s.domain).join(", ")}`} fg={theme.textDim} wrapMode="none" />

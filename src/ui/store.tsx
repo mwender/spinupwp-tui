@@ -60,6 +60,7 @@ import { resolveUbuntuEolDates, refreshUbuntuEolDates, isUbuntuEol as isUbuntuEo
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
 import { planDbSync, runDbSync, type DbSyncProgress, type SyncPlanResult } from "../lib/dbSync.ts"
 import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
+import { backupSnapshotSite, writeBackupSnapshot, type BackupSnapshot } from "../lib/backupSnapshot.ts"
 
 export type Route = "dashboard" | "servers" | "stacks" | "search" | "events"
 
@@ -266,6 +267,7 @@ export interface CloneSiteState {
   selected: boolean // unchecked in Plan → skipped entirely
   isWordPress: boolean // API is_wordpress — false (non-git) = redirect/static site the WP chain can't clone
   sourceHttps: boolean // captured from the source API; controls the TLS handoff stage
+  backup?: Site["backups"] // API summary only; written to the local backup handoff manifest
   sizeBytes?: number // webroot + DB estimate (sizing + progress); undefined until sized
   sizeWebBytes?: number // webroot-only bytes (uncompressed) — the files-transfer soft ceiling
   stack: "wp" | "bedrock" | "files" // git repo → bedrock; is_wordpress → wp; else files-only (redirect shells, static/PHP sites)
@@ -350,6 +352,7 @@ export interface CloneJob {
   fanoutStarted?: boolean // startClone ran — survives the wizard being backgrounded/reopened
   startedAt: number
   logPath?: string // per-job JSONL log (full stage output; the roster only shows truncated errors)
+  backupSnapshotPath?: string // sanitized local handoff manifest; never sent to a server
 }
 
 // The gitaccess step is only needed when a selected site is Bedrock (a git repo whose
@@ -376,6 +379,7 @@ export interface FinalizeMoveSiteState {
   selected: boolean
   isWordPress: boolean
   sourceHttps: boolean
+  backup?: Site["backups"] // API summary only; written to the local backup handoff manifest
   ready: boolean
   step: FinalizeMoveSiteStep
   detail?: string
@@ -404,6 +408,7 @@ export interface FinalizeMoveJob {
   fanoutStarted?: boolean
   inventory?: FinalizeMoveInventory
   logPath?: string
+  backupSnapshotPath?: string
 }
 export function isFinalizeMoveInFlight(j: FinalizeMoveJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
@@ -3428,6 +3433,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           selected: stack !== "files",
           isWordPress,
           sourceHttps: s.https?.enabled === true,
+          backup: s.backups,
           stack,
           gitRepo: s.git?.repo ?? undefined,
           gitBranch: s.git?.branch ?? undefined,
@@ -3685,6 +3691,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         selected: s.is_wordpress,
         isWordPress: s.is_wordpress,
         sourceHttps: s.https?.enabled === true,
+        backup: s.backups,
         ready: false,
         step: s.is_wordpress ? "queued" : "skipped",
       }))
@@ -3810,6 +3817,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     logger.redact(source.sudoPassword, dest.sudoPassword)
     logger.log({ event: "job-start", source: j.sourceServerName, dest: j.destServerName, destServerId: j.destServerId, sites: queue.map((s) => s.domain) })
     finalizeLogRef.current = logger
+    // Backup configuration is dashboard-owned and has no supported mutation API.
+    // Capture the source API summary locally before maintenance begins, so a
+    // separate opt-in automation tool can recreate it later without secrets.
+    const snapshot: BackupSnapshot = {
+      schema_version: 1,
+      exported_at: new Date().toISOString(),
+      workflow: "finalize",
+      source_server: { id: j.sourceServerId, name: j.sourceServerName },
+      destination_server: { id: j.destServerId, name: j.destServerName ?? null },
+      sites: queue.map((s) => backupSnapshotSite(s.domain, s.sourceSiteId, s.destSiteId, s.backup)),
+    }
+    void writeBackupSnapshot(snapshot)
+      .then((path) => setFinalizeMoveJob((cur) => (cur ? { ...cur, backupSnapshotPath: path } : cur)))
+      .catch((err) => logger.log({ event: "backup-snapshot-failed", error: (err as Error).message }))
     setFinalizeMoveJob((cur) =>
       cur
         ? {
@@ -4129,6 +4150,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     logger.redact(source.sudoPassword, dest.sudoPassword)
     logger.log({ event: "job-start", source: j.sourceServerName, dest: j.destServerName, destServerId, sites: j.sites.filter((s) => s.selected).map((s) => s.domain), concurrency: j.concurrency })
     cloneLogRef.current = logger
+    // The public API does not let us apply backups. Write its source summary to a
+    // visible local handoff file while the selected site set is still exact.
+    const snapshot: BackupSnapshot = {
+      schema_version: 1,
+      exported_at: new Date().toISOString(),
+      workflow: "clone",
+      source_server: { id: j.sourceServerId, name: j.sourceServerName },
+      destination_server: { id: destServerId, name: j.destServerName || null },
+      sites: j.sites.filter((s) => s.selected).map((s) => backupSnapshotSite(s.domain, s.sourceSiteId, s.destSiteId, s.backup)),
+    }
+    void writeBackupSnapshot(snapshot)
+      .then((path) => setCloneJob((cur) => (cur ? { ...cur, backupSnapshotPath: path } : cur)))
+      .catch((err) => logger.log({ event: "backup-snapshot-failed", error: (err as Error).message }))
     setCloneJob((cur) => (cur ? { ...cur, step: "clone", fanoutStarted: true, logPath: logger.path, sites: cur.sites.map((s) => (s.selected ? { ...s, step: "queued" as CloneSiteStep, error: undefined, failedStep: undefined } : s)) } : cur))
     const queue = j.sites.filter((s) => s.selected)
     let cursor = 0
