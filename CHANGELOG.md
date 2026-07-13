@@ -11,6 +11,16 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-07-13
+
+### Fixed
+- **`K` (grant/revoke SSH key) is discoverable again.** The v0.22.0 Control-strip
+  rebuild dropped it from both Site Control and Server Control's action lists —
+  the keybinding itself kept working, but you had to already know it existed.
+  It's back in Site Control's Remote group and Server Control's Access group,
+  and now also works from the Servers pane (falling back to the server's first
+  key-eligible site), matching how `S`/`h` already work from either pane.
+
 ## [0.22.0] - 2026-07-13
 
 ### Added
@@ -1166,7 +1176,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.22.1...HEAD
+[0.22.1]: https://github.com/mwender/spinupwp-tui/compare/v0.22.0...v0.22.1
 [0.22.0]: https://github.com/mwender/spinupwp-tui/compare/v0.21.2...v0.22.0
 [0.21.2]: https://github.com/mwender/spinupwp-tui/compare/v0.21.1...v0.21.2
 [0.21.1]: https://github.com/mwender/spinupwp-tui/compare/v0.21.0...v0.21.1
