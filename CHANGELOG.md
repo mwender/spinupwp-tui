@@ -23,6 +23,32 @@ versions; such changes are called out here.
   Prints structured JSON (`stdout`/`stderr`/`exitCode` on success,
   `reason:"command_denied"` on refusal) and logs every attempt — allowed,
   denied, or unresolved — to `<config dir>/logs/ssh-exec-audit.jsonl`.
+- **Refreshing a vanity page's HTML is now discoverable from where you'd look
+  for it.** A shared, grouped, key-chipped action list (`siteGroups()`) now
+  shows every per-site action — including `R` (refresh vanity page) for the
+  one site per server whose domain is the server's own hostname — in Search's
+  Actions pane and, on the Servers tab, in the bottom **Control strip**
+  (below). Previously `R` only lived inside the `m` monitoring overlay.
+- **The Servers tab's bottom "Local" drawer is now a full-width Control
+  strip.** With a site selected it shows Site Control (Open/Remote/Local/
+  Vanity/Server); with a server selected (no site drilled into) it now shows
+  real **Server Control** (Clone/Access/Manage/Open) instead of a generic
+  placeholder. Each group's items flow and wrap across the full terminal
+  width instead of stacking one per line, so even a long group like Remote
+  fits in 1 line — each group's label sits in its own left column (pinned to
+  the top if its items wrap), and item labels are terser now that they don't
+  need to repeat their group's name (e.g. "In browser" under OPEN, not "Open
+  site in browser"). The Sites list also dropped its per-row status badges
+  (linked/keys/HTTPS/cache/backup/updates) — that info is already shown in
+  the Details pane for the selected site — to give the domain name more room;
+  Servers/Sites/Details are back to a simple 3-pane row.
+
+### Changed
+- **Servers and Search footers no longer duplicate the action list.** Both
+  views' key hints for a selected site are now nav-only (`select` / `back`);
+  the full, always-in-sync action list lives in the Control strip (or
+  Search's Actions pane). Also fixed a stale Search hint (`⏎ open site`) that was
+  shown even for a selected server row, where Enter is a no-op.
 
 ## [0.21.2] - 2026-07-10
 
