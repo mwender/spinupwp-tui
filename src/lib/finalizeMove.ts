@@ -44,7 +44,7 @@ function publicFolderArg(publicFolder?: string | null): string | undefined {
   return publicFolder ?? undefined
 }
 
-export type FinalizeStage = "detect" | "auth" | "maintenance" | "export" | "transfer" | "import" | "verify" | "cleanup"
+export type FinalizeStage = "detect" | "auth" | "maintenance" | "export" | "transfer" | "import" | "verify" | "php" | "cleanup"
 export type FinalizeProgress = (stage: FinalizeStage, status: "start" | "ok" | "fail", detail?: string) => void
 export interface FinalizeExecRecord {
   domain: string

@@ -78,4 +78,6 @@ without deleting the destination site. The destination DB credential changes dur
 this repair; source files and database remain read-only.
 
 For sites cloned before HTTPS handoff existed, run **Finalize move** and press `T`
-at the Cutover step to stage their certificates before moving traffic.
+at the Cutover step to stage their certificates before moving traffic. Finalize also
+copies and validates portable per-site PHP-FPM settings after its final database sync,
+so staged sites receive PHP parity without a full re-clone.

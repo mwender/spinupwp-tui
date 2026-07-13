@@ -371,6 +371,8 @@ export interface FinalizeMoveSiteState {
   destSiteUser?: string
   sourcePublicFolder?: string | null
   destPublicFolder?: string | null
+  sourcePhpVersion?: string | null
+  destPhpVersion?: string | null
   selected: boolean
   isWordPress: boolean
   sourceHttps: boolean
@@ -3679,6 +3681,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         domain: s.domain,
         sourceSiteUser: s.site_user ?? "",
         sourcePublicFolder: s.public_folder,
+        sourcePhpVersion: s.php_version,
         selected: s.is_wordpress,
         isWordPress: s.is_wordpress,
         sourceHttps: s.https?.enabled === true,
@@ -3715,6 +3718,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             destSiteId: dest?.id,
             destSiteUser: dest?.site_user ?? undefined,
             destPublicFolder: dest?.public_folder,
+            destPhpVersion: dest?.php_version,
             ready,
             selected: src.selected && ready,
             step: ready ? ("queued" as FinalizeMoveSiteStep) : ("skipped" as FinalizeMoveSiteStep),
@@ -3848,6 +3852,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           (entry) => logger.log({ ...entry }),
         )
         if (res.ok) {
+          // Finalize is also a repair path for sites cloned before PHP parity was
+          // added. Do this after the destination DB verifies but before we mark the
+          // site cutover-ready; pool values deliberately bypass the finalize log.
+          if (!site.sourcePhpVersion || !site.destPhpVersion || site.sourcePhpVersion !== site.destPhpVersion) {
+            failed = true
+            const error = "source and destination PHP versions differ; can't safely copy PHP-FPM settings"
+            logger.log({ event: "site-php-failed", domain: site.domain, error })
+            await rollbackSourceMaintenance(source, spec).catch(() => {})
+            mark(site.sourceSiteId, (s) => ({ ...s, step: "error", detail: undefined, error, failedStage: "php" }))
+            continue
+          }
+          mark(site.sourceSiteId, (s) => ({ ...s, detail: "copying PHP-FPM settings", failedStage: undefined }))
+          const php = await syncPortablePhpPool(source, dest, site.sourcePhpVersion, site.sourceSiteUser, site.destSiteUser)
+          if (!php.ok) {
+            failed = true
+            logger.log({ event: "site-php-failed", domain: site.domain, error: php.error })
+            await rollbackSourceMaintenance(source, spec).catch(() => {})
+            mark(site.sourceSiteId, (s) => ({ ...s, step: "error", detail: undefined, error: php.error, failedStage: "php" }))
+            continue
+          }
           if (res.destDbName) importedDbs.push(res.destDbName)
           logger.log({ event: "site-done", domain: site.domain, destDbName: res.destDbName })
           mark(site.sourceSiteId, (s) => ({ ...s, step: "done", detail: undefined, error: undefined, destDbName: res.destDbName }))

@@ -247,7 +247,7 @@ export function FinalizeMove() {
     return (
       <Panel title=" Cutover — provider-neutral handoff " active>
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-          <text content="DB sync passed. Source sites are still in maintenance mode." fg={theme.text} wrapMode="none" />
+          <text content="DB sync and PHP-FPM parity passed. Source sites are still in maintenance mode." fg={theme.text} wrapMode="none" />
           <text content="Point traffic at the destination using DNS, IP reassignment, or your provider console." fg={theme.textFaint} wrapMode="none" />
           {job!.logPath ? <text content={`Log: ${job!.logPath}`} fg={theme.textFaint} wrapMode="none" /> : null}
           <box style={{ height: 1 }} />
