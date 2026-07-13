@@ -1,9 +1,8 @@
 // Final database sync for an already-copied SpinupWP server move.
 //
-// This deliberately stops short of provider-specific IP reassignment. It freezes
-// the source site, exports a clean DB file there, imports it into the existing
-// destination site's configured database, verifies the destination, and leaves
-// cutover as a provider-neutral DNS/manual step in the UI.
+// This deliberately stops short of provider-specific IP reassignment. Normally it
+// freezes the source site, but an explicit test-sync mode can leave public traffic
+// live while it exports a clean DB snapshot to the existing destination site.
 
 import type { Server } from "../api/types.ts"
 import { detectWpDirScript, sudoExec, type SudoCtx, type SudoResult } from "./serverClone.ts"
@@ -65,6 +64,10 @@ export interface FinalizeSiteSpec {
   destSiteUser: string
   sourcePublicFolder?: string | null
   destPublicFolder?: string | null
+  // Defaults to true. False is for staging/test syncs only: writes can continue
+  // on the source while the snapshot is copied, so it must not be treated as a
+  // cutover-safe final sync.
+  enableSourceMaintenance?: boolean
 }
 
 export interface FinalizeSiteResult {
@@ -167,10 +170,15 @@ export async function runFinalizeDbSync(
     if (!grant.ok) return fail("auth", grant.stderr.trim() || "couldn't grant the destination pull key on source")
     onProgress("auth", "ok")
 
-    onProgress("maintenance", "start")
-    const maint = await run("maintenance", source, `cd ${shq(sourceWpDir)}; sudo -u ${shq(su)} -H wp maintenance-mode activate >/dev/null`, 30_000)
-    if (!maint.ok) return fail("maintenance", maint.stderr.trim() || "couldn't activate source maintenance mode")
-    onProgress("maintenance", "ok")
+    if (spec.enableSourceMaintenance !== false) {
+      onProgress("maintenance", "start")
+      const maint = await run("maintenance", source, `cd ${shq(sourceWpDir)}; sudo -u ${shq(su)} -H wp maintenance-mode activate >/dev/null`, 30_000)
+      if (!maint.ok) return fail("maintenance", maint.stderr.trim() || "couldn't activate source maintenance mode")
+      onProgress("maintenance", "ok")
+    } else {
+      // Keep the progress rail accurate without sending any WP write to source.
+      onProgress("maintenance", "ok", "skipped; source remains live")
+    }
 
     onProgress("export", "start")
     const dump = await run(

@@ -30,6 +30,14 @@ If a site fails before cutover, the workflow aborts and rolls source
 maintenance mode back for that failed site. It never changes DNS or provider
 state.
 
+## Test sync without maintenance
+
+On Finalize's **Connect** step, press **`m`** to turn source maintenance off, then
+run the sync normally. This leaves the source site public so you can test the
+destination, but it is deliberately not a cutover-safe final sync: source writes
+can occur after its database snapshot is exported. Re-run Finalize with maintenance
+on immediately before moving DNS or an elastic/floating IP.
+
 ## Stale database report
 
 After successful imports, the destination server's MySQL databases are compared

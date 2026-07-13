@@ -409,6 +409,7 @@ export interface FinalizeMoveJob {
   inventory?: FinalizeMoveInventory
   logPath?: string
   backupSnapshotPath?: string
+  enableSourceMaintenance: boolean // false = testing sync; never a cutover-safe snapshot
 }
 export function isFinalizeMoveInFlight(j: FinalizeMoveJob | null | undefined): boolean {
   return j != null && j.step !== "done" && j.step !== "error"
@@ -661,6 +662,7 @@ interface StoreValue extends DataState {
   finalizeMoveSetDest: (server: Server) => void
   toggleFinalizeMoveSite: (sourceSiteId: number) => void
   toggleFinalizeMoveAll: () => void
+  toggleFinalizeSourceMaintenance: () => void
   finalizeMoveGoBack: () => void
   startFinalizeMoveSync: () => void
   finalizeRetryTls: (siteId: number) => void
@@ -3701,6 +3703,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         sourceServerName: server.name,
         step: "plan",
         sites,
+        enableSourceMaintenance: true,
         startedAt: Date.now(),
       })
     },
@@ -3755,6 +3758,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const select = !ready.every((s) => s.selected)
       return { ...j, sites: j.sites.map((s) => (s.ready ? { ...s, selected: select } : s)) }
     })
+  }, [])
+
+  const toggleFinalizeSourceMaintenance = useCallback(() => {
+    setFinalizeMoveJob((j) => (j && j.step === "connect" && !j.fanoutStarted ? { ...j, enableSourceMaintenance: !j.enableSourceMaintenance } : j))
   }, [])
 
   const finalizeMoveGoBack = useCallback(() => {
@@ -3861,6 +3868,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           destSiteUser: site.destSiteUser,
           sourcePublicFolder: site.sourcePublicFolder,
           destPublicFolder: site.destPublicFolder,
+          enableSourceMaintenance: j.enableSourceMaintenance,
         }
         logger.log({ event: "site-start", domain: site.domain })
         const res = await runFinalizeDbSync(
@@ -3880,7 +3888,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             failed = true
             const error = "source and destination PHP versions differ; can't safely copy PHP-FPM settings"
             logger.log({ event: "site-php-failed", domain: site.domain, error })
-            await rollbackSourceMaintenance(source, spec).catch(() => {})
+            if (j.enableSourceMaintenance) await rollbackSourceMaintenance(source, spec).catch(() => {})
             mark(site.sourceSiteId, (s) => ({ ...s, step: "error", detail: undefined, error, failedStage: "php" }))
             continue
           }
@@ -3889,7 +3897,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (!php.ok) {
             failed = true
             logger.log({ event: "site-php-failed", domain: site.domain, error: php.error })
-            await rollbackSourceMaintenance(source, spec).catch(() => {})
+            if (j.enableSourceMaintenance) await rollbackSourceMaintenance(source, spec).catch(() => {})
             mark(site.sourceSiteId, (s) => ({ ...s, step: "error", detail: undefined, error: php.error, failedStage: "php" }))
             continue
           }
@@ -3912,7 +3920,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const active = Array.from(new Set(importedDbs)).sort()
         if (failed) {
           logger.log({ event: "job-failed" })
-          return { ...cur, step: "error", failedStep: "sync", error: "One or more database syncs failed. Source maintenance was rolled back for failed sites." }
+          return {
+            ...cur,
+            step: "error",
+            failedStep: "sync",
+            error: j.enableSourceMaintenance
+              ? "One or more database syncs failed. Source maintenance was rolled back for failed sites."
+              : "One or more testing syncs failed. Source sites were left unchanged.",
+          }
         }
         logger.log({ event: "job-synced", activeDatabases: active })
         void inventoryDatabases(dest.server, dest.sudoUser, dest.sudoPassword, active)
@@ -4627,6 +4642,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     finalizeMoveSetDest,
     toggleFinalizeMoveSite,
     toggleFinalizeMoveAll,
+    toggleFinalizeSourceMaintenance,
     finalizeMoveGoBack,
     startFinalizeMoveSync,
     finalizeRetryTls,

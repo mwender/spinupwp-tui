@@ -27,6 +27,7 @@ export function FinalizeMove() {
     finalizeMoveSetDest,
     toggleFinalizeMoveSite,
     toggleFinalizeMoveAll,
+    toggleFinalizeSourceMaintenance,
     finalizeMoveGoBack,
     startFinalizeMoveSync,
     finalizeRetryTls,
@@ -85,6 +86,7 @@ export function FinalizeMove() {
       const cur = job.sites[idx]
       if (name === "space" && cur) return toggleFinalizeMoveSite(cur.sourceSiteId)
       if (name === "a") return toggleFinalizeMoveAll()
+      if (name === "m") return toggleFinalizeSourceMaintenance()
       if (name === "return" && dest && isSudoConnected(server.id) && isSudoConnected(dest.id) && selected.length > 0) return startFinalizeMoveSync()
       return
     }
@@ -206,12 +208,14 @@ export function FinalizeMove() {
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
           <text content={`${srcOn ? "✓" : "○"} source sudo ${srcOn ? "connected" : "not connected — press S"}`} fg={srcOn ? theme.good : theme.warn} wrapMode="none" />
           <text content={`${destOn ? "✓" : "○"} destination sudo ${destOn ? "connected" : "not connected — press D"}`} fg={destOn ? theme.good : theme.warn} wrapMode="none" />
+          <text content={`${job!.enableSourceMaintenance ? "◉" : "◯"} source maintenance ${job!.enableSourceMaintenance ? "on (safe final sync)" : "off (testing only)"} — press m`} fg={job!.enableSourceMaintenance ? theme.good : theme.warn} wrapMode="none" />
+          {!job!.enableSourceMaintenance ? <text content="Source remains public; changes made during sync will not be in this destination snapshot. Re-run with maintenance on before cutover." fg={theme.warn} wrapMode="none" /> : null}
           <box style={{ height: 1 }} />
           {sitePageRows(true)}
           {pageLabel() ? <text content={pageLabel()!} fg={theme.textFaint} wrapMode="none" /> : null}
           <box style={{ flexGrow: 1 }} />
           {srcOn && destOn && selected.length > 0 ? (
-            <text content="❯ Enter — activate source maintenance and run final DB sync" fg={theme.brand} wrapMode="none" />
+            <text content={job!.enableSourceMaintenance ? "❯ Enter — activate source maintenance and run final DB sync" : "❯ Enter — sync live source for testing (not cutover-safe)"} fg={job!.enableSourceMaintenance ? theme.brand : theme.warn} wrapMode="none" />
           ) : (
             <text content="Connect both servers and select at least one matched WordPress site." fg={theme.textFaint} wrapMode="none" />
           )}
@@ -248,7 +252,7 @@ export function FinalizeMove() {
     return (
       <Panel title=" Cutover — provider-neutral handoff " active>
         <box style={{ flexDirection: "column", flexGrow: 1, paddingTop: 1 }}>
-          <text content="DB sync and PHP-FPM parity passed. Source sites are still in maintenance mode." fg={theme.text} wrapMode="none" />
+          <text content={job!.enableSourceMaintenance ? "DB sync and PHP-FPM parity passed. Source sites are still in maintenance mode." : "Testing sync passed, but source sites remained public. Re-run Finalize with maintenance on before moving traffic."} fg={job!.enableSourceMaintenance ? theme.text : theme.warn} wrapMode="none" />
           <text content="Point traffic at the destination using DNS, IP reassignment, or your provider console." fg={theme.textFaint} wrapMode="none" />
           {job!.logPath ? <text content={`Log: ${job!.logPath}`} fg={theme.textFaint} wrapMode="none" /> : null}
           {job!.backupSnapshotPath ? <text content={`Backup snapshot: ${job!.backupSnapshotPath}`} fg={theme.textFaint} wrapMode="none" /> : null}
@@ -286,7 +290,7 @@ export function FinalizeMove() {
 
   function hints() {
     if (job!.step === "plan") return [{ key: "↑↓", label: "select dest" }, { key: "⏎", label: "use server" }, { key: "esc", label: "close" }]
-    if (job!.step === "connect") return [{ key: "S/D", label: "connect sudo" }, { key: "space", label: "toggle site" }, { key: "a", label: "toggle all" }, { key: "Pg↑↓/[ ]", label: "page" }, { key: "⏎", label: "sync DBs" }, { key: "esc", label: "close" }]
+    if (job!.step === "connect") return [{ key: "S/D", label: "connect sudo" }, { key: "space", label: "toggle site" }, { key: "a", label: "toggle all" }, { key: "m", label: "maintenance" }, { key: "Pg↑↓/[ ]", label: "page" }, { key: "⏎", label: "sync DBs" }, { key: "esc", label: "close" }]
     if (job!.step === "cutover") return [{ key: "T", label: "stage HTTPS" }, { key: "⏎", label: "finish" }, { key: "esc", label: "close" }]
     return [{ key: "↑↓", label: "select" }, { key: "T", label: "stage HTTPS" }, { key: "Pg↑↓/[ ]", label: "page" }, { key: "esc", label: "close" }]
   }
