@@ -45,6 +45,7 @@ import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, reg
 import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
+import { ensureSwap, inspectSwap, type SwapStatus } from "../lib/swap.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, preflightBedrockSource, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
@@ -127,6 +128,16 @@ export interface ServerOpProgress {
 }
 
 export function isServerOpInFlight(p: ServerOpProgress | undefined): boolean {
+  return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
+}
+
+export interface SwapProgress {
+  gib: number
+  status: string
+  error?: string
+}
+
+export function isSwapInFlight(p: SwapProgress | undefined): boolean {
   return p != null && p.status !== UPGRADE_DONE && p.status !== UPGRADE_FAIL
 }
 
@@ -516,6 +527,13 @@ interface StoreValue extends DataState {
   // Fire a server op (reboot or service restart) and poll its event in the background.
   startServerOp: (server: Server, kind: ServerOpKind, label: string) => void
   clearServerOp: (serverId: number) => void
+  swapStatus: Map<number, SwapStatus>
+  swapStatusLoading: Set<number>
+  swapStatusErrors: Map<number, string>
+  loadSwapStatus: (server: Server, sudoUser?: string) => void
+  swapProgress: Map<number, SwapProgress>
+  startSwapEnsure: (server: Server, gib: number) => void
+  clearSwapProgress: (serverId: number) => void
   // Whether the "create a server" overlay is open. Separate from the source so the
   // flow can run with no seed (general "from scratch" create, and the empty-fleet
   // case where there's no server to select).
@@ -937,6 +955,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [purgeCacheProgress, setPurgeCacheProgress] = useState<Map<number, PurgeCacheProgress>>(new Map())
   const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
   const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
+  const [swapStatus, setSwapStatus] = useState<Map<number, SwapStatus>>(new Map())
+  const [swapStatusLoading, setSwapStatusLoading] = useState<Set<number>>(new Set())
+  const [swapStatusErrors, setSwapStatusErrors] = useState<Map<number, string>>(new Map())
+  const [swapProgress, setSwapProgress] = useState<Map<number, SwapProgress>>(new Map())
   const [newServerOpen, setNewServerOpen] = useState(false)
   const [newServerSource, setNewServerSource] = useState<Server | null>(null)
   const [newServerJob, setNewServerJob] = useState<NewServerJob | null>(null)
@@ -1548,6 +1570,72 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void run()
     },
     [client, refresh, clearServerOp, serverOps, sitesForServer],
+  )
+
+  // ---- Swap memory (direct privileged SSH; no SpinupWP API surface) ------
+
+  const clearSwapProgress = useCallback(
+    (serverId: number) =>
+      setSwapProgress((prev) => {
+        if (!prev.has(serverId)) return prev
+        const next = new Map(prev)
+        next.delete(serverId)
+        return next
+      }),
+    [],
+  )
+
+  const loadSwapStatus = useCallback(
+    (server: Server, sudoUser?: string) => {
+      if (swapStatusLoading.has(server.id)) return
+      const run = async () => {
+        setSwapStatusLoading((prev) => new Set(prev).add(server.id))
+        setSwapStatusErrors((prev) => {
+          if (!prev.has(server.id)) return prev
+          const next = new Map(prev)
+          next.delete(server.id)
+          return next
+        })
+        const res = await inspectSwap(server, sitesForServer(server.id), cfgRef.current.sshUser, sudoUser)
+        if (res.ok) setSwapStatus((prev) => new Map(prev).set(server.id, res.status))
+        else setSwapStatusErrors((prev) => new Map(prev).set(server.id, res.error))
+        setSwapStatusLoading((prev) => {
+          const next = new Set(prev)
+          next.delete(server.id)
+          return next
+        })
+      }
+      void run()
+    },
+    [sitesForServer, swapStatusLoading],
+  )
+
+  const startSwapEnsure = useCallback(
+    (server: Server, gib: number) => {
+      const existing = swapProgress.get(server.id)
+      if (isSwapInFlight(existing)) return
+      const run = async () => {
+        setSwapProgress((prev) => new Map(prev).set(server.id, { gib, status: "queued" }))
+        const sudoUser = sudoUsers.get(server.id)
+        const sudoPassword = sudoPwRef.current.get(server.id)
+        if (!sudoUser || sudoPassword == null || !sudoConnected.has(server.id)) {
+          setSwapProgress((prev) => new Map(prev).set(server.id, { gib, status: UPGRADE_FAIL, error: "Connect sudo on this server first (press S)." }))
+          return
+        }
+        setSwapProgress((prev) => new Map(prev).set(server.id, { gib, status: "running" }))
+        const res = await ensureSwap(server, { sudoUser, sudoPassword, gib })
+        if (!res.ok) {
+          setSwapProgress((prev) => new Map(prev).set(server.id, { gib, status: UPGRADE_FAIL, error: res.error }))
+          return
+        }
+        setSwapProgress((prev) => new Map(prev).set(server.id, { gib, status: UPGRADE_DONE }))
+        toast.success(`${server.name} swap is enabled`)
+        const status = await inspectSwap(server, sitesForServer(server.id), cfgRef.current.sshUser, sudoUser)
+        if (status.ok) setSwapStatus((prev) => new Map(prev).set(server.id, status.status))
+      }
+      void run()
+    },
+    [sitesForServer, sudoConnected, sudoUsers, swapProgress],
   )
 
   // ---- Create a server (POST /servers) ----------------------------------
@@ -4184,6 +4272,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     serverOps,
     startServerOp,
     clearServerOp,
+    swapStatus,
+    swapStatusLoading,
+    swapStatusErrors,
+    loadSwapStatus,
+    swapProgress,
+    startSwapEnsure,
+    clearSwapProgress,
     newServerOpen,
     setNewServerOpen,
     newServerSource,

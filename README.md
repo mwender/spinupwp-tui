@@ -58,6 +58,8 @@
 - **Purge cache** (`P`) — clear page + object cache together.
 - **Server actions** (`a`) — reboot or restart a service, with the real reason a
   reboot is pending. → [docs/server-actions.md](docs/server-actions.md)
+- **Swap memory** (`a` → Manage swap) — inspect and safely create/enable swap
+  directly over SSH; needs a connected sudo session. → [docs/swap-memory.md](docs/swap-memory.md)
 - **Create & connect a server** (`c` / `V`) — provision a server, then wire it up
   end-to-end (DNS, a vanity site, HTTPS, SSH-key handoff).
   → [docs/creating-connecting-servers.md](docs/creating-connecting-servers.md)
@@ -265,7 +267,7 @@ These can be set in `config.json` or via an environment variable:
 | `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
 | `m` / `M` | Site/server monitoring — a two-pane browser of this site's Uptime Kuma monitors (`M` is an alias, since lowercase `m` is taken in Search/Stacks). Inside: `↑`/`↓` selects a monitor, `a` registers/recalibrates/repairs it (Front page and Cache bypass open a check-window picker), `x` removes Front page or Cache bypass, `o` opens the selected monitor in Kuma, `d` runs the site doctor, `n` shows/edits alert wiring, and vanity sites add `R`/`r` for page refresh/secret rotation (Servers / Stacks / Search) |
 | `R` | Refresh a vanity page's HTML to the currently bundled version — no need to open `m` first. Shown under Vanity in the Servers tab's Control strip and Search's Actions list, for the one site per server whose domain is the server's own hostname |
-| `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
+| `a` | Server actions: reboot / restart a service / manage swap (Servers / Search; swap needs connected sudo) |
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
 | `V` | Add a vanity site at the server's own hostname — DNS + site + HTTPS + SSH-key handoff (Servers tab; offered when no hostname site exists; needs a Read/Write token) |
 | `C` | Clone a server's sites to a new/existing destination (Servers tab; needs a Read/Write token + sudo) |
@@ -314,6 +316,16 @@ Full details: [docs/php-upgrade.md](docs/php-upgrade.md).
 `a` on a server reboots it or restarts a service (Nginx/PHP-FPM/MySQL/Redis),
 and shows *why* a reboot is pending (the actual OS packages, read over SSH).
 Needs a Read/Write token. Full details: [docs/server-actions.md](docs/server-actions.md).
+
+## Swap memory
+
+From a selected server, press `a`, choose **Manage swap**, and enter a size in
+GiB. SpinupTUI reads the current swap state over SSH, recommends a size from
+the server's RAM, and—after confirmation—creates, enables, or resizes
+`/swapfile`, turns it on immediately, and persists it in `/etc/fstab`. This is a
+direct server change outside SpinupWP and requires connected sudo (`S`). It
+does not disable or remove existing swap, and it will not resize non-file swap
+devices. Full details: [docs/swap-memory.md](docs/swap-memory.md).
 
 ## Site monitoring
 
