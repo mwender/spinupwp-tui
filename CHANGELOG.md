@@ -11,6 +11,15 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-07-13
+
+### Fixed
+- **A failed "Remember in macOS Keychain" save no longer fails silently.** If the
+  Keychain write fails (e.g. a locked login keychain — the underlying `security`
+  command needs it unlocked first), the sudo connection itself still succeeds,
+  but the "Sudo connected" panel now shows the real reason as a warning instead
+  of silently reverting to "kept in memory only, never saved."
+
 ## [0.22.1] - 2026-07-13
 
 ### Fixed
@@ -1176,7 +1185,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.22.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.22.2...HEAD
+[0.22.2]: https://github.com/mwender/spinupwp-tui/compare/v0.22.1...v0.22.2
 [0.22.1]: https://github.com/mwender/spinupwp-tui/compare/v0.22.0...v0.22.1
 [0.22.0]: https://github.com/mwender/spinupwp-tui/compare/v0.21.2...v0.22.0
 [0.21.2]: https://github.com/mwender/spinupwp-tui/compare/v0.21.1...v0.21.2
