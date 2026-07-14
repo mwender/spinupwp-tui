@@ -16,12 +16,22 @@ import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
 import { moveSelection } from "../List.tsx"
 import type { RebootInfo } from "../../lib/ssh.ts"
+import { MAX_SWAP_GIB, MIN_SWAP_GIB, type SwapStatus, validateSwapSizeGiB } from "../../lib/swap.ts"
 import type { ServerOpKind } from "../store.tsx"
 
-type Phase = "pick" | "confirm" | "tracking" | "done" | "error"
+function formatSwapGiB(bytes: number): string {
+  return `${(bytes / (1024 ** 3)).toFixed(1)} GiB`
+}
+
+function isResizableSwap(status: SwapStatus | undefined): boolean {
+  return status?.kind === "active" && status.entries.length === 1 && status.entries[0].name === "/swapfile"
+}
+
+type Phase = "pick" | "swap" | "confirm" | "tracking" | "done" | "error"
+type ActionKind = ServerOpKind | "swap"
 
 interface Action {
-  kind: ServerOpKind
+  kind: ActionKind
   label: string // menu label, e.g. "Restart Nginx"
   verb: string // short progress verb, e.g. "nginx"
 }
@@ -32,6 +42,7 @@ const ACTIONS: Action[] = [
   { kind: "php", label: "Restart PHP-FPM", verb: "php-fpm" },
   { kind: "mysql", label: "Restart MySQL", verb: "mysql" },
   { kind: "redis", label: "Restart Redis", verb: "redis" },
+  { kind: "swap", label: "Manage swap memory", verb: "swap" },
 ]
 
 // Short headline for the menu / detail; the full package list is shown on the
@@ -56,6 +67,15 @@ export function ServerActions() {
     rebootInfoLoading,
     rebootInfoErrors,
     loadRebootInfo,
+    swapStatus,
+    swapStatusLoading,
+    swapStatusErrors,
+    loadSwapStatus,
+    swapProgress,
+    startSwapEnsure,
+    clearSwapProgress,
+    isSudoConnected,
+    sudoUserFor,
   } = store
 
   const rebootRequired = !!server?.reboot_required
@@ -63,11 +83,18 @@ export function ServerActions() {
   // Cursor starts on Reboot when one is pending, else on the first restart.
   const [index, setIndex] = useState(() => (server?.reboot_required ? 0 : 1))
   const [target, setTarget] = useState<Action | null>(null)
+  const [swapSizeInput, setSwapSizeInput] = useState("")
+  const [swapSizeError, setSwapSizeError] = useState<string | null>(null)
 
   const siteCount = server ? sitesForServer(server.id).length : 0
   const info = server ? rebootInfo.get(server.id) : undefined
   const infoLoading = server ? rebootInfoLoading.has(server.id) : false
   const infoError = server ? rebootInfoErrors.get(server.id) : undefined
+  const swap = server ? swapStatus.get(server.id) : undefined
+  const swapLoading = server ? swapStatusLoading.has(server.id) : false
+  const swapError = server ? swapStatusErrors.get(server.id) : undefined
+  const sudoConnectedForServer = server ? isSudoConnected(server.id) : false
+  const sudoUser = server ? sudoUserFor(server.id) : undefined
 
   // Fetch the "why" once when opened on a reboot-required server.
   useEffect(() => {
@@ -75,18 +102,26 @@ export function ServerActions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server?.id])
 
+  useEffect(() => {
+    if (server && sudoConnectedForServer && !swapLoading && (!swap || !!swapError)) loadSwapStatus(server, sudoUser)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server?.id, sudoConnectedForServer])
+
   const progress = server ? serverOps.get(server.id) : undefined
+  const swapOp = server ? swapProgress.get(server.id) : undefined
+  const activeProgress = target?.kind === "swap" ? swapOp : progress
   const dp: Phase =
     phase !== "tracking"
       ? phase
-      : !progress
+      : !activeProgress || activeProgress.status === "deployed"
         ? "done"
-        : progress.status === "failed"
+        : activeProgress.status === "failed"
           ? "error"
           : "tracking"
 
   const close = () => {
     if (server && progress?.status === "failed") clearServerOp(server.id)
+    if (server && swapOp?.status === "failed") clearSwapProgress(server.id)
     setServerActionsServer(null)
   }
 
@@ -105,9 +140,52 @@ export function ServerActions() {
         case "return":
         case "right":
         case "l":
-          setTarget(ACTIONS[index])
-          setPhase("confirm")
+          {
+            const chosen = ACTIONS[index]
+            setTarget(chosen)
+            if (chosen.kind === "swap") {
+              const current = isResizableSwap(swap) ? Math.round(swap!.entries[0].sizeBytes / (1024 ** 3)) : null
+              const suggested = current || swap?.recommendedGiB || 2
+              setSwapSizeInput(String(suggested))
+              setSwapSizeError(null)
+              setPhase("swap")
+            } else {
+              setPhase("confirm")
+            }
+          }
           return
+      }
+      return
+    }
+
+    if (dp === "swap") {
+      if (swapLoading) return
+      if (swapError) {
+        if (name === "r") loadSwapStatus(server!, sudoUser)
+        return
+      }
+      if (swap?.kind === "active" && !isResizableSwap(swap)) return
+      if (name === "backspace" || name === "delete") {
+        setSwapSizeInput((v) => v.slice(0, -1))
+        setSwapSizeError(null)
+        return
+      }
+      if (/^[0-9]$/.test(name)) {
+        setSwapSizeInput((v) => (v === "0" ? name : `${v}${name}`))
+        setSwapSizeError(null)
+        return
+      }
+      if (name === "return" || name === "right" || name === "l") {
+        const parsed = Number(swapSizeInput)
+        if (validateSwapSizeGiB(parsed) == null) {
+          setSwapSizeError(`Enter a whole number from ${MIN_SWAP_GIB} to ${MAX_SWAP_GIB} GiB.`)
+          return
+        }
+        if (!isSudoConnected(server!.id)) {
+          setSwapSizeError("Connect sudo on this server first (press S).")
+          return
+        }
+        setPhase("confirm")
       }
       return
     }
@@ -115,7 +193,8 @@ export function ServerActions() {
     if (dp === "confirm") {
       if (name === "y") {
         if (server && target) {
-          startServerOp(server, target.kind, target.verb)
+          if (target.kind === "swap") startSwapEnsure(server, Number(swapSizeInput))
+          else startServerOp(server, target.kind, target.verb)
           setPhase("tracking")
         }
         return
@@ -126,7 +205,10 @@ export function ServerActions() {
 
     if (dp === "error") {
       if (name === "r") {
-        if (server) clearServerOp(server.id)
+        if (server) {
+          if (target?.kind === "swap") clearSwapProgress(server.id)
+          else clearServerOp(server.id)
+        }
         setPhase("pick")
       }
       return
@@ -201,7 +283,7 @@ export function ServerActions() {
               const selected = i === index
               const recommended = a.kind === "reboot" && rebootRequired
               const fg = selected ? theme.text : recommended ? theme.warn : theme.textDim
-              const icon = a.kind === "reboot" ? "↻ " : "⟳ "
+              const icon = a.kind === "reboot" ? "↻ " : a.kind === "swap" ? "⇄ " : "⟳ "
               return (
                 <box
                   key={a.kind}
@@ -213,17 +295,57 @@ export function ServerActions() {
               )
             })}
           </box>
+              </Panel>
+      )
+    }
+
+    if (dp === "swap") {
+      return (
+        <Panel title=" Manage swap memory " active>
+          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
+            {swapLoading ? (
+              <box style={{ flexDirection: "row" }}><Spinner /><text content="  Inspecting swap…" fg={theme.textDim} /></box>
+            ) : swapError ? (
+              <>
+                <text content={`✕ ${swapError}`} fg={theme.bad} wrapMode="none" />
+                <text content="Press r to retry · Esc to close" fg={theme.textFaint} wrapMode="none" />
+              </>
+            ) : swap?.kind === "active" && !isResizableSwap(swap) ? (
+              <>
+                <text content="Active swap is not a single /swapfile." fg={theme.warn} wrapMode="none" />
+                <text content={`  ${swap.entries.map((e) => `${e.name} · ${formatSwapGiB(e.sizeBytes)}`).join("  ")}`} fg={theme.textDim} wrapMode="none" />
+                <box style={{ height: 1 }} />
+                <text content="Resize is only supported for /swapfile; no change will be made." fg={theme.textFaint} wrapMode="none" />
+              </>
+            ) : (
+              <>
+                <text content={swap?.kind === "active" ? `Active /swapfile: ${formatSwapGiB(swap.entries[0].sizeBytes)}.` : swap?.kind === "configured-inactive" ? "A configured /swapfile exists but is inactive." : "No active swap was found."} fg={theme.text} wrapMode="none" />
+                <box style={{ height: 1 }} />
+                <box style={{ flexDirection: "row", height: 1 }}>
+                  <text content="Size (GiB): " fg={theme.textDim} />
+                  <text content={swapSizeInput || "_"} fg={theme.accent} />
+                  <text content={`  recommended ${swap?.recommendedGiB ?? 2}`} fg={theme.textFaint} />
+                </box>
+                {swapSizeError && <text content={`✕ ${swapSizeError}`} fg={theme.bad} wrapMode="none" />}
+                <box style={{ height: 1 }} />
+                <text content={sudoConnectedForServer ? "Press Enter to review the change." : "Connect sudo first with S, then return here; status will be checked after authentication."} fg={sudoConnectedForServer ? theme.textDim : theme.warn} wrapMode="none" />
+                <text content="Type digits · Backspace edits · Esc cancels" fg={theme.textFaint} wrapMode="none" />
+              </>
+            )}
+          </box>
         </Panel>
       )
     }
 
     if (dp === "confirm") {
       const isReboot = target?.kind === "reboot"
+      const isSwap = target?.kind === "swap"
+      const resizingSwap = isSwap && isResizableSwap(swap)
       return (
         <Panel title=" Confirm " active>
           <box style={{ flexDirection: "column", width: 62, paddingTop: 1, paddingBottom: 1 }}>
             <box style={{ flexDirection: "row" }}>
-              <text content={isReboot ? "Reboot " : `${target?.label} on `} fg={theme.text} wrapMode="none" />
+              <text content={isReboot ? "Reboot " : isSwap ? (resizingSwap ? "Resize swap on " : "Enable swap on ") : `${target?.label} on `} fg={theme.text} wrapMode="none" />
               <text content={truncate(server!.name, 30)} fg={theme.accent} wrapMode="none" />
               <text content="?" fg={theme.text} />
             </box>
@@ -251,6 +373,13 @@ export function ServerActions() {
                   <text content="Uptime Kuma monitors enter a maintenance window — no false alerts." fg={theme.textFaint} wrapMode="none" />
                 )}
               </>
+            ) : isSwap ? (
+              <>
+                <text content={resizingSwap ? `Rebuilds /swapfile from ${formatSwapGiB(swap!.entries[0].sizeBytes)} to ${swapSizeInput} GiB.` : `Creates or enables /swapfile at ${swapSizeInput} GiB.`} fg={theme.warn} wrapMode="none" />
+                {resizingSwap && <text content="Swap is briefly disabled while the replacement file is prepared." fg={theme.warn} wrapMode="none" />}
+                <text content="Swap is enabled immediately and persisted in /etc/fstab." fg={theme.textDim} wrapMode="none" />
+                <text content={resizingSwap ? "Only this active /swapfile will be changed." : "Existing active swap will not be changed or duplicated."} fg={theme.textFaint} wrapMode="none" />
+              </>
             ) : (
               <text content="Brief interruption to that one service; sites stay up otherwise." fg={theme.textDim} wrapMode="none" />
             )}
@@ -266,7 +395,7 @@ export function ServerActions() {
         <box style={{ flexDirection: "column", alignItems: "center" }}>
           <box style={{ flexDirection: "row" }}>
             <Spinner />
-            <text content={`  ${target?.label ?? "Working"} — ${progress?.status ?? "queued"}…`} fg={theme.textDim} />
+            <text content={`  ${target?.label ?? "Working"} — ${activeProgress?.status ?? "queued"}…`} fg={theme.textDim} />
           </box>
           <box style={{ height: 1 }} />
           <text content="You can press Esc — it keeps running in the background." fg={theme.textFaint} wrapMode="none" />
@@ -294,7 +423,7 @@ export function ServerActions() {
     return (
       <Panel title=" Action failed " active>
         <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
-          <text content={`✕ ${progress?.error ?? "Something went wrong."}`} fg={theme.bad} />
+            <text content={`✕ ${activeProgress?.error ?? "Something went wrong."}`} fg={theme.bad} />
           <box style={{ height: 1 }} />
           <text content="Press r to choose another action · Esc to close" fg={theme.textFaint} wrapMode="none" />
         </box>
@@ -314,6 +443,12 @@ export function ServerActions() {
         return [
           { key: "y", label: "confirm" },
           { key: "←", label: "back" },
+          { key: "esc", label: "cancel" },
+        ]
+      case "swap":
+        return [
+          { key: "digits", label: "size" },
+          { key: "⏎", label: "review" },
           { key: "esc", label: "cancel" },
         ]
       case "error":
