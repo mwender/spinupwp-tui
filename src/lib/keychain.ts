@@ -27,11 +27,20 @@ async function security(args: string[]): Promise<{ ok: boolean; stdout: string; 
   }
 }
 
-// Store (or update) a server's sudo password. Returns false off macOS / on failure.
-export async function setSudoPassword(serverId: number, password: string): Promise<boolean> {
-  if (!keychainAvailable()) return false
+export interface KeychainWriteResult {
+  ok: boolean
+  // `security`'s own error line (e.g. "User interaction is not allowed." when the
+  // login keychain is locked) — set whenever ok is false and on macOS, so the
+  // caller can show the real reason instead of a silent no-op.
+  error?: string
+}
+
+// Store (or update) a server's sudo password. ok:false off macOS / on failure.
+export async function setSudoPassword(serverId: number, password: string): Promise<KeychainWriteResult> {
+  if (!keychainAvailable()) return { ok: false }
   const r = await security(["add-generic-password", "-U", "-s", SERVICE, "-a", account(serverId), "-w", password])
-  return r.ok
+  if (r.ok) return { ok: true }
+  return { ok: false, error: r.stderr.trim().replace(/^security:\s*/, "") || "the Keychain write failed" }
 }
 
 // Retrieve a server's sudo password, or null if absent / denied / off macOS. The first
