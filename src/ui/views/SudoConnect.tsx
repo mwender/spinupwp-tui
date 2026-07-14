@@ -46,6 +46,9 @@ export function SudoConnect() {
   const [pwInput, setPwInput] = useState("")
   const [remember, setRemember] = useState(saved) // keep the box checked for already-saved servers
   const [error, setError] = useState<string | null>(null)
+  // Sudo itself connected fine, but "Remember in Keychain" silently failed (e.g. a
+  // locked login keychain) — distinct from `error`, which blocks the connection.
+  const [keychainWarning, setKeychainWarning] = useState<string | null>(null)
 
   // Auto-unlock from the Keychain once, when we open on a saved server.
   const unlockTried = useRef(false)
@@ -53,8 +56,10 @@ export function SudoConnect() {
     if (unlockTried.current || phase !== "unlocking" || !server) return
     unlockTried.current = true
     void connectSudoFromKeychain(server).then((res) => {
-      if (res.ok) setPhase("connected")
-      else {
+      if (res.ok) {
+        setKeychainWarning(res.keychainError ?? null)
+        setPhase("connected")
+      } else {
         setError(`Keychain unlock failed: ${res.error}`)
         setUserInput(savedUser ?? "")
         setField("password")
@@ -84,9 +89,11 @@ export function SudoConnect() {
       setPwInput("") // don't keep the secret in component state past the attempt
       if (res.ok) {
         setError(null)
+        setKeychainWarning(res.keychainError ?? null)
         setPhase("connected")
       } else {
         setError(res.error)
+        setKeychainWarning(null)
         setPhase("error")
       }
     })
@@ -99,6 +106,7 @@ export function SudoConnect() {
     if (phase === "connected") {
       if ((name === "x" || name === "d") && server) {
         disconnectSudo(server.id)
+        setKeychainWarning(null)
         // Saved in the Keychain → drop the session but offer a no-password
         // reconnect instead of making them re-type a password we already hold.
         if (saved && keychainAvailable) return setPhase("reconnect")
@@ -211,7 +219,13 @@ export function SudoConnect() {
             <text content="Privileged actions on this server run for the rest of this" fg={theme.textDim} wrapMode="none" />
             <text content="session — press K on a site to grant SpinupTUI's SSH key." fg={theme.textDim} wrapMode="none" />
             <box style={{ height: 1 }} />
-            {saved ? (
+            {keychainWarning ? (
+              <>
+                <text content={`⚠ Couldn't save to the Keychain: ${keychainWarning}`} fg={theme.warn} wrapMode="none" />
+                <text content="Connected for this session only — check whether your login" fg={theme.textFaint} wrapMode="none" />
+                <text content="keychain is locked, then reconnect." fg={theme.textFaint} wrapMode="none" />
+              </>
+            ) : saved ? (
               <>
                 <text content="Saved in the macOS Keychain — sudo unlocks automatically" fg={theme.textFaint} wrapMode="none" />
                 <text content="next time you open this server. Press f to forget it." fg={theme.textFaint} wrapMode="none" />

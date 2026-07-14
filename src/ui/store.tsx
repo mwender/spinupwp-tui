@@ -649,8 +649,8 @@ interface StoreValue extends DataState {
   sudoConnectServer: Server | null
   setSudoConnectServer: (s: Server | null) => void
   isSudoConnected: (serverId: number) => boolean
-  connectSudo: (server: Server, user: string, password: string, remember?: boolean) => Promise<{ ok: true } | { ok: false; error: string }>
-  connectSudoFromKeychain: (server: Server) => Promise<{ ok: true } | { ok: false; error: string }>
+  connectSudo: (server: Server, user: string, password: string, remember?: boolean) => Promise<{ ok: true; keychainError?: string } | { ok: false; error: string }>
+  connectSudoFromKeychain: (server: Server) => Promise<{ ok: true; keychainError?: string } | { ok: false; error: string }>
   disconnectSudo: (serverId: number) => void
   sudoSavedFor: (serverId: number) => boolean // a sudo password is saved in the Keychain
   forgetSudoKeychain: (serverId: number) => Promise<void>
@@ -1783,17 +1783,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // (opt-in, macOS) the password into the Keychain. `remember` toggles Keychain
   // storage — unchecking it on a server that had one saved removes it.
   const finishConnect = useCallback(
-    async (server: Server, sudoUser: string, password: string, remember: boolean) => {
+    async (server: Server, sudoUser: string, password: string, remember: boolean): Promise<{ keychainError?: string }> => {
       sudoPwRef.current.set(server.id, password)
       setSudoConnected((prev) => new Set(prev).add(server.id))
       const users = new Map(sudoUsers).set(server.id, sudoUser)
       setSudoUsers(users)
       let saved = sudoSaved
+      let keychainError: string | undefined
       if (keychainAvailable()) {
         if (remember && !sudoSaved.has(server.id)) {
-          if (await setSudoPassword(server.id, password)) saved = new Set(sudoSaved).add(server.id)
+          const r = await setSudoPassword(server.id, password)
+          if (r.ok) saved = new Set(sudoSaved).add(server.id)
+          else keychainError = r.error
         } else if (remember && sudoSaved.has(server.id)) {
-          await setSudoPassword(server.id, password) // refresh in case the password changed
+          const r = await setSudoPassword(server.id, password) // refresh in case the password changed
+          if (!r.ok) keychainError = r.error
         } else if (!remember && sudoSaved.has(server.id)) {
           await deleteSudoPassword(server.id)
           saved = new Set(sudoSaved)
@@ -1802,6 +1806,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (saved !== sudoSaved) setSudoSaved(saved)
       }
       persistSudoMeta(users, saved)
+      return { keychainError }
     },
     [sudoUsers, sudoSaved, persistSudoMeta],
   )
@@ -1810,13 +1815,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // connected, hold the password in memory, persist the username, and optionally save
   // the password to the Keychain. Returns the verify result so the overlay shows pass/fail.
   const connectSudo = useCallback(
-    async (server: Server, user: string, password: string, remember = false): Promise<{ ok: true } | { ok: false; error: string }> => {
+    async (server: Server, user: string, password: string, remember = false): Promise<{ ok: true; keychainError?: string } | { ok: false; error: string }> => {
       const sudoUser = user.trim()
       if (!sudoUser) return { ok: false, error: "Enter a sudo username." }
       const res = await verifySudo(server, { sudoUser, sudoPassword: password })
       if (!res.ok) return res
-      await finishConnect(server, sudoUser, password, remember)
-      return { ok: true }
+      const { keychainError } = await finishConnect(server, sudoUser, password, remember)
+      return { ok: true, keychainError }
     },
     [finishConnect],
   )
@@ -1824,15 +1829,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Auto-connect from the Keychain (the `S` overlay calls this on open when a password
   // is saved). Retrieve → verify → connect, all without prompting for the password.
   const connectSudoFromKeychain = useCallback(
-    async (server: Server): Promise<{ ok: true } | { ok: false; error: string }> => {
+    async (server: Server): Promise<{ ok: true; keychainError?: string } | { ok: false; error: string }> => {
       const sudoUser = sudoUsers.get(server.id)
       if (!sudoUser) return { ok: false, error: "No saved sudo user for this server." }
       const password = await getSudoPassword(server.id)
       if (password == null) return { ok: false, error: "Couldn't read the saved password from the Keychain." }
       const res = await verifySudo(server, { sudoUser, sudoPassword: password })
       if (!res.ok) return res
-      await finishConnect(server, sudoUser, password, true)
-      return { ok: true }
+      const { keychainError } = await finishConnect(server, sudoUser, password, true)
+      return { ok: true, keychainError }
     },
     [sudoUsers, finishConnect],
   )
