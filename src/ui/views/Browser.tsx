@@ -23,7 +23,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks, setDbBackupSite, setMediaFallbackSite } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -89,8 +89,25 @@ export function Browser({ rows }: { rows: number }) {
           setTimeout(() => setFlash(null), 1500)
         }
         return
-      case "d":
-        // Detect the selected site's stack via SSH (Tier 2); shows in Details.
+      case "d": {
+        // DB backup uses wp-cli on the remote and downloads into the linked copy,
+        // so it needs a WordPress site and a local link. Same gate as Search's d.
+        const s = focus === "sites" ? sites[siteIndex] : undefined
+        if (!s) return
+        if (!s.is_wordpress) {
+          setFlash("Database backup needs WordPress (wp-cli) — this isn't a WP site")
+        } else if (!localLinks.has(s.id)) {
+          setFlash("Not linked — press L to link a local copy")
+        } else {
+          setDbBackupSite(s)
+          return
+        }
+        setTimeout(() => setFlash(null), 1500)
+        return
+      }
+      case "f":
+        // Identify the selected site's stack via SSH (Tier 2); shows in Details.
+        // Same action as Search's f and Stacks' d/D.
         if (focus === "sites" && sites[siteIndex]) {
           const s = sites[siteIndex]
           runProbe(s)
@@ -110,13 +127,27 @@ export function Browser({ rows }: { rows: number }) {
         // Purge page cache + object cache on the selected site.
         if (focus === "sites" && sites[siteIndex]) setPurgeCacheSite(sites[siteIndex])
         return
-      case "m":
       case "M":
         // Uptime Kuma monitoring for the selected site (connect on first use).
-        // M is an alias: it's the binding Search/Stacks use (their lowercase m
-        // is taken), so the capital works everywhere.
+        // Capital because lowercase m is media fallback here, matching Search.
         if (focus === "sites" && sites[siteIndex]) setKumaSite(sites[siteIndex])
         return
+      case "m": {
+        // Production media fallback: drops a mu-plugin into the linked local copy,
+        // so it needs a WordPress site and a local link (same gate as d).
+        const s = focus === "sites" ? sites[siteIndex] : undefined
+        if (!s) return
+        if (!s.is_wordpress) {
+          setFlash("Media fallback needs WordPress — this isn't a WP site")
+        } else if (!localLinks.has(s.id)) {
+          setFlash("Not linked — press L to link a local copy")
+        } else {
+          setMediaFallbackSite(s)
+          return
+        }
+        setTimeout(() => setFlash(null), 1500)
+        return
+      }
       case "R": {
         // Refresh a vanity page's HTML — only the one site per server whose
         // domain equals the server's own name. Same binding/behavior as the
@@ -202,10 +233,11 @@ export function Browser({ rows }: { rows: number }) {
         if (server) setSudoConnectServer(server)
         return
       case "a":
-        // Server actions (reboot / restart) are server-scoped, so only offered
-        // when the Servers pane is focused — when you've drilled into a site,
-        // the context is the site (server actions are dropped there).
-        if (focus === "servers" && server) setServerActionsServer(server)
+        // Server actions (reboot / restart) — on the server, or a site's server
+        // (mirrors Search's a, which derives the server from whichever result
+        // kind is selected). `server` is already scoped to whichever server the
+        // focused pane's rows belong to, so this works unchanged from either pane.
+        if (server) setServerActionsServer(server)
         return
       case "c":
         // Create a new server. Seed from the highlighted server when there is one;

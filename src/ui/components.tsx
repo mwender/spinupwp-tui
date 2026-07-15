@@ -439,6 +439,7 @@ export function siteGroups(isWordpress: boolean, localSync: boolean, isVanity: b
     ["s", "SSH"],
     ["K", "Grant SSH key"],
     ["n", "DNS"],
+    ["f", "Identify app"],
   ]
   if (isWordpress) {
     remote.push(["d", "↓ DB backup"])
