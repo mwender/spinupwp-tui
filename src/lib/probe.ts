@@ -20,7 +20,7 @@ import type { Server, Site } from "../api/types.ts"
 import { detectWpDirScript } from "./serverClone.ts"
 import { theme } from "./theme.ts"
 
-export type ProbeKind = "wordpress" | "bedrock" | "whmcs" | "laravel" | "static" | "unknown"
+export type ProbeKind = "wordpress" | "bedrock" | "radicle" | "whmcs" | "laravel" | "static" | "unknown"
 
 // `onSelection` brightens the colors that are too low-contrast on the focused
 // (bright-green) selection background — green-on-green and the faint greys.
@@ -30,6 +30,8 @@ export function probeKindColor(kind: ProbeKind, onSelection = false): string {
       return theme.accent
     case "bedrock":
       return onSelection ? theme.text : theme.good
+    case "radicle":
+      return onSelection ? theme.text : theme.purple
     case "whmcs":
       return theme.purple
     case "laravel":
@@ -89,8 +91,10 @@ function buildRemoteScript(domain: string, publicFolder: string | null): string 
     // script (WHMCS/index/WP-version checks) intentionally keeps using as-is.
     detectWpDirScript(root, publicFolder ?? undefined),
     `BEDROCKROOT="$B"`,
+    `RADICLEROOT="$RD"`,
     'F="$HOME/files"',
     `W="$HOME/files${pf}"`,
+    'echo ===RADICLE; [ -n "$RADICLEROOT" ] && echo yes || echo no',
     'echo ===BEDROCK; [ -n "$BEDROCKROOT" ] && echo yes || echo no',
     'echo ===APPLICATION; test -f "$F/config/application.php" && echo yes || echo no',
     'echo ===ARTISAN; test -f "$F/artisan" && echo yes || echo no',
@@ -169,6 +173,16 @@ export function classify(sig: Record<string, string>): ProbeResult {
 
   if (sig.WHMCSCONF === "yes" && sig.WHMCSVENDOR === "yes") {
     return { kind: "whmcs", app: "WHMCS", version: null, label: "WHMCS" }
+  }
+  // Checked before BEDROCK: Radicle's composer.json also requires
+  // roots/bedrock-autoloader, so it would otherwise match the Bedrock signal too.
+  if (sig.RADICLE === "yes") {
+    return {
+      kind: "radicle",
+      app: "Radicle",
+      version: wpVersion,
+      label: wpVersion ? `Radicle · WP ${wpVersion}` : "Radicle",
+    }
   }
   if (sig.BEDROCK === "yes" || sig.APPLICATION === "yes") {
     return {

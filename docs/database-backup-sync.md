@@ -1,6 +1,7 @@
 # Database backup & sync
 
-For a WordPress site you've **linked** to a local copy, the Search tab can pull
+For a WordPress site you've **linked** to a local copy, the Servers or Search tab
+can pull
 the production database down — the same idea as a hand-rolled `wp db export` +
 `scp`, without leaving the dashboard. Both actions are **read-only on production**
 (they export; they never write to the live site) and run `ssh`/`scp`

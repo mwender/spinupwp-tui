@@ -213,11 +213,13 @@ export async function runDbSync(plan: DbSyncPlan, domain: string, onProgress: (p
   const lb = await wp(`wp db export "${localSql}" >/dev/null && gzip -f "${localSql}"`, 300_000)
   if (lb.code !== 0) {
     // wp-cli's own "not a WordPress install" error is a common first-pull snag on a
-    // fresh checkout — a Bedrock project needs `composer install` to build vendor/ +
-    // web/wp before wp-cli (or wp-cli.yml) can find anything there at all. Appended
-    // after meaningfulError's own pick (not passed as its fallback), since that's
-    // only used when stderr has NO meaningful line — not the case here.
-    const hint = plan.localKind === "bedrock" && /does not seem to be a WordPress install/i.test(lb.stderr) ? " Run `composer install` in your local checkout first." : ""
+    // fresh checkout — a Bedrock or Radicle project needs `composer install` to
+    // build vendor/ + web/wp (or public/wp) before wp-cli (or wp-cli.yml) can find
+    // anything there at all. Appended after meaningfulError's own pick (not passed
+    // as its fallback), since that's only used when stderr has NO meaningful line
+    // — not the case here.
+    const needsComposer = plan.localKind === "bedrock" || plan.localKind === "radicle"
+    const hint = needsComposer && /does not seem to be a WordPress install/i.test(lb.stderr) ? " Run `composer install` in your local checkout first." : ""
     return fail(`Local DB backup failed — ${meaningfulError(lb.stderr, "couldn't export the local database.")}${hint}`, "local-backup")
   }
 

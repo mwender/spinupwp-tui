@@ -1,6 +1,6 @@
 # Installed plugins & themes
 
-Press `p` on a site (Servers tab, sites pane) to list its installed plugins and
+Press `e` on a site (Servers / Search tabs) to list its installed plugins and
 themes over SSH — the `wp plugin list` / `wp theme list` detail the SpinupWP API
 never exposes (it only gives you *counts* of pending updates). You see every
 plugin and theme with its **status** (active / inactive / must-use / dropin),

@@ -30,7 +30,7 @@ interface Entry {
 }
 
 // Stack filter options the report can cycle through (← / →). null = all stacks.
-const STACK_FILTERS: (Stack | null)[] = [null, "Standard WP", "Bedrock", "Non-WP"]
+const STACK_FILTERS: (Stack | null)[] = [null, "Standard WP", "Bedrock", "Radicle", "Non-WP"]
 
 export function Forgotten() {
   const { sites, localLinks, probes, setForgottenOpen, setLocalLinkSite, forgottenStack, setLinkReturnToForgotten } = useStore()

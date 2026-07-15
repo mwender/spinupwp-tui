@@ -216,8 +216,12 @@ export function detectWpDirScript(root: string, publicFolder?: string): string {
     `[ -z "$W" ] && [ -f ${shq(candidate)}/wp/wp-settings.php ] && W=${shq(candidate)}/wp`,
     `[ -z "$W" ] && [ -f "$D/wp-settings.php" ] && W="$D"`,
     `[ -z "$W" ] && { F=$(find "$D" -maxdepth 3 -name wp-settings.php -not -path "*/wp-content/*" -print -quit 2>/dev/null); [ -n "$F" ] && W=$(dirname "$F"); }`,
-    `B=""`,
-    `[ -n "$W" ] && [ "$(basename "$W")" = "wp" ] && { P=$(dirname "$(dirname "$W")"); [ -f "$P/composer.json" ] && grep -q "roots/bedrock" "$P/composer.json" 2>/dev/null && B="$P"; }`,
+    `B=""; RD=""`,
+    // Radicle's composer.json also requires roots/bedrock-autoloader, so a bare
+    // "roots/bedrock" substring match (below) can't tell the two apart — check
+    // for roots/acorn first, the package that actually makes a site Radicle
+    // (plain Bedrock never requires it). $P is set by the same lookup either way.
+    `[ -n "$W" ] && [ "$(basename "$W")" = "wp" ] && { P=$(dirname "$(dirname "$W")"); [ -f "$P/composer.json" ] && { grep -q "roots/acorn" "$P/composer.json" 2>/dev/null && RD="$P"; grep -q "roots/bedrock" "$P/composer.json" 2>/dev/null && B="$P"; }; }`,
   ].join("; ")
 }
 

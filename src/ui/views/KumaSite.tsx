@@ -40,7 +40,7 @@ import { useStore, type KumaAlertProvider } from "../store.tsx"
 import { isVanityPair } from "../../lib/vanitySite.ts"
 import { openUrl } from "../../lib/open.ts"
 import { runSiteDoctor, type DoctorReport } from "../../lib/siteDoctor.ts"
-import { classifyStack } from "../../lib/stack.ts"
+import { effectiveStack } from "../../lib/stack.ts"
 
 const BASE_FIELDS = ["url", "username", "password"] as const
 // Fixed input width: the panel body is 66 wide, the label gutter is 12 ("❯ " +
@@ -152,7 +152,7 @@ type AlertsState =
 type AlertSummary = null | { kind: "loading" } | { kind: "error"; error: string } | { kind: "ready"; providers: KumaAlertProvider[] }
 
 export function KumaSite() {
-  const { kumaSite: site, setKumaSite, kumaConfigured, kumaUrl, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, startBypassMonitorSetup, removeSiteMonitor, fetchKumaAlerts, toggleKumaAlert, clearKumaOp, kumaStatus, servers, setInputMode } = useStore()
+  const { kumaSite: site, setKumaSite, kumaConfigured, kumaUrl, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, startBypassMonitorSetup, removeSiteMonitor, fetchKumaAlerts, toggleKumaAlert, clearKumaOp, kumaStatus, servers, setInputMode, probes } = useStore()
 
   const [draft, setDraft] = useState({ url: "", username: "", password: "" })
   const [fieldIdx, setFieldIdx] = useState(0)
@@ -371,8 +371,14 @@ export function KumaSite() {
       pageCacheEnabled: site.page_cache?.enabled ?? null,
       sshTarget: site.site_user && server ? `${site.site_user}@${server.name}` : null,
       isWordPress: !!site.is_wordpress,
-      // Bedrock relocates the login under /wp/ — aim the door probe there.
-      loginPath: classifyStack(site) === "Bedrock" ? "/wp/wp-login.php" : "/wp-login.php",
+      // Bedrock and Radicle both nest core under a wp/ folder, relocating the
+      // login there — aim the door probe at it. Uses effectiveStack (Tier-2
+      // probe when available) since Radicle's public/ webroot alone is
+      // indistinguishable at Tier-1 from a hardened Standard-WP public/ layout.
+      loginPath: (() => {
+        const stack = effectiveStack(site, probes.get(site.id)?.result.kind)
+        return stack === "Bedrock" || stack === "Radicle" ? "/wp/wp-login.php" : "/wp-login.php"
+      })(),
     }).then((report) => setDoctor((prev) => (prev ? { kind: "ready", report } : prev)))
   }
 
