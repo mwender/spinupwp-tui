@@ -11,6 +11,23 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Site Control keys now behave the same in the Servers tab and Search.** The
+  shared Site Control legend was written against Search's bindings, but the
+  Servers tab silently diverged on several of them:
+  - `p` pulls the production DB in both views (Servers tab had it opening the
+    plugins/themes inventory instead, despite the legend saying "Pull prod.
+    DB"); plugins/themes moves to `e` in both.
+  - `d` runs a DB backup in both views (Servers tab had it running the Tier-2
+    stack-identify probe instead); that probe moves to `f`, added to Search
+    too (previously Servers-tab-only and not listed anywhere).
+  - `m` runs the production media-fallback action in both views (Servers tab
+    had no such binding at all; `m` aliased to Monitoring there instead).
+  - `a` (reboot/restart) now works with a site focused in the Servers tab, not
+    just the top-level server list — it was a silent no-op in that context.
+  - `K` (grant SSH key) is now wired up in Search — it was in the legend but
+    had no handler there at all.
+
 ## [0.22.2] - 2026-07-13
 
 ### Fixed

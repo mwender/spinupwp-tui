@@ -35,7 +35,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite, setGrantKeySite, runProbe } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -160,6 +160,11 @@ export function Search({ rows }: { rows: number }) {
       case "L":
         if (current?.kind === "site") setLocalLinkSite(current.site)
         return
+      case "K":
+        // Grant Spinup's machine key to the selected site over SSH — matches
+        // Browser's K binding, which was already in the shared legend here.
+        if (current?.kind === "site") setGrantKeySite(current.site)
+        return
       case "s":
         if (current?.kind === "site") flashMsg(sshSite(current.site.id))
         return
@@ -181,6 +186,10 @@ export function Search({ rows }: { rows: number }) {
           else if (!localLinks.has(current.site.id)) flashMsg("Not linked — press L to link a local copy")
           else setDbSyncSite(current.site)
         }
+        return
+      case "e":
+        // Plugins & themes (wp-cli over SSH) for the selected site.
+        if (current?.kind === "site") setWpInventorySite(current.site)
         return
       case "m":
         // Production media fallback: drops a mu-plugin into the linked local copy,
@@ -210,6 +219,14 @@ export function Search({ rows }: { rows: number }) {
         if (current?.kind === "site") {
           const srv = serverById(current.site.server_id)
           if (srv) setDnsInventoryServer(srv, current.site.id)
+        }
+        return
+      case "f":
+        // Identify the selected site's stack via SSH (Tier 2) — same action as
+        // Browser's f and Stacks' d/D.
+        if (current?.kind === "site") {
+          runProbe(current.site)
+          flashMsg(`Identifying the app on ${current.site.domain}…`)
         }
         return
       case "h": {
