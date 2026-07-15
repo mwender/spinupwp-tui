@@ -276,11 +276,11 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
 // Site Control groups — see ServerControl above. Recomputes stack/vanity
 // itself since it's not a child of SiteDetail; both derivations are cheap.
 export function SiteControl({ site, serverName, layout }: { site: Site; serverName: string; layout?: "list" | "flow" }) {
-  const { probes, localSync } = useStore()
+  const { probes } = useStore()
   const stack = effectiveStack(site, probes.get(site.id)?.result.kind)
   const isWordPress = stack !== "Non-WP"
   const isVanity = isVanityPair(site.domain, serverName)
-  return <ControlPanel heading="Site Control" groups={siteGroups(isWordPress, localSync, isVanity)} layout={layout} />
+  return <ControlPanel heading="Site Control" groups={siteGroups(isWordPress, isVanity)} layout={layout} />
 }
 
 // DNS zone-host lines for a site's domains, populated on demand (key `n`). Each

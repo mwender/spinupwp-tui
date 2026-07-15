@@ -434,7 +434,14 @@ export function ControlPanel({ heading, groups, layout = "list" }: { heading: st
 // own server's name, per `isVanityPair`) adds the one-off page-refresh action —
 // vanity pages seeded before this app existed need a way to pick up the current
 // bundled HTML.
-export function siteGroups(isWordpress: boolean, localSync: boolean, isVanity: boolean): ActionGroup[] {
+//
+// `p` (Pull prod. DB) is always shown for WordPress sites, even when the
+// localSync config flag is off — pressing it then opens a confirm overlay to
+// enable the flag, rather than hiding the entry entirely. That matches how
+// the OTHER two gates on this same action already behave (is_wordpress and
+// "not linked" both flash on press instead of hiding the entry); localSync
+// used to be the odd one out.
+export function siteGroups(isWordpress: boolean, isVanity: boolean): ActionGroup[] {
   const remote: [string, string][] = [
     ["s", "SSH"],
     ["K", "Grant SSH key"],
@@ -443,7 +450,7 @@ export function siteGroups(isWordpress: boolean, localSync: boolean, isVanity: b
   ]
   if (isWordpress) {
     remote.push(["d", "↓ DB backup"])
-    if (localSync) remote.push(["p", "Pull prod. DB"])
+    remote.push(["p", "Pull prod. DB"])
     remote.push(["e", "Plugins & themes"])
   }
   const local: [string, string][] = [

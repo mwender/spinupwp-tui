@@ -35,7 +35,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite, setGrantKeySite, runProbe } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite, setGrantKeySite, runProbe, setEnableLocalSyncSite } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -179,9 +179,11 @@ export function Search({ rows }: { rows: number }) {
         return
       case "p":
         // Pull production → local: opt-in (it overwrites the local DB), and needs
-        // a WordPress site + a local link.
+        // a WordPress site + a local link. A localSync-off site opens a confirm
+        // overlay to enable it (rather than a dead-end flash) since it's now
+        // always shown in the legend, not hidden until enabled.
         if (current?.kind === "site") {
-          if (!localSync) flashMsg('Local sync is off — set "localSync": true in config to enable')
+          if (!localSync) setEnableLocalSyncSite(current.site)
           else if (!current.site.is_wordpress) flashMsg("Sync needs WordPress (wp-cli) — this isn't a WP site")
           else if (!localLinks.has(current.site.id)) flashMsg("Not linked — press L to link a local copy")
           else setDbSyncSite(current.site)
@@ -379,7 +381,6 @@ export function Search({ rows }: { rows: number }) {
             <ActionsCard
               result={current}
               serverName={current.kind === "site" ? (serverById(current.site.server_id)?.name ?? "—") : current.server.name}
-              localSync={localSync}
             />
           ) : current.kind === "server" ? (
             <ServerDetail server={current.server} siteCount={store.sitesForServer(current.server.id).length} />
@@ -394,12 +395,12 @@ export function Search({ rows }: { rows: number }) {
   )
 }
 
-function ActionsCard({ result, serverName, localSync }: { result: Result; serverName: string; localSync: boolean }) {
+function ActionsCard({ result, serverName }: { result: Result; serverName: string }) {
   const isSite = result.kind === "site"
   const name = isSite ? result.site.domain : result.server.name
   const status = isSite ? result.site.status : result.server.connection_status
   // Server results reuse the SAME Server Control suite as the Browser detail pane.
-  const groups = isSite ? siteGroups(result.site.is_wordpress, localSync, isVanityPair(result.site.domain, serverName)) : SERVER_CONTROL
+  const groups = isSite ? siteGroups(result.site.is_wordpress, isVanityPair(result.site.domain, serverName)) : SERVER_CONTROL
   return (
     <box style={{ flexDirection: "column" }}>
       <box style={{ flexDirection: "row" }}>
