@@ -23,7 +23,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -168,7 +168,27 @@ export function Browser({ rows }: { rows: number }) {
         // DNS inventory scoped to the selected site (its domains + records).
         if (focus === "sites" && sites[siteIndex] && server) setDnsInventoryServer(server, sites[siteIndex].id)
         return
-      case "p":
+      case "p": {
+        // Pull production → local (opt-in, overwrites the local DB): needs a
+        // WordPress site, localSync enabled, and a linked local copy. Same
+        // gate as Search's `p` (Search.tsx) so the Site Control legend's
+        // "Pull prod. DB" label is accurate here too.
+        const s = focus === "sites" ? sites[siteIndex] : undefined
+        if (!s) return
+        if (!localSync) {
+          setFlash('Local sync is off — set "localSync": true in config to enable')
+        } else if (!s.is_wordpress) {
+          setFlash("Sync needs WordPress (wp-cli) — this isn't a WP site")
+        } else if (!localLinks.has(s.id)) {
+          setFlash("Not linked — press L to link a local copy")
+        } else {
+          setDbSyncSite(s)
+          return
+        }
+        setTimeout(() => setFlash(null), 1500)
+        return
+      }
+      case "e":
         // Plugins & themes (wp-cli over SSH) for the selected site.
         if (focus === "sites" && sites[siteIndex]) setWpInventorySite(sites[siteIndex])
         return

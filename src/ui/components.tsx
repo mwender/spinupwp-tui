@@ -427,9 +427,10 @@ export function ControlPanel({ heading, groups, layout = "list" }: { heading: st
 // since the group label is always visible right next to them (as its own column
 // in layout="flow", or its own line in layout="list").
 //
-// The DB backup/sync use wp-cli, so they only apply to WordPress sites — omitted
-// for non-WP sites (their `d`/`p` keypresses are also guarded in the handler). DNS
-// (`n`) and the rest apply to any site. `isVanity` (the site's domain equals its
+// The DB backup/sync and plugins/themes inventory all use wp-cli, so they only
+// apply to WordPress sites — omitted for non-WP sites (their `d`/`p`/`e`
+// keypresses are also guarded in the handler). DNS (`n`) and the rest apply to
+// any site. `isVanity` (the site's domain equals its
 // own server's name, per `isVanityPair`) adds the one-off page-refresh action —
 // vanity pages seeded before this app existed need a way to pick up the current
 // bundled HTML.
@@ -442,6 +443,7 @@ export function siteGroups(isWordpress: boolean, localSync: boolean, isVanity: b
   if (isWordpress) {
     remote.push(["d", "↓ DB backup"])
     if (localSync) remote.push(["p", "Pull prod. DB"])
+    remote.push(["e", "Plugins & themes"])
   }
   const local: [string, string][] = [
     ["t", "Terminal"],

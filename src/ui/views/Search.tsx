@@ -35,7 +35,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed } = store
+  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -181,6 +181,10 @@ export function Search({ rows }: { rows: number }) {
           else if (!localLinks.has(current.site.id)) flashMsg("Not linked — press L to link a local copy")
           else setDbSyncSite(current.site)
         }
+        return
+      case "e":
+        // Plugins & themes (wp-cli over SSH) for the selected site.
+        if (current?.kind === "site") setWpInventorySite(current.site)
         return
       case "m":
         // Production media fallback: drops a mu-plugin into the linked local copy,
