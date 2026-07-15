@@ -728,6 +728,12 @@ interface StoreValue extends DataState {
   sshUser: string | null
   // Opt-in for the destructive production→local DB sync (`p`); default off.
   localSync: boolean
+  // The site `p` was pressed on while localSync was off — drives the "enable
+  // local sync?" confirm overlay. null when the overlay is closed.
+  enableLocalSyncSite: Site | null
+  setEnableLocalSyncSite: (s: Site | null) => void
+  // Persists localSync=true to config.json and flips the reactive flag above.
+  enableLocalSync: () => void
   // SpinupWP account slug (from env/config) for building web deep links.
   accountSlug: string | null
   sitesForServer: (serverId: number) => Site[]
@@ -997,6 +1003,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [dbBackups, setDbBackups] = useState<Map<number, DbBackupProgress>>(new Map())
   const [dbSyncSite, setDbSyncSite] = useState<Site | null>(null)
   const [dbSyncs, setDbSyncs] = useState<Map<number, DbSyncProgress>>(new Map())
+  const [localSync, setLocalSyncState] = useState<boolean>(() => cfgRef.current.localSync)
+  const [enableLocalSyncSite, setEnableLocalSyncSite] = useState<Site | null>(null)
   const [mediaFallbackSite, setMediaFallbackSite] = useState<Site | null>(null)
   const [localRoots, setLocalRoots] = useState<string[]>(() => [...cfgRef.current.localRoots])
   const [discoverOpen, setDiscoverOpen] = useState(false)
@@ -1726,6 +1734,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       void saveConfig({ localRoots: next })
       return next
     })
+  }, [])
+
+  const enableLocalSync = useCallback(() => {
+    cfgRef.current.localSync = true
+    void saveConfig({ localSync: true })
+    setLocalSyncState(true)
   }, [])
 
   const openLocalTerminal = useCallback(
@@ -4326,7 +4340,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     rebootInfoErrors,
     loadRebootInfo,
     sshUser: cfgRef.current.sshUser,
-    localSync: cfgRef.current.localSync,
+    localSync,
+    enableLocalSyncSite,
+    setEnableLocalSyncSite,
+    enableLocalSync,
     accountSlug: cfgRef.current.accountSlug,
     sitesForServer,
     serverById,

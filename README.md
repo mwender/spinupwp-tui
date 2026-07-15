@@ -220,6 +220,10 @@ These can be set in `config.json` or via an environment variable:
   and stack probes (see "Server health" below).
 - **`localSync`** / `SPINUPWP_LOCAL_SYNC` — opt-in for the **Pull production →
   local** DB sync (`p`); off by default because it overwrites your local database.
+  You don't need to set this by hand: pressing `p` on a WordPress site while
+  it's off opens an in-app "Enable local sync?" prompt that flips and saves it
+  for you — press `p` again afterward to actually pull. Setting it directly is
+  still supported for scripted/first-run setups.
   **Prefer `"localSync": true` in `config.json`** — it's read from a fixed path
   (`~/.config/spinupwp-tui/config.json`) so it applies wherever you launch `spinuptui`
   from. The environment variable works too, but note a `.env` is only loaded when

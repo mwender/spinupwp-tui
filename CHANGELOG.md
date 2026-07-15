@@ -11,6 +11,17 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **`p` (Pull prod. DB) is now discoverable even when `localSync` is off.**
+  Previously the Site Control legend hid the entry entirely until `localSync`
+  was enabled in config — the only one of `p`'s three preconditions
+  (WordPress, linked copy, localSync) that hid the entry instead of flashing
+  a message on press. Now `p` always shows for WordPress sites; pressing it
+  with `localSync` off opens an in-app "Enable local sync?" confirm instead.
+  Confirming just saves the setting — you press `p` again afterward to
+  actually pull, so the destructive action itself stays behind two
+  deliberate presses, same as before.
+
 ## [0.23.0] - 2026-07-15
 
 ### Added

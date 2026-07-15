@@ -23,6 +23,7 @@ import { GrantKey } from "./views/GrantKey.tsx"
 import { SudoConnect } from "./views/SudoConnect.tsx"
 import { DbBackup } from "./views/DbBackup.tsx"
 import { DbSync } from "./views/DbSync.tsx"
+import { EnableLocalSync } from "./views/EnableLocalSync.tsx"
 import { MediaFallback } from "./views/MediaFallback.tsx"
 import { ServerActions } from "./views/ServerActions.tsx"
 import { NewServer } from "./views/NewServer.tsx"
@@ -67,6 +68,7 @@ export function App() {
     store.sudoConnectServer !== null ||
     store.dbBackupSite !== null ||
     store.dbSyncSite !== null ||
+    store.enableLocalSyncSite !== null ||
     store.mediaFallbackSite !== null ||
     store.serverActionsServer !== null ||
     store.newServerOpen ||
@@ -142,6 +144,9 @@ export function App() {
 
     // The DB-sync overlay owns the keyboard while open.
     if (store.dbSyncSite) return
+
+    // The "enable local sync?" confirm overlay owns the keyboard while open.
+    if (store.enableLocalSyncSite) return
 
     // The media-fallback overlay owns the keyboard while open.
     if (store.mediaFallbackSite) return
@@ -244,6 +249,7 @@ export function App() {
       {store.sudoConnectServer && <SudoConnect />}
       {store.dbBackupSite && <DbBackup />}
       {store.dbSyncSite && <DbSync />}
+      {store.enableLocalSyncSite && <EnableLocalSync />}
       {store.mediaFallbackSite && <MediaFallback />}
       {store.serverActionsServer && <ServerActions />}
       {store.newServerOpen && <NewServer />}

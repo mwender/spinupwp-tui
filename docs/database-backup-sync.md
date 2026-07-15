@@ -18,9 +18,11 @@ non-interactively, so your key needs to be loaded in your agent.
   `sql/local_<timestamp>.sql.gz`), exports + downloads production, imports it
   locally, rewrites production URLs → your local URL (`wp search-replace`), and
   runs an optional `bin/sync.d/post-import.sh` hook if the project has one.
-  **This overwrites your local database**, so it's **off by default** — enable it
-  with `localSync` (see "Optional settings" in the README). It needs a working
-  local WP-CLI; if it's missing you get a clear error rather than a broken run.
+  **This overwrites your local database**, so it's **off by default** — pressing
+  `p` while it's off opens an in-app "Enable local sync?" prompt (press `p`
+  again afterward to pull), or set `localSync` directly (see "Optional
+  settings" in the README). It needs a working local WP-CLI; if it's missing
+  you get a clear error rather than a broken run.
 
 Everything is detected automatically, for Standard WP **and** Bedrock:
 
