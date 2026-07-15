@@ -247,30 +247,31 @@ These can be set in `config.json` or via an environment variable:
 | `g` / `G` | Jump to top / bottom |
 | `o` | Open the selected site in your browser |
 | `s` | Open a terminal and SSH into the selected site |
-| `d` | Download a production DB backup into the linked copy (Search; WordPress + linked) |
-| `p` | Pull the production DB into the linked copy — overwrites local; opt-in via `localSync` (Search) |
-| `m` | Production media fallback: serve missing-locally images from production (Search; WordPress + linked) |
+| `d` | Download a production DB backup into the linked copy (Servers / Search; WordPress + linked) |
+| `p` | Pull the production DB into the linked copy — overwrites local; opt-in via `localSync` (Servers / Search) |
+| `m` | Production media fallback: serve missing-locally images from production (Servers / Search; WordPress + linked) |
 | `L` | Link / edit a site's local working copy |
 | `t` / `v` | Open the linked copy in a terminal / its local URL in your browser |
 | `n` | DNS migration view for a site — its records + TTLs (`⏎` edits a TTL; `p` repoints the record; `a` shows the whole server) |
 | `N` | DNS migration view for the whole server |
 | `h` | Live server health (CPU/mem/disk over SSH) |
-| `p` | List a site's installed plugins & themes over SSH — version + updates (Servers tab, sites pane) |
-| `d` | Detect a site's stack via SSH (Servers / Stacks tabs) |
-| `D` | Detect every site in the selected stack (Stacks tab) |
+| `e` | List a site's installed plugins & themes over SSH — version + updates (Servers / Search) |
+| `f` | Identify a site's stack via SSH (Servers / Search) — same action as Stacks' `d`/`D` below |
+| `d` | Identify a site's stack via SSH (Stacks tab only — `d` is DB backup in Servers/Search, above) |
+| `D` | Identify every site in the selected stack (Stacks tab) |
 | `S` | Auto-discover & batch-link local copies (Stacks tab) |
-| `f` | Report sites with no usable local copy (Stacks tab) |
+| `f` | Report sites with no usable local copy (Stacks tab only — `f` identifies a site's stack in Servers/Search, above) |
 | `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
 | `H` | Enable / disable HTTPS on a site (Servers / Stacks / Search; needs a Read/Write token) |
 | `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
-| `m` / `M` | Site/server monitoring — a two-pane browser of this site's Uptime Kuma monitors (`M` is an alias, since lowercase `m` is taken in Search/Stacks). Inside: `↑`/`↓` selects a monitor, `a` registers/recalibrates/repairs it (Front page and Cache bypass open a check-window picker), `x` removes Front page or Cache bypass, `o` opens the selected monitor in Kuma, `d` runs the site doctor, `n` shows/edits alert wiring, and vanity sites add `R`/`r` for page refresh/secret rotation (Servers / Stacks / Search) |
-| `R` | Refresh a vanity page's HTML to the currently bundled version — no need to open `m` first. Shown under Vanity in the Servers tab's Control strip and Search's Actions list, for the one site per server whose domain is the server's own hostname |
+| `M` | Site/server monitoring — a two-pane browser of this site's Uptime Kuma monitors (capital, since lowercase `m` is media fallback in Servers/Search). Inside: `↑`/`↓` selects a monitor, `a` registers/recalibrates/repairs it (Front page and Cache bypass open a check-window picker), `x` removes Front page or Cache bypass, `o` opens the selected monitor in Kuma, `d` runs the site doctor, `n` shows/edits alert wiring, and vanity sites add `R`/`r` for page refresh/secret rotation (Servers / Stacks / Search) |
+| `R` | Refresh a vanity page's HTML to the currently bundled version — no need to open `M` first. Shown under Vanity in the Servers tab's Control strip and Search's Actions list, for the one site per server whose domain is the server's own hostname |
 | `a` | Server actions: reboot / restart a service (Servers / Search; needs a Read/Write token) |
 | `c` | Create a new server (Servers tab; needs a Read/Write token) |
 | `V` | Add a vanity site at the server's own hostname — DNS + site + HTTPS + SSH-key handoff (Servers tab; offered when no hostname site exists; needs a Read/Write token) |
 | `C` | Clone a server's sites to a new/existing destination (Servers tab; needs a Read/Write token + sudo) |
 | `S` | Connect sudo on a server for privileged writes — optionally remembered in the macOS Keychain (Servers tab) |
-| `K` | Grant / revoke an SSH key on a site, or every site on the server (needs sudo connected) |
+| `K` | Grant / revoke an SSH key on a site, or every site on the server (Servers / Search; needs sudo connected) |
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `r` | Refresh data from the API |
