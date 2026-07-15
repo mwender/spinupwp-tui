@@ -34,7 +34,7 @@ export function normalizeLink(raw: LocalLink & { valetUrl?: string }): LocalLink
 
 // Resolution of a link against the filesystem, computed on demand (cheap — one
 // focused site at a time). `kind` mirrors the stack buckets used elsewhere.
-export type LocalKind = "bedrock" | "wp" | "unknown"
+export type LocalKind = "bedrock" | "radicle" | "wp" | "unknown"
 export interface LocalState {
   exists: boolean
   kind: LocalKind
@@ -82,6 +82,11 @@ export function findProjectRoot(dir: string): string {
 }
 
 // Classify a local working copy by reading a few marker files (read-only):
+//   Radicle = composer.json requiring roots/acorn (checked first: Radicle's
+//     composer.json also requires roots/bedrock-autoloader, so a bare
+//     "roots/bedrock" substring match below would misclassify it as Bedrock —
+//     roots/acorn is the package that actually makes a site Radicle, since
+//     plain Bedrock never requires it)
 //   Bedrock = composer.json requiring roots/bedrock, or config/application.php
 //   WordPress = wp-config.php at the root (or a public/ webroot)
 // Anything that exists but matches neither is "unknown".
@@ -89,7 +94,9 @@ function classify(dir: string): LocalKind {
   const composer = join(dir, "composer.json")
   if (existsSync(composer)) {
     try {
-      if (readFileSync(composer, "utf8").includes("roots/bedrock")) return "bedrock"
+      const contents = readFileSync(composer, "utf8")
+      if (contents.includes("roots/acorn")) return "radicle"
+      if (contents.includes("roots/bedrock")) return "bedrock"
     } catch {
       // unreadable composer.json — fall through to other markers
     }
@@ -101,6 +108,7 @@ function classify(dir: string): LocalKind {
 
 const KIND_LABEL: Record<LocalKind, string> = {
   bedrock: "Bedrock",
+  radicle: "Radicle",
   wp: "WordPress",
   unknown: "unrecognized",
 }

@@ -11,6 +11,26 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Radicle sites are now detected and labeled as their own stack**, instead of
+  being misclassified as Bedrock. Radicle (Roots' Bedrock+Sage+Acorn+Trellis
+  starter) shares Bedrock's `roots/bedrock-autoloader` dependency, which was
+  tripping a naive `roots/bedrock` string match; detection now keys off
+  `roots/acorn` instead — the package that actually makes a site Radicle.
+  Radicle only surfaces via the on-demand SSH probe (`f` in the Servers/Search
+  tabs, `d`/`D` in Stacks) — its `/public/` webroot alone is indistinguishable
+  from a hardened Standard-WP `/public/` layout. DB backup/sync, plugin/theme
+  inventory, and local working-copy linking already worked on Radicle sites
+  (their path detection was already stack-agnostic); this release just adds
+  the missing name. Clone-wizard support for Radicle is a separate, not-yet-
+  built follow-up.
+
+### Fixed
+- A few README/docs mentions of `p` (plugins & themes) and `m` (monitoring)
+  that slipped through the previous release's key-unification work —
+  corrected to `e` and `M`, and scope notes broadened from "Search tab" to
+  "Servers / Search tabs" where applicable.
+
 ## [0.22.3] - 2026-07-15
 
 ### Fixed

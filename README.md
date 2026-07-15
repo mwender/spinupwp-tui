@@ -34,23 +34,23 @@
   whatever's selected — Site Control or Server Control, grouped and always
   visible, no hidden key combos.
 - **Stack detection & fleet composition** — classifies every site as Standard WP,
-  Bedrock, or Non-WP, with a PHP-version breakdown and an on-demand SSH probe for
-  precise identification. → [docs/stack-detection.md](docs/stack-detection.md)
+  Bedrock, Radicle, or Non-WP, with a PHP-version breakdown and an on-demand SSH
+  probe for precise identification. → [docs/stack-detection.md](docs/stack-detection.md)
 - **Global search** — fuzzy search across every server and site by name, domain,
   or IP, with inline actions on the result.
 - **Events feed** — recent provisioning/operation activity with per-event detail.
 - **Live server health** (`h`) — real-time CPU/load/memory/disk over SSH.
   → [docs/server-health.md](docs/server-health.md)
-- **Installed plugins & themes** (`p`) — real `wp plugin`/`theme list` over SSH,
+- **Installed plugins & themes** (`e`) — real `wp plugin`/`theme list` over SSH,
   with per-item version and update status. → [docs/plugins-themes.md](docs/plugins-themes.md)
 - **Open in browser** (`o`) / **SSH into a site** (`s`) — one-key shortcuts.
 - **Link local working copies** (`L`) — link a site to its local checkout, with
   auto-discovery and git-drift indicators. → [docs/local-working-copies.md](docs/local-working-copies.md)
 - **DNS migration lens** (`n` / `N`) — see and edit a site's hosting records,
   repoint it to another server. → [docs/dns-access-editing.md](docs/dns-access-editing.md)
-- **Database backup & sync** (`d` / `p`, Search tab) — download or pull a
-  production DB into a linked local copy. → [docs/database-backup-sync.md](docs/database-backup-sync.md)
-- **Production media fallback** (`m`, Search tab) — serve missing-locally images
+- **Database backup & sync** (`d` / `p`, Servers / Search tabs) — download or
+  pull a production DB into a linked local copy. → [docs/database-backup-sync.md](docs/database-backup-sync.md)
+- **Production media fallback** (`m`, Servers / Search tabs) — serve missing-locally images
   from production after a DB pull. → [docs/production-media-fallback.md](docs/production-media-fallback.md)
 - **Upgrade a site's PHP version** (`u`) — pick a version, apply it, watch the
   event complete. → [docs/php-upgrade.md](docs/php-upgrade.md)
@@ -67,7 +67,7 @@
   [how it works](docs/clone-wizard-explained.md)
 - **Privileged writes over SSH** (`S` / `K`) — grant or revoke SSH keys directly,
   since the API can't. → [docs/privileged-ssh-writes.md](docs/privileged-ssh-writes.md)
-- **Site & server monitoring** (`m`) — a two-pane browser of a site's Uptime
+- **Site & server monitoring** (`M`) — a two-pane browser of a site's Uptime
   Kuma monitors (health, front-page fingerprint, an opt-in cache-bypass
   check, and, for vanity/server sites, load/Redis/PHP-fatal sentinels), each
   with a live status dot, an in-context explanation, and one action key to
@@ -292,14 +292,15 @@ processes — read-only, using your local SSH keys. Full details:
 
 ## Stack detection
 
-The **Stacks** tab (`3`) classifies every site as Standard WP, Bedrock, or Non-WP
-from API data alone, then lets you SSH-probe (`d` / `D`) for a precise ID (WHMCS,
-Laravel, Static HTML, WordPress version) that overrides a mislabeled guess. Full
-details: [docs/stack-detection.md](docs/stack-detection.md).
+The **Stacks** tab (`3`) classifies every site as Standard WP, Bedrock, Radicle,
+or Non-WP from API data alone (Radicle needs a probe to surface — see below),
+then lets you SSH-probe (`d` / `D`) for a precise ID (WHMCS, Laravel, Static
+HTML, WordPress version) that overrides a mislabeled guess. Full details:
+[docs/stack-detection.md](docs/stack-detection.md).
 
 ## Installed plugins & themes
 
-`p` on a site (Servers tab) lists its real `wp plugin`/`theme list` over SSH —
+`e` on a site (Servers / Search tabs) lists its real `wp plugin`/`theme list` over SSH —
 status, version, and available updates — the detail the API only gives as bare
 counts. Read-only, works on Bedrock and misclassified sites too. Full details:
 [docs/plugins-themes.md](docs/plugins-themes.md).
@@ -359,10 +360,10 @@ Stacks tab can auto-discover copies (`S`) and report sites still missing one
 
 ## Database backup & sync
 
-On a linked WordPress site (Search tab), `d` downloads a gzipped production DB
-backup into `sql/`; `p` (opt-in via `localSync`) pulls production into your
-**local** database, backing it up first and rewriting URLs. Works with
-Standard WP and Bedrock. Full details:
+On a linked WordPress site (Servers or Search tab), `d` downloads a gzipped
+production DB backup into `sql/`; `p` (opt-in via `localSync`) pulls production
+into your **local** database, backing it up first and rewriting URLs. Works
+with Standard WP, Bedrock, and Radicle. Full details:
 [docs/database-backup-sync.md](docs/database-backup-sync.md).
 
 ## Production media fallback

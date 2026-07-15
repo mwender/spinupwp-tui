@@ -6,7 +6,7 @@ import { formatBytes, diskUsedPct, bar, formatDate, timeAgo, truncate } from "..
 import { Field, StatusBadge, ControlPanel, siteGroups, type ActionGroup } from "./components.tsx"
 import { effectiveStack, stackColor } from "../lib/stack.ts"
 import { probeKindColor } from "../lib/probe.ts"
-import { resolveLocalLink, type LocalLink } from "../lib/local.ts"
+import { resolveLocalLink, type LocalLink, type LocalKind } from "../lib/local.ts"
 import { normalizeDomain } from "../lib/dns.ts"
 import { isVanityPair } from "../lib/vanitySite.ts"
 import type { Drift } from "../lib/gitStatus.ts"
@@ -320,8 +320,17 @@ function SiteDnsSection({ site }: { site: Site }) {
 }
 
 // Color for a resolved local stack label.
-function localLabelColor(kind: "bedrock" | "wp" | "unknown"): string {
-  return kind === "bedrock" ? theme.good : kind === "wp" ? theme.accent : theme.warn
+function localLabelColor(kind: LocalKind): string {
+  switch (kind) {
+    case "bedrock":
+      return theme.good
+    case "radicle":
+      return theme.purple
+    case "wp":
+      return theme.accent
+    case "unknown":
+      return theme.warn
+  }
 }
 
 // Compact, self-explaining git-drift label for a linked copy's line, e.g.

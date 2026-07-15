@@ -23,10 +23,10 @@ import type { ProbeKind } from "./probe.ts"
 import { publicFolderRel } from "./serverClone.ts"
 import { theme } from "./theme.ts"
 
-export type Stack = "Standard WP" | "Bedrock" | "Non-WP"
+export type Stack = "Standard WP" | "Bedrock" | "Radicle" | "Non-WP"
 
 // All buckets in display order (kept stable so the Stacks view doesn't reflow).
-export const STACKS: Stack[] = ["Standard WP", "Bedrock", "Non-WP"]
+export const STACKS: Stack[] = ["Standard WP", "Bedrock", "Radicle", "Non-WP"]
 
 export function classifyStack(site: Site): Stack {
   if (!site.is_wordpress) return "Non-WP"
@@ -46,6 +46,11 @@ export function effectiveStack(site: Site, probeKind?: ProbeKind | null): Stack 
       return "Standard WP"
     case "bedrock":
       return "Bedrock"
+    case "radicle":
+      // Radicle's public/ webroot is indistinguishable from a hardened
+      // Standard-WP public/ layout at Tier-1 (public_folder alone), so this
+      // bucket only exists once Tier-2 (SSH probe) confirms roots/acorn.
+      return "Radicle"
     case "whmcs":
     case "laravel":
     case "static":
@@ -75,6 +80,10 @@ export function cloneStackFor(site: Site, probeKind?: ProbeKind | null): "wp" | 
     if (probeKind === "whmcs" || probeKind === "laravel" || probeKind === "static") return "files"
     return "bedrock"
   }
+  // A "radicle" probe never falls into "wp" here since effectiveStack maps it
+  // to "Radicle", not "Standard WP" — deliberate: the Standard-WP pull chain
+  // assumes a flat webroot and would corrupt a Radicle clone. Real Radicle
+  // clone-wizard support is a separate, not-yet-built phase (issue #38).
   return effectiveStack(site, probeKind) === "Standard WP" ? "wp" : "files"
 }
 
@@ -86,6 +95,8 @@ export function stackColor(stack: Stack, onSelection = false): string {
       return theme.accent // blue
     case "Bedrock":
       return onSelection ? theme.text : theme.good // green
+    case "Radicle":
+      return onSelection ? theme.text : theme.purple
     case "Non-WP":
       return onSelection ? theme.text : theme.textDim // gray
   }
@@ -98,6 +109,8 @@ export function stackTag(stack: Stack): string {
       return "wp"
     case "Bedrock":
       return "bedrock"
+    case "Radicle":
+      return "radicle"
     case "Non-WP":
       return "app"
   }
