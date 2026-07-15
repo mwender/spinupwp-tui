@@ -84,6 +84,7 @@ export function ServerActions() {
   const [index, setIndex] = useState(() => (server?.reboot_required ? 0 : 1))
   const [target, setTarget] = useState<Action | null>(null)
   const [swapSizeInput, setSwapSizeInput] = useState("")
+  const [swapSizeSeeded, setSwapSizeSeeded] = useState(false)
   const [swapSizeError, setSwapSizeError] = useState<string | null>(null)
 
   const siteCount = server ? sitesForServer(server.id).length : 0
@@ -106,6 +107,13 @@ export function ServerActions() {
     if (server && sudoConnectedForServer && !swapLoading && (!swap || !!swapError)) loadSwapStatus(server, sudoUser)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server?.id, sudoConnectedForServer])
+
+  useEffect(() => {
+    if (phase !== "swap" || !swap || swapSizeSeeded) return
+    const current = isResizableSwap(swap) ? Math.round(swap.entries[0].sizeBytes / (1024 ** 3)) : null
+    setSwapSizeInput(String(current || swap.recommendedGiB))
+    setSwapSizeSeeded(true)
+  }, [phase, swap, swapSizeSeeded])
 
   const progress = server ? serverOps.get(server.id) : undefined
   const swapOp = server ? swapProgress.get(server.id) : undefined
@@ -144,9 +152,11 @@ export function ServerActions() {
             const chosen = ACTIONS[index]
             setTarget(chosen)
             if (chosen.kind === "swap") {
-              const current = isResizableSwap(swap) ? Math.round(swap!.entries[0].sizeBytes / (1024 ** 3)) : null
-              const suggested = current || swap?.recommendedGiB || 2
-              setSwapSizeInput(String(suggested))
+              // Refresh on every entry: swap may have been changed outside the
+              // TUI since the server-actions overlay was last opened.
+              if (sudoConnectedForServer) loadSwapStatus(server!, sudoUser)
+              setSwapSizeInput("")
+              setSwapSizeSeeded(false)
               setSwapSizeError(null)
               setPhase("swap")
             } else {
@@ -164,6 +174,7 @@ export function ServerActions() {
         if (name === "r") loadSwapStatus(server!, sudoUser)
         return
       }
+      if (!swap) return
       if (swap?.kind === "active" && !isResizableSwap(swap)) return
       if (name === "backspace" || name === "delete") {
         setSwapSizeInput((v) => v.slice(0, -1))
@@ -303,13 +314,20 @@ export function ServerActions() {
       return (
         <Panel title=" Manage swap memory " active>
           <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
-            {swapLoading ? (
+            {!sudoConnectedForServer && !swap ? (
+              <>
+                <text content="Connect sudo first to inspect this server's actual swap status." fg={theme.warn} wrapMode="none" />
+                <text content="Press S, then return here." fg={theme.textFaint} wrapMode="none" />
+              </>
+            ) : swapLoading ? (
               <box style={{ flexDirection: "row" }}><Spinner /><text content="  Inspecting swap…" fg={theme.textDim} /></box>
             ) : swapError ? (
               <>
                 <text content={`✕ ${swapError}`} fg={theme.bad} wrapMode="none" />
                 <text content="Press r to retry · Esc to close" fg={theme.textFaint} wrapMode="none" />
               </>
+            ) : !swap ? (
+              <box style={{ flexDirection: "row" }}><Spinner /><text content="  Inspecting swap…" fg={theme.textDim} /></box>
             ) : swap?.kind === "active" && !isResizableSwap(swap) ? (
               <>
                 <text content="Active swap is not a single /swapfile." fg={theme.warn} wrapMode="none" />

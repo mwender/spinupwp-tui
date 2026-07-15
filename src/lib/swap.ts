@@ -4,6 +4,7 @@
 // writes are performed through the existing connected-sudo runner in ssh.ts.
 
 import type { Server, Site } from "../api/types.ts"
+import { sshPort } from "./dbBackup.ts"
 import { resolveSshTarget, runSudoServerOp, type SudoServerResult } from "./ssh.ts"
 import { SSH_OPTS } from "./probe.ts"
 
@@ -45,11 +46,45 @@ export function recommendedSwapGiB(ramBytes: number | null): number {
 
 const SWAP_READ_SCRIPT = [
   "echo ===SWAP; swapon --show=NAME,SIZE,USED,PRIO --bytes --noheadings 2>/dev/null || true",
+  "echo ===PROC; cat /proc/swaps 2>/dev/null || true",
   "echo ===MEM; awk '/^MemTotal:/ {print $2 * 1024}' /proc/meminfo",
   "echo ===FILE; if [ -f /swapfile ]; then stat -c %s /swapfile 2>/dev/null || true; fi",
   "echo ===FSTAB; grep -Eq '^[[:space:]]*/swapfile[[:space:]]+none[[:space:]]+swap([[:space:]]|$)' /etc/fstab 2>/dev/null && echo yes || echo no",
   "echo ===END",
 ].join("; ")
+
+function parseSwapEntries(lines: string[]): SwapEntry[] {
+  const entries: SwapEntry[] = []
+  for (const line of lines) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length < 4) continue
+    const sizeBytes = Number(parts[1])
+    const usedBytes = Number(parts[2])
+    const priority = Number(parts[3])
+    if (parts[0] && Number.isFinite(sizeBytes) && Number.isFinite(usedBytes)) {
+      entries.push({ name: parts[0], sizeBytes, usedBytes, priority: Number.isFinite(priority) ? priority : 0 })
+    }
+  }
+  return entries
+}
+
+// /proc/swaps reports Size and Used in KiB. It is a reliable fallback for
+// servers whose swapon does not support the requested output flags.
+function parseProcSwapEntries(lines: string[]): SwapEntry[] {
+  const entries: SwapEntry[] = []
+  for (const line of lines) {
+    if (/^Filename\s+Type\s+Size\s+Used\s+Priority\s*$/.test(line.trim())) continue
+    const parts = line.trim().split(/\s+/)
+    if (parts.length < 5) continue
+    const sizeBytes = Number(parts[2]) * 1024
+    const usedBytes = Number(parts[3]) * 1024
+    const priority = Number(parts[4])
+    if (parts[0] && Number.isFinite(sizeBytes) && Number.isFinite(usedBytes)) {
+      entries.push({ name: parts[0], sizeBytes, usedBytes, priority: Number.isFinite(priority) ? priority : 0 })
+    }
+  }
+  return entries
+}
 
 export function parseSwapStatus(output: string): SwapStatus {
   const sections: Record<string, string[]> = {}
@@ -65,17 +100,8 @@ export function parseSwapStatus(output: string): SwapStatus {
     }
   }
 
-  const entries: SwapEntry[] = []
-  for (const line of sections.SWAP ?? []) {
-    const parts = line.trim().split(/\s+/)
-    if (parts.length < 4) continue
-    const sizeBytes = Number(parts[1])
-    const usedBytes = Number(parts[2])
-    const priority = Number(parts[3])
-    if (parts[0] && Number.isFinite(sizeBytes) && Number.isFinite(usedBytes)) {
-      entries.push({ name: parts[0], sizeBytes, usedBytes, priority: Number.isFinite(priority) ? priority : 0 })
-    }
-  }
+  const entries = parseSwapEntries(sections.SWAP ?? [])
+  if (entries.length === 0) entries.push(...parseProcSwapEntries(sections.PROC ?? []))
   const ram = Number((sections.MEM?.[0] ?? "").trim())
   const file = Number((sections.FILE?.[0] ?? "").trim())
   const persistent = (sections.FSTAB?.[0] ?? "").trim() === "yes"
@@ -98,7 +124,7 @@ export async function inspectSwap(server: Server, sites: Site[], sshUser: string
 
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(["ssh", ...SSH_OPTS, target, SWAP_READ_SCRIPT], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+    proc = Bun.spawn(["ssh", ...SSH_OPTS, ...sshPort(server.ssh_port), target, SWAP_READ_SCRIPT], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
   } catch (err) {
     return { ok: false, target, error: `Failed to launch ssh: ${(err as Error).message}` }
   }

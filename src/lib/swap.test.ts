@@ -53,3 +53,21 @@ test("swap status classifies active, configured-inactive, and absent swap", () =
   expect(none.kind).toBe("none")
   expect(recommendedSwapGiB(null)).toBe(2)
 })
+
+test("swap status falls back to /proc/swaps when swapon produces no rows", () => {
+  const status = parseSwapStatus([
+    "===SWAP",
+    "===PROC",
+    "Filename Type Size Used Priority",
+    "/swapfile file 2097148 66048 -2",
+    "===MEM",
+    "4017364992",
+    "===FILE",
+    "2147483648",
+    "===FSTAB",
+    "yes",
+    "===END",
+  ].join("\n"))
+  expect(status.kind).toBe("active")
+  expect(status.entries).toEqual([{ name: "/swapfile", sizeBytes: 2147479552, usedBytes: 67633152, priority: -2 }])
+})

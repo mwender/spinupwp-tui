@@ -1588,6 +1588,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const loadSwapStatus = useCallback(
     (server: Server, sudoUser?: string) => {
       if (swapStatusLoading.has(server.id)) return
+      // Each visit to Manage swap is a live server inspection. Do not let a
+      // previous read (for example, before swap was added manually) masquerade
+      // as the current state.
+      setSwapStatus((prev) => {
+        if (!prev.has(server.id)) return prev
+        const next = new Map(prev)
+        next.delete(server.id)
+        return next
+      })
       const run = async () => {
         setSwapStatusLoading((prev) => new Set(prev).add(server.id))
         setSwapStatusErrors((prev) => {
