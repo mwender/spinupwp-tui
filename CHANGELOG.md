@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-15
+
 ### Added
 - **`p` (Pull prod. DB) is now discoverable even when `localSync` is off.**
   Previously the Site Control legend hid the entry entirely until `localSync`
@@ -1237,7 +1239,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/mwender/spinupwp-tui/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/mwender/spinupwp-tui/compare/v0.22.3...v0.23.0
 [0.22.3]: https://github.com/mwender/spinupwp-tui/compare/v0.22.2...v0.22.3
 [0.22.2]: https://github.com/mwender/spinupwp-tui/compare/v0.22.1...v0.22.2
