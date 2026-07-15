@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-07-15
+
 ### Fixed
 - **Site Control keys now behave the same in the Servers tab and Search.** The
   shared Site Control legend was written against Search's bindings, but the
@@ -1202,7 +1204,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.22.2...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.22.3...HEAD
+[0.22.3]: https://github.com/mwender/spinupwp-tui/compare/v0.22.2...v0.22.3
 [0.22.2]: https://github.com/mwender/spinupwp-tui/compare/v0.22.1...v0.22.2
 [0.22.1]: https://github.com/mwender/spinupwp-tui/compare/v0.22.0...v0.22.1
 [0.22.0]: https://github.com/mwender/spinupwp-tui/compare/v0.21.2...v0.22.0
