@@ -11,6 +11,25 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.24.4] - 2026-08-06
+
+### Fixed
+- **The `Unknown component type: toaster` startup crash is now actually
+  fixed for real installs**, not just local project installs. `0.24.3`'s
+  `package.json` `overrides` only take effect when this repo's own
+  `package.json` is the root of the install — they're silently ignored when
+  spinuptui is installed as a dependency of something else, which is exactly
+  what a global `bun add -g` / `npm install -g` does, so the crash persisted
+  for every real user. Root cause traces back to the toast library
+  (`@opentui-ui/toast`) itself: it's stuck on a peer-dependency range from
+  opentui's `0.1.x` days, and no version pin on our side can bind how a
+  downstream install resolves *its* transitive dependencies. Every call site
+  in this app only ever fires a single-line success message, so it's
+  replaced with a small first-party toast implementation (`src/ui/toast.ts`
+  + `src/ui/ToastStack.tsx`) built directly on the `@opentui/core`/
+  `@opentui/react` we already depend on — no external package, no peer-
+  dependency surface for a future version bump to break again.
+
 ## [0.24.3] - 2026-08-06
 
 ### Fixed
@@ -1280,7 +1299,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.24.3...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.24.4...HEAD
+[0.24.4]: https://github.com/mwender/spinupwp-tui/compare/v0.24.3...v0.24.4
 [0.24.3]: https://github.com/mwender/spinupwp-tui/compare/v0.24.2...v0.24.3
 [0.24.2]: https://github.com/mwender/spinupwp-tui/compare/v0.24.1...v0.24.2
 [0.24.1]: https://github.com/mwender/spinupwp-tui/compare/v0.24.0...v0.24.1

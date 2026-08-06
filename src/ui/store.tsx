@@ -6,7 +6,7 @@
 // trigger a refresh.
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { toast } from "@opentui-ui/toast"
+import { toast } from "./toast.ts"
 import { SpinupWPClient, ApiError, type ServerService, type SpinupWPClientLike } from "../api/client.ts"
 import { isDevMode } from "../dev/devMode.ts"
 import { createMockClient } from "../dev/mockClient.ts"
