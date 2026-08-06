@@ -1,6 +1,6 @@
 {
   "name": "spinuptui",
-  "version": "0.24.1",
+  "version": "0.24.2",
   "description": "SpinupTUI — a terminal dashboard for browsing, monitoring, and managing your SpinupWP servers and sites.",
   "type": "module",
   "bin": {
@@ -42,8 +42,8 @@
   "license": "MIT",
   "dependencies": {
     "@opentui-ui/toast": "^0.0.5",
-    "@opentui/core": "^0.4.1",
-    "@opentui/react": "^0.4.1",
+    "@opentui/core": "0.4.2",
+    "@opentui/react": "0.4.2",
     "react": "^19.0.0",
     "socket.io-client": "^4.8.3"
   },
