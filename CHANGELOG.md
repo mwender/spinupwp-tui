@@ -11,6 +11,17 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-08-06
+
+### Fixed
+- **`bun update -g spinuptui` no longer silently fails to update.** While
+  spinuptui is pre-1.0, a package-manager global install records a caret
+  version range (e.g. `^0.22.2`) that, under semver, only matches patch
+  releases — every later minor release fell outside it, so `update -g`
+  reported success without actually updating anything. The documented and
+  in-app update command (Help/About panel, README) is now
+  `bun add -g spinuptui@latest`, which always pulls the true latest version.
+
 ## [0.24.0] - 2026-07-15
 
 ### Added
@@ -1239,7 +1250,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/mwender/spinupwp-tui/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/mwender/spinupwp-tui/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/mwender/spinupwp-tui/compare/v0.22.3...v0.23.0
 [0.22.3]: https://github.com/mwender/spinupwp-tui/compare/v0.22.2...v0.22.3
