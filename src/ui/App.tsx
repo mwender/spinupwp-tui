@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { Toaster } from "@opentui-ui/toast/react"
+import { ToastStack } from "./ToastStack.tsx"
 import { theme } from "../lib/theme.ts"
 import { useStore } from "./store.tsx"
 import { Splash } from "./Splash.tsx"
@@ -262,10 +262,7 @@ export function App() {
       {store.connectZoneTarget && <ProviderConnect />}
       {store.dnsRecordsTarget && <DnsRecords />}
       {store.kumaSite && <KumaSite />}
-      {/* Async-completion toasts (PHP upgrade, server reboot/restart). Mounted last
-          so it draws over every view + overlay; top-right, nudged clear of the
-          2-row Header. It never takes keyboard focus. */}
-      <Toaster position="top-right" offset={{ top: 2, right: 2 }} />
+      <ToastStack />
     </box>
   )
 }
