@@ -11,6 +11,20 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-08-06
+
+### Fixed
+- **Crash on toast dismissal: `remove expects a renderable child object`.**
+  `@opentui/core` changed the signature of its internal `remove()` method
+  starting at `0.4.3` (it now requires the renderable object itself, not an
+  id string), and the toast library we depend on hasn't published a release
+  that matches. Our own dependency range (`^0.4.1`) let a fresh install with
+  no lockfile — e.g. a global `bun add -g` on a machine that had never
+  installed spinuptui before — resolve to a broken later patch and crash the
+  first time a toast (PHP upgrade, reboot, cache purge, etc.) tried to
+  dismiss itself. `@opentui/core` and `@opentui/react` are now pinned to the
+  exact last known-good patch (`0.4.2`) until the toast library ships a fix.
+
 ## [0.24.1] - 2026-08-06
 
 ### Fixed
@@ -1250,7 +1264,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.24.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.24.2...HEAD
+[0.24.2]: https://github.com/mwender/spinupwp-tui/compare/v0.24.1...v0.24.2
 [0.24.1]: https://github.com/mwender/spinupwp-tui/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/mwender/spinupwp-tui/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/mwender/spinupwp-tui/compare/v0.22.3...v0.23.0
