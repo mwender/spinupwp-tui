@@ -139,7 +139,17 @@ export function installChannel(): InstallChannel {
 
 // The one-liner Help shows for a package install (also used by runSelfUpdate's
 // "not a checkout" message so every path names the same command).
-export const PACKAGE_UPDATE_CMD = "bun update -g spinuptui"
+//
+// Deliberately `add ... @latest`, not `update -g`: while spinuptui is pre-1.0,
+// `bun add -g spinuptui` (no version) records a caret range like `^0.22.2`,
+// which per semver only matches 0.22.x. Every minor release (0.23.0, 0.24.0, ...)
+// falls outside that range, so `bun update -g` silently no-ops forever — it
+// re-resolves within the stale range and finds nothing newer. `@latest` bypasses
+// the recorded range entirely and rewrites it to match, so the *next* update
+// hits the same wall until the following minor bump. Verified live against a
+// real stale install (0.22.2 -> 0.24.0): `update -g` exited 0 without updating,
+// `add -g spinuptui@latest` updated correctly.
+export const PACKAGE_UPDATE_CMD = "bun add -g spinuptui@latest"
 
 // The real checkout directory, resolved through Bun's module system rather
 // than process.cwd() — `spinuptui` is typically a global symlink invoked from
