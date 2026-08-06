@@ -150,8 +150,10 @@ bun run build:binary     # produces ./spinuptui — move it onto your PATH
 The app tells you when a newer release exists — a gold `✦ vX.Y.Z` appears next
 to the version in the header (and in the `?` About panel).
 
-- **Package install:** `bun update -g spinuptui` (the About panel shows the
-  same command).
+- **Package install:** `bun add -g spinuptui@latest` (the About panel shows
+  the same command). Don't use `bun update -g` — while spinuptui is pre-1.0,
+  it records a caret range (e.g. `^0.22.2`) that excludes every later minor
+  release, so `update -g` reports success but silently doesn't update.
 - **Source checkout:** press **`u`** in the About panel to update in place
   (`git pull --ff-only`; refuses if you have uncommitted changes, and never
   merges/rebases). It can't hot-reload the already-running process, so it tells
