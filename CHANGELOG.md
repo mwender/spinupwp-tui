@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-12
+
 ### Added
 - **Server actions now surfaces a pending SpinupWP platform upgrade**, not just
   a silent badge. The overlay (`a`) shows a banner explaining the API only
@@ -1313,7 +1315,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.24.4...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/mwender/spinupwp-tui/compare/v0.24.4...v0.25.0
 [0.24.4]: https://github.com/mwender/spinupwp-tui/compare/v0.24.3...v0.24.4
 [0.24.3]: https://github.com/mwender/spinupwp-tui/compare/v0.24.2...v0.24.3
 [0.24.2]: https://github.com/mwender/spinupwp-tui/compare/v0.24.1...v0.24.2
