@@ -320,8 +320,10 @@ Full details: [docs/php-upgrade.md](docs/php-upgrade.md).
 ## Server actions
 
 `a` on a server reboots it or restarts a service (Nginx/PHP-FPM/MySQL/Redis),
-and shows *why* a reboot is pending (the actual OS packages, read over SSH).
-Needs a Read/Write token. Full details: [docs/server-actions.md](docs/server-actions.md).
+shows *why* a reboot is pending (the actual OS packages, read over SSH), and for
+a pending SpinupWP platform upgrade — which the API can't act on — offers `w` to
+jump straight to it in the SpinupWP web app. Needs a Read/Write token. Full
+details: [docs/server-actions.md](docs/server-actions.md).
 
 ## Site monitoring
 
