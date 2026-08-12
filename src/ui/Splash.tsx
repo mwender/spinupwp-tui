@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react"
 import { theme } from "../lib/theme.ts"
 import { Spinner } from "./components.tsx"
+import { APP_VERSION } from "../version.ts"
 
 const TAGLINE = "Terminal control center for your SpinupWP fleet"
 
@@ -39,6 +40,8 @@ export function Splash({ status }: { status: string }) {
       <ascii-font text="SPINUPTUI" font="block" color={[theme.brand, theme.accent]} />
       <box style={{ height: 1 }} />
       <text content={TAGLINE} fg={theme.text} />
+      <box style={{ height: 1 }} />
+      <text content={`Version ${APP_VERSION}`} fg={theme.brand} />
       <box style={{ height: 1 }} />
       <Pulse />
       <box style={{ height: 2 }} />

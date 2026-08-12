@@ -22,3 +22,9 @@ server's row keeps a spinner).
 - **A toast on completion.** A reboot can take minutes; when it (or a restart)
   finishes, a non-focus-stealing toast tells you (`example.com rebooted` /
   `Nginx restarted on example.com`), so you don't have to keep checking.
+- **SpinupWP platform upgrades aren't actionable here.** Servers with a pending
+  SpinupWP upgrade show an `↑upg` badge, same as reboot. Unlike a reboot, the API
+  only exposes this as a flag — no title, no description, no endpoint to run it.
+  The overlay shows a banner and lets you press `w` to jump straight to the
+  server's page in the SpinupWP web app, where the upgrade (and what it does) is
+  visible and runnable.

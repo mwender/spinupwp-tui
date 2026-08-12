@@ -15,6 +15,9 @@ import { Panel, Spinner, Centered } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
 import { moveSelection } from "../List.tsx"
+import { openUrl } from "../../lib/open.ts"
+import { serverWebUrl } from "../../lib/spinupweb.ts"
+import { toast } from "../toast.ts"
 import type { RebootInfo } from "../../lib/ssh.ts"
 import type { ServerOpKind } from "../store.tsx"
 
@@ -56,9 +59,11 @@ export function ServerActions() {
     rebootInfoLoading,
     rebootInfoErrors,
     loadRebootInfo,
+    accountSlug,
   } = store
 
   const rebootRequired = !!server?.reboot_required
+  const upgradeRequired = !!server?.upgrade_required
   const [phase, setPhase] = useState<Phase>("pick")
   // Cursor starts on Reboot when one is pending, else on the first restart.
   const [index, setIndex] = useState(() => (server?.reboot_required ? 0 : 1))
@@ -107,6 +112,12 @@ export function ServerActions() {
         case "l":
           setTarget(ACTIONS[index])
           setPhase("confirm")
+          return
+        case "w":
+          if (upgradeRequired && server) {
+            openUrl(serverWebUrl(server.id, accountSlug))
+            toast.success(accountSlug ? "Opening in SpinupWP…" : "Set accountSlug for deep links — opening dashboard")
+          }
           return
       }
       return
@@ -179,20 +190,34 @@ export function ServerActions() {
             {/* Reboot "why" context */}
             {rebootRequired && (
               <>
-                <box style={{ flexDirection: "row", height: 1 }}>
-                  <text content="⚠ reboot pending — " fg={theme.warn} style={{ flexShrink: 0 }} />
+                <box style={{ flexDirection: "column" }}>
+                  <text content="⚠ reboot pending" fg={theme.warn} wrapMode="none" />
                   {infoLoading ? (
                     <box style={{ flexDirection: "row" }}>
                       <Spinner interval={120} />
                       <text content=" checking what's pending…" fg={theme.textDim} wrapMode="none" />
                     </box>
                   ) : info ? (
-                    <text content={rebootSummary(info)} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+                    <text content={rebootSummary(info)} fg={theme.textDim} />
                   ) : infoError ? (
-                    <text content="couldn't read detail over SSH" fg={theme.textFaint} wrapMode="none" />
+                    <text content={infoError} fg={theme.textFaint} />
                   ) : (
                     <text content="reboot required" fg={theme.textDim} wrapMode="none" />
                   )}
+                </box>
+                <box style={{ height: 1 }} />
+              </>
+            )}
+            {/* SpinupWP platform upgrade — the API only exposes this as a flag,
+                no detail; the only actionable path is the web app. Two lines
+                (not a height:1 row) so the explanation can wrap instead of
+                overflowing the panel — see the flexGrow/flexShrink gotcha in
+                CLAUDE.md. */}
+            {upgradeRequired && (
+              <>
+                <box style={{ flexDirection: "column" }}>
+                  <text content="⬆ SpinupWP upgrade pending" fg={theme.warn} wrapMode="none" />
+                  <text content="Not doable from here — press w to open it in SpinupWP." fg={theme.textDim} />
                 </box>
                 <box style={{ height: 1 }} />
               </>
@@ -308,6 +333,7 @@ export function ServerActions() {
         return [
           { key: "↑↓/jk", label: "action" },
           { key: "⏎", label: "choose" },
+          ...(upgradeRequired ? [{ key: "w", label: "open in SpinupWP" }] : []),
           { key: "esc", label: "cancel" },
         ]
       case "confirm":

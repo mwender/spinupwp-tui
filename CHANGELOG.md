@@ -11,6 +11,20 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Server actions now surfaces a pending SpinupWP platform upgrade**, not just
+  a silent badge. The overlay (`a`) shows a banner explaining the API only
+  exposes it as a flag with no actionable detail, and `w` jumps straight to the
+  server's page in the SpinupWP web app to run it.
+- **App version on the splash screen**, shown below the tagline while the first
+  batch of data loads.
+
+### Fixed
+- **The reboot-pending detail line now shows the real reason when the SSH probe
+  fails**, instead of a generic "couldn't read detail over SSH" message — e.g.
+  an SSH auth failure now shows the actual error. Both this and the new upgrade
+  banner wrap across lines instead of overflowing the panel on longer text.
+
 ## [0.24.4] - 2026-08-06
 
 ### Fixed
