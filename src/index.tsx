@@ -22,6 +22,38 @@ const args = process.argv.slice(2)
 const positionals = args.filter((a) => !a.startsWith("-"))
 const command = positionals[0]
 
+// Flags that take a following value. Listed so that value can be skipped when
+// collecting positionals — otherwise `--server web1 <domain>` reads "web1" as
+// the domain, and a URL (which doesn't look like a flag) reads as a path.
+const VALUE_FLAGS = new Set(["--url", "--server"])
+
+function parseFlags(list: string[]): { positionals: string[]; flags: Map<string, string> } {
+  const out: string[] = []
+  const flags = new Map<string, string>()
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i]!
+    if (a.startsWith("-")) {
+      if (VALUE_FLAGS.has(a)) {
+        flags.set(a, list[i + 1] ?? "")
+        i++
+      } else {
+        flags.set(a, "")
+      }
+      continue
+    }
+    out.push(a)
+  }
+  return { positionals: out, flags }
+}
+
+// A value-taking flag with nothing usable after it is a mistake worth naming,
+// not a silently-empty value.
+function badFlagValue(flags: Map<string, string>, name: string): boolean {
+  if (!flags.has(name)) return false
+  const v = flags.get(name)!
+  return !v || v.startsWith("-")
+}
+
 if (args.includes("-h") || args.includes("--help") || command === "help") {
   const cfg = loadConfig()
   console.log(`SpinupTUI v${pkg.version} — terminal dashboard for your SpinupWP account
@@ -30,9 +62,11 @@ Usage:
   spinuptui            Launch the dashboard
   spinuptui login      Set or update your saved API token
   spinuptui where      Print the config file path and token source
-  spinuptui ssh <domain>  Print SSH access info for a site (JSON)
-  spinuptui ssh-exec <domain> -- <command>  Run a read-only command over SSH
-                       (JSON); denies anything that looks like a remote write
+  spinuptui ssh <domain> [--server <name>]  Print SSH access info for a site
+                       (JSON)
+  spinuptui ssh-exec <domain> [--server <name>] -- <command>  Run a read-only
+                       command over SSH (JSON); denies anything that looks
+                       like a remote write
   spinuptui incidents <domain> | --all [--hours N]  Print Uptime Kuma
                        down/up incidents for a site or the whole fleet (JSON)
   spinuptui pull files <domain> [path] [--url <local url>] [--server <name>]
@@ -48,7 +82,8 @@ Usage:
   spinuptui --help     Show this help
 
 --server picks one site when a domain exists on more than one server (the
-ambiguity message lists them). Add --json to either pull command for a single
+ambiguity message lists them); it works on ssh, ssh-exec and both pull
+commands. Add --json to either pull command for a single
 machine-readable result object on stdout; progress always goes to stderr, so a
 long pull never looks hung.
 
@@ -74,31 +109,43 @@ if (command === "where") {
 }
 
 if (command === "ssh") {
-  const domain = positionals[1]
-  if (!domain) {
-    console.error(JSON.stringify({ ok: false, reason: "usage", message: "Usage: spinuptui ssh <domain>" }))
+  const parsed = parseFlags(args.slice(1))
+  const domain = parsed.positionals[0]
+  const server = parsed.flags.get("--server") ?? null
+  if (!domain || badFlagValue(parsed.flags, "--server")) {
+    console.error(
+      JSON.stringify({ ok: false, reason: "usage", message: "Usage: spinuptui ssh <domain> [--server <name>]" }),
+    )
     process.exit(1)
   }
   const cfg = loadConfig()
   const client = new SpinupWPClient(cfg)
-  const result = await resolveSshAccess(domain, client, cfg)
+  const result = await resolveSshAccess(domain, client, cfg, { server })
   console.log(JSON.stringify(result))
   process.exit(result.ok ? 0 : 1)
 }
 
 if (command === "ssh-exec") {
   const dashIdx = args.indexOf("--")
-  const domain = positionals[1]
+  // Only the arguments BEFORE `--` are ours; everything after is the remote
+  // command, which may legitimately contain things that look like our flags.
+  const parsed = parseFlags(dashIdx === -1 ? args.slice(1) : args.slice(1, dashIdx))
+  const domain = parsed.positionals[0]
+  const server = parsed.flags.get("--server") ?? null
   const remoteCmd = dashIdx !== -1 ? args.slice(dashIdx + 1).join(" ") : ""
-  if (!domain || dashIdx === -1 || !remoteCmd.trim()) {
+  if (!domain || dashIdx === -1 || !remoteCmd.trim() || badFlagValue(parsed.flags, "--server")) {
     console.error(
-      JSON.stringify({ ok: false, reason: "usage", message: "Usage: spinuptui ssh-exec <domain> -- <command>" }),
+      JSON.stringify({
+        ok: false,
+        reason: "usage",
+        message: "Usage: spinuptui ssh-exec <domain> [--server <name>] -- <command>",
+      }),
     )
     process.exit(1)
   }
   const cfg = loadConfig()
   const client = new SpinupWPClient(cfg)
-  const result = await execSshCommand(domain, remoteCmd, client, cfg)
+  const result = await execSshCommand(domain, remoteCmd, client, cfg, { server })
   console.log(JSON.stringify(result))
   process.exit(result.ok ? 0 : 1)
 }
@@ -127,24 +174,11 @@ if (command === "incidents") {
 }
 
 if (command === "pull") {
-  const rest = args.slice(1)
-  const json = rest.includes("--json")
-  const yes = rest.includes("--yes")
-  const urlIdx = rest.indexOf("--url")
-  const url = urlIdx !== -1 ? (rest[urlIdx + 1] ?? null) : null
-  const serverIdx = rest.indexOf("--server")
-  const server = serverIdx !== -1 ? (rest[serverIdx + 1] ?? null) : null
-  // Positionals, skipping flags and the value that belongs to --url (which is a
-  // URL, so it doesn't look like a flag and would otherwise be read as a path).
-  const pos: string[] = []
-  for (let i = 0; i < rest.length; i++) {
-    const a = rest[i]!
-    if (a.startsWith("-")) {
-      if (a === "--url" || a === "--server") i++
-      continue
-    }
-    pos.push(a)
-  }
+  const { positionals: pos, flags } = parseFlags(args.slice(1))
+  const json = flags.has("--json")
+  const yes = flags.has("--yes")
+  const url = flags.get("--url") ?? null
+  const server = flags.get("--server") ?? null
   const sub = pos[0]
   const domain = pos[1]
   const destPath = pos[2] ?? null
@@ -158,8 +192,8 @@ if (command === "pull") {
     usage("Usage: spinuptui pull files <domain> [path] [--url <local url>] | spinuptui pull db <domain> [--url <local url>] --yes")
   }
   if (!domain) usage(`Usage: spinuptui pull ${sub} <domain>`)
-  if (urlIdx !== -1 && (!url || url.startsWith("-"))) usage("--url needs a value, e.g. --url https://example.test")
-  if (serverIdx !== -1 && (!server || server.startsWith("-"))) usage("--server needs a value, e.g. --server web1.example.com")
+  if (badFlagValue(flags, "--url")) usage("--url needs a value, e.g. --url https://example.test")
+  if (badFlagValue(flags, "--server")) usage("--server needs a value, e.g. --server web1.example.com")
   if (sub === "db" && destPath) usage("`pull db` imports into the already-linked copy and takes no path. Use --url to set the local URL.")
 
   const cfg = loadConfig()

@@ -44,8 +44,9 @@ export async function execSshCommand(
   command: string,
   client: SpinupWPClientLike,
   cfg: AppConfig,
+  opts?: { server?: string | null },
 ): Promise<SshExecResult> {
-  const resolution = await resolveSshTargetInfo(domain, client, cfg)
+  const resolution = await resolveSshTargetInfo(domain, client, cfg, opts)
   if (!resolution.ok) {
     logSshExecAttempt({ domain, command, decision: "error", reason: resolution.result.reason, message: resolution.result.message })
     return { ...resolution.result, command }

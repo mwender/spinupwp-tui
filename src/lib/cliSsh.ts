@@ -113,6 +113,9 @@ export async function resolveSiteByDomain(
           message: wanted
             ? `"${domain}" matches ${matches.length} sites in this account, and ${narrowed.length === 0 ? "none are" : `${narrowed.length} are`} on a server matching "${opts?.server}".`
             : `"${domain}" matches ${matches.length} sites in this account — cannot pick one automatically.`,
+          // Every command that resolves a domain takes --server, so this is
+          // always actionable — say so here rather than in each of them.
+          remedy: `Pick one with --server, e.g. \`--server ${candidates[0]!.server}\`.`,
           candidates,
         })
       }
@@ -150,8 +153,9 @@ export async function resolveSshTargetInfo(
   domain: string,
   client: SpinupWPClientLike,
   cfg: AppConfig,
+  opts?: { server?: string | null },
 ): Promise<SshTargetResolution> {
-  const resolved = await resolveSiteByDomain(domain, client, cfg)
+  const resolved = await resolveSiteByDomain(domain, client, cfg, opts)
   if (!resolved.ok) return resolved
 
   const { site, server } = resolved
@@ -168,8 +172,9 @@ export async function resolveSshAccess(
   domain: string,
   client: SpinupWPClientLike,
   cfg: AppConfig,
+  opts?: { server?: string | null },
 ): Promise<SshAccessResult> {
-  const resolution = await resolveSshTargetInfo(domain, client, cfg)
+  const resolution = await resolveSshTargetInfo(domain, client, cfg, opts)
   if (!resolution.ok) return resolution.result
   const { primaryDomain, sshTarget: target, port, server: serverName } = resolution.info
   const portOpt = port ? ["-p", String(port)] : []

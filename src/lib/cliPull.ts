@@ -110,14 +110,7 @@ const DB_STAGE_LABELS: Record<DbSyncStage, string> = {
 // into this command's result type, preserving the shared reason codes.
 function fromResolverFailure(command: PullCommand, failure: { ok: false } & Record<string, unknown>): PullFailure {
   const candidates = failure.candidates as SshAccessCandidate[] | undefined
-  // Unlike `ssh`/`ssh-exec`, these commands can be pointed at one of the
-  // matches, so an ambiguous domain is recoverable — name the flag that does it.
-  const remedy =
-    failure.remedy != null
-      ? String(failure.remedy)
-      : failure.reason === "multiple_matches" && candidates?.length
-        ? `Pick one with --server, e.g. \`--server ${candidates[0]!.server}\`.`
-        : undefined
+  const remedy = failure.remedy != null ? String(failure.remedy) : undefined
   return {
     ok: false,
     command,
