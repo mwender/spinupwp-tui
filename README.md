@@ -193,7 +193,8 @@ spinuptui incidents <domain> | --all [--hours N]  Print Uptime Kuma down/up
                      monitoring for (config.json's kumaMonitors) — --all
                      sweeps every such site in one Kuma connection, --hours
                      sets the lookback window (default 24)
-spinuptui pull files <domain> [path] [--url <local url>] [--json]
+spinuptui pull files <domain> [path] [--url <local url>] [--server <name>]
+                     [--json]
                      Set up a new local working copy of a site: `git clone` for
                      git-deployed sites, `rsync` over SSH otherwise (excluding
                      uploads and the caching drop-ins), `composer install` for
@@ -207,8 +208,13 @@ spinuptui pull files <domain> [path] [--url <local url>] [--json]
                      the rsync path copies the site's real `wp-config.php` —
                      production credentials and all — so point its DB settings
                      at your local database before `pull db` (the command says
-                     so on success, and again if the import is denied).
-spinuptui pull db <domain> [--url <local url>] --yes [--json]
+                     so on success, and again if the import is denied). A
+                     Bedrock/Radicle clone lands without its `.env` — which is
+                     where its DB credentials live and is deliberately not in
+                     the repo — and says so the same way. `--server <name>`
+                     picks one site when a domain exists on more than one
+                     server; the ambiguity message lists the candidates.
+spinuptui pull db <domain> [--url <local url>] [--server <name>] --yes [--json]
                      Import production's database into the already-linked local
                      copy, rewriting production URLs to the local URL, after
                      dumping the current local database as a backup. This
@@ -226,8 +232,9 @@ result to **stdout** — with `--json`, a single result object (`{ok:true, …}`
 `{ok:false, reason, message, remedy}`), and the exit code mirrors `ok`. That
 keeps stdout parseable for an agent while a person watching a ten-minute rsync
 can still see it isn't hung. Failures carry a machine-readable `reason`
-(`site_not_found`, `already_linked`, `dest_not_empty`, `ambiguous_dest`,
-`not_linked`, `local_sync_disabled`, `not_confirmed`, …) and, where there's a
+(`site_not_found`, `multiple_matches`, `already_linked`, `dest_not_empty`,
+`ambiguous_dest`, `not_linked`, `missing_env`, `local_sync_disabled`,
+`not_confirmed`, …) and, where there's a
 clear next step, a `remedy` naming the exact command to run.
 
 ## Configuration
