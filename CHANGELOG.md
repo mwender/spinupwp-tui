@@ -11,6 +11,17 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **A failed local-database backup no longer leaves a fake backup behind.** The
+  DB pull (`p`, and the same engine everywhere else) starts by dumping the
+  local database as a safety net; `wp db export` creates its output file before
+  it knows the dump will succeed, and the follow-up `gzip` never runs when it
+  doesn't — leaving a bare `.sql` in `sql/`, named exactly like a real backup.
+  Empty when the failure is instant (bad credentials), **partial** when the
+  dump dies midway, which is the case that matters: it reads as a safety net
+  and isn't one. Nothing was lost by removing it — the pull aborts at that step,
+  before the local database is touched at all.
+
 ## [0.25.0] - 2026-08-12
 
 ### Added

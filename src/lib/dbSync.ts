@@ -12,7 +12,7 @@
 // SYNC_REMOTE_HOST / SYNC_LOCAL_HOST env contract as the sync-prod-to-local
 // script, so per-project tweaks (Elementor URL swaps, plugin toggles) carry over.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from "node:fs"
 import { join, dirname } from "node:path"
 import type { Server, Site } from "../api/types.ts"
 import { expandPath, findProjectRoot, resolveLocalLink, type LocalKind, type LocalLink } from "./local.ts"
@@ -212,6 +212,20 @@ export async function runDbSync(plan: DbSyncPlan, domain: string, onProgress: (p
   const localSql = plan.localBackupPath.replace(/\.gz$/, "")
   const lb = await wp(`wp db export "${localSql}" >/dev/null && gzip -f "${localSql}"`, 300_000)
   if (lb.code !== 0) {
+    // `wp db export` creates its output file before it knows the dump will
+    // succeed, and the `&& gzip` never runs when it doesn't — leaving a bare
+    // .sql behind (empty on an instant failure, PARTIAL if the dump dies
+    // midway) named exactly like a real backup. Nothing was restorable from it
+    // anyway: this step aborts before the local database is touched. Remove it
+    // rather than leave a file that reads as a safety net, the same way the
+    // download branch below cleans up the remote dump it orphaned. A
+    // successful run leaves only the .gz, and the name carries a
+    // to-the-minute timestamp, so this can only ever be this run's artifact.
+    try {
+      rmSync(localSql, { force: true })
+    } catch {
+      /* best-effort — a leftover file must not mask the real failure below */
+    }
     // wp-cli's own "not a WordPress install" error is a common first-pull snag on a
     // fresh checkout — a Bedrock or Radicle project needs `composer install` to
     // build vendor/ + web/wp (or public/wp) before wp-cli (or wp-cli.yml) can find
