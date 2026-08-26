@@ -78,7 +78,20 @@ versions; such changes are called out here.
     Bedrock/Radicle clone gets the mirror-image note: `.env` holds its database
     credentials and isn't in the repo, so a fresh checkout has none.
 
+### Changed
+- **Search now shows a full-width Site/Server Control drawer**, matching the
+  Servers tab, instead of swapping the right-hand panel between Details and
+  Actions. The Details pane stays put while you browse, and the drawer below
+  always reflects the currently selected result — reusing the exact same
+  control-list component the Servers tab uses, so the two views can't drift
+  out of sync again.
+
 ### Fixed
+- **`K` (Grant SSH key) and `V` (create/resume vanity site) now work on server
+  results in Search**, not just site results. Both were already advertised in
+  the legend but silently did nothing on a server before this — `K` falls back
+  to the server's first key-eligible site as the anchor, matching the Servers
+  tab's behavior.
 - **A failed local-database backup no longer leaves a fake backup behind.** The
   DB pull (`p`, and the same engine everywhere else) starts by dumping the
   local database as a safety net; `wp db export` creates its output file before
