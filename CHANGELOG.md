@@ -30,6 +30,11 @@ versions; such changes are called out here.
   - `object-cache.php` and `advanced-cache.php` are excluded outright: SpinupWP's
     Redis drop-in doesn't no-op when Redis is unreachable, it 500s on a cache
     miss, so copying them down fatals the local site.
+  - The done screen flags that the copied `wp-config.php` is **production's**,
+    credentials included, on the file-pull path. Nothing local can reach the
+    production database through them (its `DB_HOST` is localhost), but local
+    wp-cli authenticates as the production DB user, so the DB pull offered on
+    the same screen is denied until they're pointed at a local database.
 
 ### Fixed
 - **A failed local-database backup no longer leaves a fake backup behind.** The

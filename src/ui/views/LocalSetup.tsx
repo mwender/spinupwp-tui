@@ -191,6 +191,19 @@ export function LocalSetupOverlay() {
               {progress?.ranComposer ? <text content="composer install ran" fg={theme.textFaint} wrapMode="none" /> : null}
               <box style={{ height: 1 }} />
               <text content="Next: create a local database and point your local tool at it." fg={theme.textFaint} wrapMode="none" />
+              {/* The file pull copies the site's real wp-config.php, production
+                  DB credentials and all. Nothing local can reach production's
+                  database through them (its DB_HOST is localhost), but local
+                  wp-cli authenticates as the production user, so the DB pull
+                  below is denied until they're localized. Say so here rather
+                  than letting it surface as a bare "Access denied" later. */}
+              {isGit ? null : (
+                <>
+                  <text content="wp-config.php came down with production's DB credentials —" fg={theme.warn} wrapMode="none" />
+                  <text content="update DB_NAME / DB_USER / DB_PASSWORD / DB_HOST to match," fg={theme.warn} wrapMode="none" />
+                  <text content="or the DB pull is denied as production's user." fg={theme.warn} wrapMode="none" />
+                </>
+              )}
               <text content="Press ⏎ / p to pull production's database now, once that's ready." fg={theme.purple} wrapMode="none" />
               <text content="Esc to finish here" fg={theme.textFaint} wrapMode="none" />
             </>
