@@ -81,9 +81,12 @@
   if it's read-only — anything that looks like a write/restart/destructive
   action is denied rather than run, so any agent using it inherits that
   guarantee without building its own guard; `spinuptui incidents <domain>` /
-  `--all` surfaces Uptime Kuma's down/up history as JSON. Built so another
-  agent/script can go from just a domain to "what's wrong and how do I get
-  in" with no manual lookup. → [CLI subcommands](#cli-subcommands)
+  `--all` surfaces Uptime Kuma's down/up history as JSON; `spinuptui pull files
+  <domain> [path]` and `spinuptui pull db <domain> --yes` set up a local working
+  copy from production without opening the TUI at all — the same engines the
+  guided flow drives. Built so another agent/script can go from just a domain to
+  "what's wrong and how do I get in", or to a working local copy, with no manual
+  lookup. → [CLI subcommands](#cli-subcommands)
 - **Completion toasts** — a non-focus-stealing toast when a background write
   (PHP upgrade, reboot, DNS resolve, …) finishes.
 - **Release notes** — an in-app "what's new" after every update, sourced
@@ -190,9 +193,38 @@ spinuptui incidents <domain> | --all [--hours N]  Print Uptime Kuma down/up
                      monitoring for (config.json's kumaMonitors) — --all
                      sweeps every such site in one Kuma connection, --hours
                      sets the lookback window (default 24)
+spinuptui pull files <domain> [path] [--url <local url>] [--json]
+                     Set up a new local working copy of a site: `git clone` for
+                     git-deployed sites, `rsync` over SSH otherwise (excluding
+                     uploads and the caching drop-ins), `composer install` for
+                     Bedrock/Radicle, then link it. Read-only on production.
+                     Refuses a path that exists and isn't empty, and refuses a
+                     site that already has a local copy rather than re-syncing
+                     over your work. With exactly one `localRoots` entry
+                     configured the path is optional (defaults to
+                     `<that root>/<domain>`); with several, it's required,
+                     since which root a site belongs in isn't knowable.
+spinuptui pull db <domain> [--url <local url>] --yes [--json]
+                     Import production's database into the already-linked local
+                     copy, rewriting production URLs to the local URL, after
+                     dumping the current local database as a backup. This
+                     **overwrites your local database**, so it's gated twice:
+                     `"localSync": true` must be set in the config (or
+                     `SPINUPWP_LOCAL_SYNC=1`) *and* `--yes` passed on the
+                     invocation. Both are checked before any network call.
+                     `--url` doubles as "set the local URL, then sync".
 spinuptui --version  Print the version
 spinuptui --help     Show help
 ```
+
+Both `pull` commands write human-readable progress to **stderr** and their
+result to **stdout** — with `--json`, a single result object (`{ok:true, …}` or
+`{ok:false, reason, message, remedy}`), and the exit code mirrors `ok`. That
+keeps stdout parseable for an agent while a person watching a ten-minute rsync
+can still see it isn't hung. Failures carry a machine-readable `reason`
+(`site_not_found`, `already_linked`, `dest_not_empty`, `ambiguous_dest`,
+`not_linked`, `local_sync_disabled`, `not_confirmed`, …) and, where there's a
+clear next step, a `remedy` naming the exact command to run.
 
 ## Configuration
 
