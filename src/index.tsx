@@ -183,7 +183,7 @@ if (command === "pull") {
       console.log(`Imported production's database for ${result.primaryDomain} into ${result.path}.`)
       console.log(`Local database backed up first to ${result.localBackupPath}`)
     }
-    if (result.warning) console.error(`Warning: ${result.warning}`)
+    for (const warning of result.warnings ?? []) console.error(`Warning: ${warning}`)
   } else {
     console.error(result.message)
     if (result.remedy) console.error(result.remedy)
