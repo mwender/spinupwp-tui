@@ -17,6 +17,7 @@
 // TUI enforces) and an explicit `--yes` on the invocation. Both are checked
 // before any network call, so a typo'd domain in a script fails on the gate.
 
+import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { configPath, type AppConfig } from "../config.ts"
 import type { SpinupWPClientLike } from "../api/client.ts"
@@ -63,9 +64,9 @@ export interface PullFilesSuccess {
   method: "git" | "rsync"
   ranComposer: boolean
   linked: true
-  // Present when the copy is on disk and linked but not yet usable by `pull db`
-  // — it needs a local URL to rewrite production URLs to.
-  warning?: string
+  // Non-fatal caveats about the copy that just landed — most importantly the
+  // things standing between it and a working `pull db`.
+  warnings?: string[]
 }
 
 export interface PullDbSuccess {
@@ -78,7 +79,7 @@ export interface PullDbSuccess {
   downloadPath: string
   localBackupPath: string
   ranHook: boolean
-  warning?: string
+  warnings?: string[]
 }
 
 export type PullFilesResult = PullFilesSuccess | PullFailure
@@ -214,6 +215,24 @@ export async function runPullFiles(
   await writeLink(site.id, { domain: site.domain, path: plan.destPath, localUrl })
   onStage(`Linked ${site.domain} → ${plan.destPath}`)
 
+  const warnings: string[] = []
+  if (!localUrl) {
+    warnings.push(
+      `No local URL recorded. \`spinuptui pull db ${site.domain}\` needs one to rewrite production URLs — pass --url on the next run.`,
+    )
+  }
+  // The rsync path copies the site's real wp-config.php, which holds
+  // PRODUCTION's database credentials. Harmless in itself (SpinupWP's DB_HOST
+  // is localhost, so nothing local can reach the production database through
+  // it) but it means local wp-cli — and therefore `pull db` — authenticates as
+  // the production DB user against the local server and is denied. Say so here
+  // rather than letting it surface as a bare "Access denied" three steps later.
+  if (!plan.isGit && existsSync(join(plan.destPath, "wp-config.php"))) {
+    warnings.push(
+      `wp-config.php came from production and still holds its database credentials. Point DB_NAME / DB_USER / DB_PASSWORD / DB_HOST at your local database before running \`spinuptui pull db ${site.domain}\`.`,
+    )
+  }
+
   return {
     ok: true,
     command,
@@ -224,11 +243,7 @@ export async function runPullFiles(
     method: plan.isGit ? "git" : "rsync",
     ranComposer: result.ranComposer === true,
     linked: true,
-    ...(localUrl
-      ? {}
-      : {
-          warning: `No local URL recorded. \`spinuptui pull db ${site.domain}\` needs one to rewrite production URLs — pass --url on the next run.`,
-        }),
+    ...(warnings.length ? { warnings } : {}),
   }
 }
 
@@ -312,8 +327,19 @@ export async function runPullDb(
   })
 
   if (result.stage === "error") {
+    const error = result.error ?? "The sync failed."
+    // The overwhelmingly likely cause right after `pull files`: the copied
+    // wp-config.php still carries production's DB credentials, so local wp-cli
+    // authenticates as the production user against the local MySQL.
+    const deniedAs = /access denied for user '([^']+)'/i.exec(error)?.[1]
     return {
-      ...fail("sync_failed", result.error ?? "The sync failed."),
+      ...fail(
+        "sync_failed",
+        error,
+        deniedAs
+          ? `Local MySQL refused the user "${deniedAs}". If this copy came from \`pull files\`, its wp-config.php still holds production's database credentials — point DB_NAME / DB_USER / DB_PASSWORD / DB_HOST at your local database and re-run.`
+          : undefined,
+      ),
       ...(result.failedStage ? { failedStage: result.failedStage } : {}),
     }
   }
@@ -328,6 +354,6 @@ export async function runPullDb(
     downloadPath: result.downloadPath ?? plan.downloadPath,
     localBackupPath: result.localBackupPath ?? plan.localBackupPath,
     ranHook: result.ranHook === true,
-    ...(plan.prefixWarning ? { warning: plan.prefixWarning } : {}),
+    ...(plan.prefixWarning ? { warnings: [plan.prefixWarning] } : {}),
   }
 }

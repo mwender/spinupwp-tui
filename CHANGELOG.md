@@ -28,6 +28,13 @@ versions; such changes are called out here.
   - **`pull files` never re-syncs over an existing copy** — a site that's
     already linked is refused with its current path, rather than clobbering
     local work.
+  - **`pull files` warns that the copied `wp-config.php` is production's**, and
+    a `pull db` that's denied by local MySQL says why. The rsync path brings
+    down the site's real `wp-config.php`, credentials and all — harmless (their
+    `DB_HOST` is localhost, so nothing local can reach production's database
+    through them) but it means local wp-cli authenticates as the *production*
+    DB user, and `pull db` fails on its very first step until they're pointed
+    at a local database.
   - The path argument is optional only when exactly one `localRoots` entry is
     configured. With several, it's required: which root a site belongs in isn't
     knowable from here, and guessing would file a standard-WP site under

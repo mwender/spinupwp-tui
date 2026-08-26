@@ -203,7 +203,11 @@ spinuptui pull files <domain> [path] [--url <local url>] [--json]
                      over your work. With exactly one `localRoots` entry
                      configured the path is optional (defaults to
                      `<that root>/<domain>`); with several, it's required,
-                     since which root a site belongs in isn't knowable.
+                     since which root a site belongs in isn't knowable. Note
+                     the rsync path copies the site's real `wp-config.php` —
+                     production credentials and all — so point its DB settings
+                     at your local database before `pull db` (the command says
+                     so on success, and again if the import is denied).
 spinuptui pull db <domain> [--url <local url>] --yes [--json]
                      Import production's database into the already-linked local
                      copy, rewriting production URLs to the local URL, after
