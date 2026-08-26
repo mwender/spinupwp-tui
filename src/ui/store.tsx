@@ -55,6 +55,7 @@ import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offer
 import { resolveUbuntuEolDates, refreshUbuntuEolDates, isUbuntuEol as isUbuntuEolWith, type UbuntuEolDates } from "../lib/ubuntuEol.ts"
 import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
 import { planDbSync, runDbSync, type DbSyncProgress, type SyncPlanResult } from "../lib/dbSync.ts"
+import { planLocalSetup, runLocalSetup, type LocalSetupProgress, type LocalSetupPlanResult } from "../lib/localSetup.ts"
 import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
 
 export type Route = "dashboard" | "servers" | "stacks" | "search" | "events"
@@ -372,12 +373,14 @@ const phpJobId = (siteId: number) => `phpUpgrade:${siteId}`
 const httpsJobId = (siteId: number) => `httpsToggle:${siteId}`
 const dbSyncJobId = (siteId: number) => `dbSync:${siteId}`
 const dbBackupJobId = (siteId: number) => `dbBackup:${siteId}`
+const localSetupJobId = (siteId: number) => `localSetup:${siteId}`
 
 // SSH-orchestrated jobs (no SpinupWP event to re-attach to) can't truly resume —
 // their child processes died with the app. On restart we surface them as
 // interrupted rather than pretend, since the local DB may be half-applied.
 const INTERRUPTED_SYNC_MSG = "Interrupted by a restart — your local database may be partially imported. Re-run the sync (p)."
 const INTERRUPTED_BACKUP_MSG = "Interrupted by a restart — the download didn't finish. Re-run the backup (d)."
+const INTERRUPTED_LOCAL_SETUP_MSG = "Interrupted by a restart — the local copy may be partial. Re-run the clone."
 // Server provisioning events settle with one of these (broader than PHP/site
 // writes, whose terminal is "deployed"); finished_at also implies done.
 const SERVER_DONE = new Set(["deployed", "completed", "provisioned", "finished", "success"])
@@ -715,6 +718,16 @@ interface StoreValue extends DataState {
   startDbSync: (site: Site) => void
   clearDbSync: (siteId: number) => void
 
+  // Set up a brand-new local working copy for a remote site (clone/rsync the
+  // code down, composer install if Bedrock/Radicle) — the missing first step
+  // before a link exists at all. Never touches the DB or webserver config.
+  localSetupSite: Site | null
+  setLocalSetupSite: (s: Site | null) => void
+  localSetups: Map<number, LocalSetupProgress>
+  planLocalSetupFor: (site: Site, destPath: string, destUrl: string) => LocalSetupPlanResult
+  startLocalSetup: (site: Site, destPath: string, destUrl: string) => void
+  clearLocalSetup: (siteId: number) => void
+
   // Production media fallback overlay (mu-plugin in the linked local copy). State
   // is the plugin file's presence, resolved fresh by planMediaFallbackFor.
   mediaFallbackSite: Site | null
@@ -1003,6 +1016,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [dbBackups, setDbBackups] = useState<Map<number, DbBackupProgress>>(new Map())
   const [dbSyncSite, setDbSyncSite] = useState<Site | null>(null)
   const [dbSyncs, setDbSyncs] = useState<Map<number, DbSyncProgress>>(new Map())
+  const [localSetupSite, setLocalSetupSite] = useState<Site | null>(null)
+  const [localSetups, setLocalSetups] = useState<Map<number, LocalSetupProgress>>(new Map())
   const [localSync, setLocalSyncState] = useState<boolean>(() => cfgRef.current.localSync)
   const [enableLocalSyncSite, setEnableLocalSyncSite] = useState<Site | null>(null)
   const [mediaFallbackSite, setMediaFallbackSite] = useState<Site | null>(null)
@@ -2146,6 +2161,51 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       })
     },
     [dbSyncs, planDbSyncFor],
+  )
+
+  // ---- New local working copy (clone/rsync + composer install) ----------
+
+  const setLocalSetup = (siteId: number, progress: LocalSetupProgress) =>
+    setLocalSetups((prev) => new Map(prev).set(siteId, progress))
+
+  const clearLocalSetup = useCallback(
+    (siteId: number) =>
+      setLocalSetups((prev) => {
+        if (!prev.has(siteId)) return prev
+        const next = new Map(prev)
+        next.delete(siteId)
+        return next
+      }),
+    [],
+  )
+
+  const planLocalSetupFor = useCallback(
+    (site: Site, destPath: string, destUrl: string): LocalSetupPlanResult =>
+      planLocalSetup(site, servers.find((s) => s.id === site.server_id), cfgRef.current.sshUser, destPath, destUrl),
+    [servers],
+  )
+
+  const startLocalSetup = useCallback(
+    (site: Site, destPath: string, destUrl: string) => {
+      const existing = localSetups.get(site.id)
+      if (existing && existing.stage !== "done" && existing.stage !== "error") return
+      const res = planLocalSetupFor(site, destPath, destUrl)
+      if (!res.ok) {
+        setLocalSetup(site.id, { stage: "error", domain: site.domain, error: res.error })
+        return
+      }
+      // SSH/local-process orchestrated (no event): persist only so a restart can
+      // flag it as interrupted; drop it the moment it settles.
+      void saveJob({ id: localSetupJobId(site.id), kind: "localSetup", status: "running", startedAt: Date.now(), inputs: { siteId: site.id, domain: site.domain } })
+      void runLocalSetup(res.plan, (p) => {
+        setLocalSetup(site.id, p)
+        // Link as soon as the files are down, same shape the manual `L` form
+        // writes — dbSync (`p`) and mediaFallback (`m`) both require a link.
+        if (p.stage === "done") linkSite(site.id, { domain: site.domain, path: res.plan.destPath, localUrl: res.plan.destUrl })
+        if (p.stage === "done" || p.stage === "error") void removeJob(localSetupJobId(site.id))
+      })
+    },
+    [localSetups, planLocalSetupFor, linkSite],
   )
 
   // Compute a linked site's git drift once (cached), fire-and-forget. Stable
@@ -4151,6 +4211,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (inp.siteId != null) setSync(inp.siteId, { stage: "error", domain: inp.domain ?? "", error: INTERRUPTED_SYNC_MSG })
           void removeJob(job.id)
           break
+        case "localSetup":
+          if (inp.siteId != null) setLocalSetup(inp.siteId, { stage: "error", domain: inp.domain ?? "", error: INTERRUPTED_LOCAL_SETUP_MSG })
+          void removeJob(job.id)
+          break
         case "dbBackup":
           if (inp.siteId != null) setBackup(inp.siteId, { stage: "error", domain: inp.domain ?? "", error: INTERRUPTED_BACKUP_MSG })
           void removeJob(job.id)
@@ -4333,6 +4397,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     planDbSyncFor,
     startDbSync,
     clearDbSync,
+    localSetupSite,
+    setLocalSetupSite,
+    localSetups,
+    planLocalSetupFor,
+    startLocalSetup,
+    clearLocalSetup,
     drift,
     ensureDrift,
     rebootInfo,

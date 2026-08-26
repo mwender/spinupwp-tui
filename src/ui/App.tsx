@@ -30,6 +30,7 @@ import { NewServer } from "./views/NewServer.tsx"
 import { VanityNewSite } from "./views/VanityNewSite.tsx"
 import { CloneWizard } from "./views/CloneWizard.tsx"
 import { LocalLinkOverlay } from "./views/LocalLink.tsx"
+import { LocalSetupOverlay } from "./views/LocalSetup.tsx"
 import { Discover } from "./views/Discover.tsx"
 import { Forgotten } from "./views/Forgotten.tsx"
 import { DnsInventory } from "./views/DnsInventory.tsx"
@@ -75,6 +76,7 @@ export function App() {
     store.vanityServer !== null ||
     store.cloneServer !== null ||
     store.localLinkSite !== null ||
+    store.localSetupSite !== null ||
     store.discoverOpen ||
     store.forgottenOpen ||
     store.dnsInventoryServer !== null ||
@@ -166,6 +168,9 @@ export function App() {
     // The local-link overlay owns the keyboard while open.
     if (store.localLinkSite) return
 
+    // The new-local-copy (clone/rsync) overlay owns the keyboard while open.
+    if (store.localSetupSite) return
+
     // The discovery overlay owns the keyboard while open.
     if (store.discoverOpen) return
 
@@ -256,6 +261,7 @@ export function App() {
       {store.vanityServer && <VanityNewSite />}
       {store.cloneServer && <CloneWizard />}
       {store.localLinkSite && <LocalLinkOverlay />}
+      {store.localSetupSite && <LocalSetupOverlay />}
       {store.discoverOpen && <Discover />}
       {store.forgottenOpen && <Forgotten />}
       {store.dnsInventoryServer && <DnsInventory />}

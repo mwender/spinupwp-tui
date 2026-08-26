@@ -1,14 +1,19 @@
-// Local working-copy link overlay — Phase 1 (link + view, no mutation).
+// Local working-copy link overlay — Phase 1 (link + view, no mutation) plus
+// the entry point into Phase 2 (LocalSetup.tsx's guided clone).
 //
-// Opened with `L` on a selected site (Browser / Search results). Two modes:
+// Opened with `L` on a selected site (Browser / Search results). Modes:
+//   • choose — no link exists yet: pick manual entry (`e`) or a guided clone
+//     from production (`c`, hands off to LocalSetupOverlay).
 //   • view — the site is linked: shows the validated status (Bedrock / WordPress
 //     / missing) and offers open-locally actions: `t` opens a terminal at the
 //     path, `v` opens the stored local URL in the browser. `e` edits, `x` unlinks.
 //   • edit — a small form to enter the local path + local URL (manual entry).
 //
-// Per the locked spec these are LOCAL conveniences only: we open a terminal and
-// the local URL — we never launch an editor and never run composer/git here.
-// The mutating maintenance loop (composer update → push → deploy) is a later phase.
+// This file itself still only links — we open a terminal and the local URL, and
+// never launch an editor. Getting code onto disk (git clone / rsync / composer)
+// lives entirely in LocalSetup.tsx, kept separate from this file's original
+// read-only-on-disk scope. The mutating maintenance loop (composer update → push
+// → deploy) is still a later phase.
 
 import { useEffect, useState } from "react"
 import { useKeyboard } from "@opentui/react"
@@ -19,7 +24,7 @@ import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
 import { resolveLocalLink, type LocalKind } from "../../lib/local.ts"
 
-type Mode = "view" | "edit"
+type Mode = "choose" | "view" | "edit"
 type EditField = "path" | "url"
 
 function kindColor(kind: LocalKind, exists: boolean): string {
@@ -31,11 +36,11 @@ function kindColor(kind: LocalKind, exists: boolean): string {
 
 export function LocalLinkOverlay() {
   const store = useStore()
-  const { localLinkSite: site, setLocalLinkSite, localLinks, linkSite, unlinkSite, setInputMode, openLocalTerminal, openLocalUrl, linkReturnToForgotten, setLinkReturnToForgotten, setForgottenOpen } = store
+  const { localLinkSite: site, setLocalLinkSite, localLinks, linkSite, unlinkSite, setInputMode, openLocalTerminal, openLocalUrl, linkReturnToForgotten, setLinkReturnToForgotten, setForgottenOpen, setLocalSetupSite } = store
 
   const existing = site ? localLinks.get(site.id) : undefined
 
-  const [mode, setMode] = useState<Mode>(() => (existing ? "view" : "edit"))
+  const [mode, setMode] = useState<Mode>(() => (existing ? "view" : "choose"))
   const [field, setField] = useState<EditField>("path")
   const [pathInput, setPathInput] = useState(existing?.path ?? "")
   const [urlInput, setUrlInput] = useState(existing?.localUrl ?? "")
@@ -73,9 +78,28 @@ export function LocalLinkOverlay() {
   useKeyboard((key) => {
     const name = key.name ?? ""
 
+    if (mode === "choose") {
+      if (name === "escape" || name === "q") return close()
+      if (name === "e") {
+        setPathInput("")
+        setUrlInput("")
+        setField("path")
+        return setMode("edit")
+      }
+      if (name === "c" && site) {
+        // Not close() — that hands back to the "needs a local copy" report if we
+        // arrived from there, which doesn't make sense mid-clone. Just hand off.
+        setInputMode(false)
+        setLocalLinkSite(null)
+        setLocalSetupSite(site)
+      }
+      return
+    }
+
     if (mode === "edit") {
-      // Esc backs out: to the view mode if a link already exists, else closes.
-      if (name === "escape") return existing ? setMode("view") : close()
+      // Esc backs out: to the view mode if a link already exists, else to the
+      // choose screen (there's no link yet, so there's nothing to "view").
+      if (name === "escape") return existing ? setMode("view") : setMode("choose")
       // ↑/↓ switch fields (Enter advances/saves via the inputs' onSubmit).
       if (name === "up") return setField("path")
       if (name === "down") return setField("url")
@@ -138,11 +162,32 @@ export function LocalLinkOverlay() {
         <text content={existing ? "linked" : "not linked"} fg={existing ? theme.good : theme.textFaint} style={{ flexShrink: 0 }} />
       </box>
 
-      <Centered>{mode === "edit" ? renderEdit() : renderView()}</Centered>
+      <Centered>{mode === "choose" ? renderChoose() : mode === "edit" ? renderEdit() : renderView()}</Centered>
 
       <StatusBar hints={hints()} message={flash ?? undefined} messageColor={theme.brand} showGlobal={false} />
     </box>
   )
+
+  function renderChoose() {
+    return (
+      <Panel title=" No local copy yet " active>
+        <box style={{ flexDirection: "column", width: 62, paddingTop: 1, paddingBottom: 1 }}>
+          <text content="How do you want to set this up?" fg={theme.text} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          <box style={{ flexDirection: "row" }}>
+            <text content="c  " fg={theme.accent} style={{ flexShrink: 0 }} />
+            <text content="Clone fullsite (DB + files) from production" fg={theme.text} wrapMode="none" />
+          </box>
+          <text content="   git clone / file pull, no uploads/ — guided" fg={theme.textFaint} wrapMode="none" />
+          <box style={{ height: 1 }} />
+          <box style={{ flexDirection: "row" }}>
+            <text content="e  " fg={theme.accent} style={{ flexShrink: 0 }} />
+            <text content="Enter a path — you already have a copy" fg={theme.text} wrapMode="none" />
+          </box>
+        </box>
+      </Panel>
+    )
+  }
 
   function renderView() {
     return (
@@ -203,6 +248,12 @@ export function LocalLinkOverlay() {
   }
 
   function hints() {
+    if (mode === "choose")
+      return [
+        { key: "c", label: "clone from production" },
+        { key: "e", label: "enter a path" },
+        { key: "esc", label: "cancel" },
+      ]
     if (mode === "edit")
       return [
         { key: "↑↓", label: "field" },
