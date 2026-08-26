@@ -37,6 +37,7 @@ export type PullReason =
   | "fetch_failed"
   | "composer_failed"
   | "not_linked"
+  | "missing_env"
   | "local_sync_disabled"
   | "not_confirmed"
   | "sync_failed"
@@ -108,20 +109,29 @@ const DB_STAGE_LABELS: Record<DbSyncStage, string> = {
 // Shape a resolver failure (unknown domain, ambiguous domain, dead token, …)
 // into this command's result type, preserving the shared reason codes.
 function fromResolverFailure(command: PullCommand, failure: { ok: false } & Record<string, unknown>): PullFailure {
+  const candidates = failure.candidates as SshAccessCandidate[] | undefined
+  // Unlike `ssh`/`ssh-exec`, these commands can be pointed at one of the
+  // matches, so an ambiguous domain is recoverable — name the flag that does it.
+  const remedy =
+    failure.remedy != null
+      ? String(failure.remedy)
+      : failure.reason === "multiple_matches" && candidates?.length
+        ? `Pick one with --server, e.g. \`--server ${candidates[0]!.server}\`.`
+        : undefined
   return {
     ok: false,
     command,
     domain: String(failure.domain ?? ""),
     reason: failure.reason as PullReason,
     message: String(failure.message ?? ""),
-    ...(failure.remedy ? { remedy: String(failure.remedy) } : {}),
-    ...(failure.candidates ? { candidates: failure.candidates as SshAccessCandidate[] } : {}),
+    ...(remedy ? { remedy } : {}),
+    ...(candidates ? { candidates } : {}),
   }
 }
 
 export async function runPullFiles(
   domain: string,
-  opts: { path?: string | null; url?: string | null },
+  opts: { path?: string | null; url?: string | null; server?: string | null },
   client: SpinupWPClientLike,
   cfg: AppConfig,
   onStage: StageReporter,
@@ -137,7 +147,7 @@ export async function runPullFiles(
   })
 
   onStage(`Resolving ${domain} …`)
-  const resolved = await resolveSiteByDomain(domain, client, cfg)
+  const resolved = await resolveSiteByDomain(domain, client, cfg, { server: opts.server })
   if (!resolved.ok) return fromResolverFailure(command, resolved.result)
   const { site, server } = resolved
   onStage(`Site ${site.domain} on ${server.name} (${server.ip_address})`)
@@ -227,6 +237,16 @@ export async function runPullFiles(
   // it) but it means local wp-cli — and therefore `pull db` — authenticates as
   // the production DB user against the local server and is denied. Say so here
   // rather than letting it surface as a bare "Access denied" three steps later.
+  // The mirror image on the git path: Bedrock/Radicle keep DB credentials and
+  // WP_HOME in .env, which is deliberately NOT in the repo — so a fresh clone
+  // has none, and wp-cli runs with empty DB settings (`mysqldump: unknown
+  // variable 'pass='`). composer install having run is exactly the signal that
+  // this is such a checkout.
+  if (result.ranComposer && !existsSync(join(plan.destPath, ".env"))) {
+    warnings.push(
+      `No .env in the checkout — Bedrock/Radicle keep database credentials and WP_HOME there, and it isn't in the repo. Copy .env.example to .env and fill in DB_NAME / DB_USER / DB_PASSWORD / WP_HOME before running \`spinuptui pull db ${site.domain}\`.`,
+    )
+  }
   if (!plan.isGit && existsSync(join(plan.destPath, "wp-config.php"))) {
     warnings.push(
       `${join(plan.destPath, "wp-config.php")} came from production and still holds its database credentials. Point DB_NAME / DB_USER / DB_PASSWORD / DB_HOST at your local database before running \`spinuptui pull db ${site.domain}\`.`,
@@ -249,7 +269,7 @@ export async function runPullFiles(
 
 export async function runPullDb(
   domain: string,
-  opts: { url?: string | null; yes: boolean },
+  opts: { url?: string | null; yes: boolean; server?: string | null },
   client: SpinupWPClientLike,
   cfg: AppConfig,
   onStage: StageReporter,
@@ -282,7 +302,7 @@ export async function runPullDb(
   }
 
   onStage(`Resolving ${domain} …`)
-  const resolved = await resolveSiteByDomain(domain, client, cfg)
+  const resolved = await resolveSiteByDomain(domain, client, cfg, { server: opts.server })
   if (!resolved.ok) return fromResolverFailure(command, resolved.result)
   const { site, server } = resolved
 
@@ -313,6 +333,16 @@ export async function runPullDb(
     )
   }
   const plan = planned.plan
+
+  // Fail on the real cause rather than letting empty DB settings surface three
+  // steps later as `mysqldump: unknown variable 'pass='`.
+  if ((plan.localKind === "bedrock" || plan.localKind === "radicle") && !existsSync(join(plan.localRoot, ".env"))) {
+    return fail(
+      "missing_env",
+      `No .env in ${plan.localRoot} — this is a ${plan.localKind} checkout, so its database credentials live there and it isn't in the repo.`,
+      "Copy .env.example to .env and fill in DB_NAME / DB_USER / DB_PASSWORD / WP_HOME, then re-run.",
+    )
+  }
 
   onStage(`Rewriting ${plan.remoteOrigin} → ${plan.localOrigin}`)
   if (plan.prefixWarning) onStage(`Warning: ${plan.prefixWarning}`)

@@ -35,6 +35,13 @@ versions; such changes are called out here.
     through them) but it means local wp-cli authenticates as the *production*
     DB user, and `pull db` fails on its very first step until they're pointed
     at a local database.
+  - **`--server <name>` picks one site when a domain exists on more than one
+    server**, and the ambiguity itself now lists what matched (in both output
+    modes) instead of only saying there was more than one.
+  - **A Bedrock/Radicle clone is flagged for its missing `.env`** — that's where
+    its database credentials live and it's deliberately not in the repo, so
+    `pull db` would otherwise die on `mysqldump: unknown variable 'pass='`.
+    It's now caught up front, by name.
   - The path argument is optional only when exactly one `localRoots` entry is
     configured. With several, it's required: which root a site belongs in isn't
     knowable from here, and guessing would file a standard-WP site under

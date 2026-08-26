@@ -66,6 +66,11 @@ export async function resolveSiteByDomain(
   domain: string,
   client: SpinupWPClientLike,
   cfg: AppConfig,
+  // Narrows an otherwise ambiguous domain to one server, by name — matching
+  // either the full name or its first label ("web1" for "web1.example.com"),
+  // which is what the ambiguity message itself prints. Callers that expose no
+  // way to pass it (ssh, ssh-exec) simply omit it and keep failing as before.
+  opts?: { server?: string | null },
 ): Promise<SiteResolution> {
   const fail = (
     partial: Omit<SshAccessResult & { ok: false }, "ok" | "domain">,
@@ -95,11 +100,27 @@ export async function resolveSiteByDomain(
           return { siteId: s.id, serverId: s.server_id, server: srv.name }
         }),
       )
-      return fail({
-        reason: "multiple_matches",
-        message: `"${domain}" matches ${matches.length} sites in this account — cannot pick one automatically.`,
-        candidates,
-      })
+      const wanted = opts?.server?.trim().toLowerCase()
+      const narrowed = wanted
+        ? candidates.filter((c) => {
+            const name = c.server.toLowerCase()
+            return name === wanted || name.split(".")[0] === wanted
+          })
+        : candidates
+      if (narrowed.length !== 1) {
+        return fail({
+          reason: "multiple_matches",
+          message: wanted
+            ? `"${domain}" matches ${matches.length} sites in this account, and ${narrowed.length === 0 ? "none are" : `${narrowed.length} are`} on a server matching "${opts?.server}".`
+            : `"${domain}" matches ${matches.length} sites in this account — cannot pick one automatically.`,
+          candidates,
+        })
+      }
+      site = matches.find((m) => m.id === narrowed[0]!.siteId)!
+      server = await client.getServer(site.server_id)
+      return server.ip_address
+        ? { ok: true, site, server }
+        : fail({ reason: "server_has_no_ip", message: `Server "${server.name}" has no IP address on file.` })
     }
     site = matches[0]!
     server = await client.getServer(site.server_id)
