@@ -12,6 +12,40 @@ versions; such changes are called out here.
 ## [Unreleased]
 
 ### Added
+- **`spinuptui pull files` and `spinuptui pull db`** — the local-working-copy
+  setup and DB sync, driven non-interactively from the command line, on the
+  same engines the TUI's guided flow uses. `pull files <domain> [path]` clones a
+  site's code down and links it; `pull db <domain> --yes` imports production's
+  database into that copy. Built for an agentic workflow ("pull site X down for
+  local dev") as much as for a person: progress goes to stderr, and stdout
+  carries the machine contract — with `--json`, a single result object, exit
+  code mirroring `ok`, and failures carrying both a stable `reason` code and a
+  `remedy` naming the exact command that fixes it.
+  - **`pull db` is gated twice**, since it overwrites the local database:
+    `"localSync": true` in the config (the same opt-in the TUI enforces) *and*
+    `--yes` on the invocation. Both are checked before any network call, so a
+    typo'd domain in a script bounces off the gate rather than off a lookup.
+  - **`pull files` never re-syncs over an existing copy** — a site that's
+    already linked is refused with its current path, rather than clobbering
+    local work.
+  - **`pull files` warns that the copied `wp-config.php` is production's**, and
+    a `pull db` that's denied by local MySQL says why. The rsync path brings
+    down the site's real `wp-config.php`, credentials and all — harmless (their
+    `DB_HOST` is localhost, so nothing local can reach production's database
+    through them) but it means local wp-cli authenticates as the *production*
+    DB user, and `pull db` fails on its very first step until they're pointed
+    at a local database.
+  - **`--server <name>` picks one site when a domain exists on more than one
+    server**, and the ambiguity itself now lists what matched (in both output
+    modes) instead of only saying there was more than one.
+  - **A Bedrock/Radicle clone is flagged for its missing `.env`** — that's where
+    its database credentials live and it's deliberately not in the repo, so
+    `pull db` would otherwise die on `mysqldump: unknown variable 'pass='`.
+    It's now caught up front, by name.
+  - The path argument is optional only when exactly one `localRoots` entry is
+    configured. With several, it's required: which root a site belongs in isn't
+    knowable from here, and guessing would file a standard-WP site under
+    Bedrock.
 - **Clone a site's full local working copy from production** — `L` on a site
   with no local copy yet now opens a choose screen: `e` is the existing manual
   "enter a path" form, and the new `c` runs a guided clone. It pulls the code
