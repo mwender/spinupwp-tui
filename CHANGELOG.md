@@ -11,7 +11,34 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-08-26
+
 ### Added
+- **Clone a site's full local working copy from production** — `L` on a site
+  with no local copy yet now opens a choose screen: `e` is the existing manual
+  "enter a path" form, and the new `c` runs a guided clone. It pulls the code
+  down (a `git clone` for git-deployed sites, an `rsync` over SSH for everything
+  else), runs `composer install` when the checkout turns out to be
+  Bedrock/Radicle, links the result exactly as the manual form would, and then
+  hands off to the existing DB sync (`p`) and production-media (`m`) flows
+  unchanged — three already-reviewed screens chained by keypresses rather than
+  one new mega-flow. The local database and webserver config are never touched.
+  - The rsync pull always takes the site's whole files root (so a `public/`-style
+    layout brings `wp-config.php` down from one level above the webroot), and the
+    real webroot is **detected** on the server rather than trusting
+    `public_folder`.
+  - `wp-content/uploads` is excluded — production media is served through the
+    media-fallback mu-plugin (`m`) instead of copied.
+  - `object-cache.php` and `advanced-cache.php` are excluded outright: SpinupWP's
+    Redis drop-in doesn't no-op when Redis is unreachable, it 500s on a cache
+    miss, so copying them down fatals the local site.
+  - The done screen flags that the copied `wp-config.php` is **production's**,
+    credentials included, on the file-pull path. Nothing local can reach the
+    production database through them (its `DB_HOST` is localhost), but local
+    wp-cli authenticates as the production DB user, so the DB pull offered on
+    the same screen is denied until they're pointed at a local database. A
+    Bedrock/Radicle clone gets the mirror-image note: `.env` holds its database
+    credentials and isn't in the repo, so a fresh checkout has none.
 - **`spinuptui pull files` and `spinuptui pull db`** — the local-working-copy
   setup and DB sync, driven non-interactively from the command line, on the
   same engines the TUI's guided flow uses. `pull files <domain> [path]` clones a
@@ -52,31 +79,6 @@ versions; such changes are called out here.
   these commands but never resolved, leaving it simply unreachable from the
   CLI. The ambiguity now also lists the candidates and names the flag that
   picks one, everywhere it's raised.
-- **Clone a site's full local working copy from production** — `L` on a site
-  with no local copy yet now opens a choose screen: `e` is the existing manual
-  "enter a path" form, and the new `c` runs a guided clone. It pulls the code
-  down (a `git clone` for git-deployed sites, an `rsync` over SSH for everything
-  else), runs `composer install` when the checkout turns out to be
-  Bedrock/Radicle, links the result exactly as the manual form would, and then
-  hands off to the existing DB sync (`p`) and production-media (`m`) flows
-  unchanged — three already-reviewed screens chained by keypresses rather than
-  one new mega-flow. The local database and webserver config are never touched.
-  - The rsync pull always takes the site's whole files root (so a `public/`-style
-    layout brings `wp-config.php` down from one level above the webroot), and the
-    real webroot is **detected** on the server rather than trusting
-    `public_folder`.
-  - `wp-content/uploads` is excluded — production media is served through the
-    media-fallback mu-plugin (`m`) instead of copied.
-  - `object-cache.php` and `advanced-cache.php` are excluded outright: SpinupWP's
-    Redis drop-in doesn't no-op when Redis is unreachable, it 500s on a cache
-    miss, so copying them down fatals the local site.
-  - The done screen flags that the copied `wp-config.php` is **production's**,
-    credentials included, on the file-pull path. Nothing local can reach the
-    production database through them (its `DB_HOST` is localhost), but local
-    wp-cli authenticates as the production DB user, so the DB pull offered on
-    the same screen is denied until they're pointed at a local database. A
-    Bedrock/Radicle clone gets the mirror-image note: `.env` holds its database
-    credentials and isn't in the repo, so a fresh checkout has none.
 
 ### Changed
 - **Search now shows a full-width Site/Server Control drawer**, matching the
@@ -1406,7 +1408,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/mwender/spinupwp-tui/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/mwender/spinupwp-tui/compare/v0.24.4...v0.25.0
 [0.24.4]: https://github.com/mwender/spinupwp-tui/compare/v0.24.3...v0.24.4
 [0.24.3]: https://github.com/mwender/spinupwp-tui/compare/v0.24.2...v0.24.3
