@@ -34,7 +34,9 @@ versions; such changes are called out here.
     credentials included, on the file-pull path. Nothing local can reach the
     production database through them (its `DB_HOST` is localhost), but local
     wp-cli authenticates as the production DB user, so the DB pull offered on
-    the same screen is denied until they're pointed at a local database.
+    the same screen is denied until they're pointed at a local database. A
+    Bedrock/Radicle clone gets the mirror-image note: `.env` holds its database
+    credentials and isn't in the repo, so a fresh checkout has none.
 
 ### Fixed
 - **A failed local-database backup no longer leaves a fake backup behind.** The

@@ -204,6 +204,16 @@ export function LocalSetupOverlay() {
                   <text content="or the DB pull is denied as production's user." fg={theme.warn} wrapMode="none" />
                 </>
               )}
+              {/* The mirror image on the git path: Bedrock/Radicle keep DB
+                  credentials and WP_HOME in .env, which is deliberately not in
+                  the repo — so a fresh clone has none and wp-cli runs with
+                  empty settings. composer install having run is the signal. */}
+              {progress?.ranComposer ? (
+                <>
+                  <text content=".env isn't in the repo, so this checkout has none — copy" fg={theme.warn} wrapMode="none" />
+                  <text content=".env.example to .env and set DB_* + WP_HOME before pulling." fg={theme.warn} wrapMode="none" />
+                </>
+              ) : null}
               <text content="Press ⏎ / p to pull production's database now, once that's ready." fg={theme.purple} wrapMode="none" />
               <text content="Esc to finish here" fg={theme.textFaint} wrapMode="none" />
             </>
