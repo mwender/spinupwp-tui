@@ -44,8 +44,9 @@
 - **Installed plugins & themes** (`e`) — real `wp plugin`/`theme list` over SSH,
   with per-item version and update status. → [docs/plugins-themes.md](docs/plugins-themes.md)
 - **Open in browser** (`o`) / **SSH into a site** (`s`) — one-key shortcuts.
-- **Link local working copies** (`L`) — link a site to its local checkout, with
-  auto-discovery and git-drift indicators. → [docs/local-working-copies.md](docs/local-working-copies.md)
+- **Local working copies** (`L`) — link a site to its local checkout, or clone
+  one from production (`c`) when you don't have it yet; with auto-discovery and
+  git-drift indicators. → [docs/local-working-copies.md](docs/local-working-copies.md)
 - **DNS migration lens** (`n` / `N`) — see and edit a site's hosting records,
   repoint it to another server. → [docs/dns-access-editing.md](docs/dns-access-editing.md)
 - **Database backup & sync** (`d` / `p`, Servers / Search tabs) — download or
@@ -256,7 +257,7 @@ These can be set in `config.json` or via an environment variable:
 | `d` | Download a production DB backup into the linked copy (Servers / Search; WordPress + linked) |
 | `p` | Pull the production DB into the linked copy — overwrites local; opt-in via `localSync` (Servers / Search) |
 | `m` | Production media fallback: serve missing-locally images from production (Servers / Search; WordPress + linked) |
-| `L` | Link / edit a site's local working copy |
+| `L` | Link / edit a site's local working copy — on an unlinked site, `e` enters a path by hand and `c` clones one from production |
 | `t` / `v` | Open the linked copy in a terminal / its local URL in your browser |
 | `n` | DNS migration view for a site — its records + TTLs (`⏎` edits a TTL; `p` repoints the record; `a` shows the whole server) |
 | `N` | DNS migration view for the whole server |
