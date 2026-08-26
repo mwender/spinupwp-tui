@@ -111,12 +111,12 @@ export async function runProcess(
   timeoutMs: number,
   cwd?: string,
   env?: Record<string, string>,
-): Promise<{ code: number; stderr: string }> {
+): Promise<{ code: number; stderr: string; stdout: string }> {
   let proc: ReturnType<typeof Bun.spawn>
   try {
     proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore", cwd, env })
   } catch (err) {
-    return { code: -1, stderr: `Failed to launch ${cmd[0]}: ${(err as Error).message}` }
+    return { code: -1, stderr: `Failed to launch ${cmd[0]}: ${(err as Error).message}`, stdout: "" }
   }
   const timer = setTimeout(() => {
     try {
@@ -127,8 +127,11 @@ export async function runProcess(
   }, timeoutMs)
   const code = await proc.exited
   clearTimeout(timer)
-  const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text()
-  return { code, stderr }
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout as ReadableStream<Uint8Array>).text(),
+    new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
+  ])
+  return { code, stderr, stdout }
 }
 
 // Pick a meaningful error line out of ssh/wp stderr, skipping the deprecation /

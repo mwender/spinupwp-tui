@@ -11,6 +11,26 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Clone a site's full local working copy from production** — `L` on a site
+  with no local copy yet now opens a choose screen: `e` is the existing manual
+  "enter a path" form, and the new `c` runs a guided clone. It pulls the code
+  down (a `git clone` for git-deployed sites, an `rsync` over SSH for everything
+  else), runs `composer install` when the checkout turns out to be
+  Bedrock/Radicle, links the result exactly as the manual form would, and then
+  hands off to the existing DB sync (`p`) and production-media (`m`) flows
+  unchanged — three already-reviewed screens chained by keypresses rather than
+  one new mega-flow. The local database and webserver config are never touched.
+  - The rsync pull always takes the site's whole files root (so a `public/`-style
+    layout brings `wp-config.php` down from one level above the webroot), and the
+    real webroot is **detected** on the server rather than trusting
+    `public_folder`.
+  - `wp-content/uploads` is excluded — production media is served through the
+    media-fallback mu-plugin (`m`) instead of copied.
+  - `object-cache.php` and `advanced-cache.php` are excluded outright: SpinupWP's
+    Redis drop-in doesn't no-op when Redis is unreachable, it 500s on a cache
+    miss, so copying them down fatals the local site.
+
 ### Fixed
 - **A failed local-database backup no longer leaves a fake backup behind.** The
   DB pull (`p`, and the same engine everywhere else) starts by dumping the
