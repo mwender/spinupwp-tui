@@ -35,5 +35,31 @@ serve it; the site's details gain a "Local" field, and you can open the copy wit
   shows its local git drift (`⇡N unpushed` / `● uncommitted`), read from the repo
   with no network.
 
+## From the command line
+
+The same two engines run without the TUI, for a script or an agent handed only a
+domain:
+
+```sh
+spinuptui pull files <domain> [path] [--url <local url>] [--server <name>] [--json]
+spinuptui pull db <domain> [--url <local url>] [--server <name>] --yes [--json]
+```
+
+`pull files` clones the code down and links it; `pull db` imports production's
+database into that copy, rewriting URLs. Progress goes to stderr and the result
+to stdout — with `--json`, one object, exit code mirroring `ok`, and a `reason`
+plus a `remedy` naming the exact command that fixes any failure.
+
+- **`pull db` is gated twice**, since it overwrites your local database:
+  `"localSync": true` in the config *and* `--yes` on the invocation. Both are
+  checked before any network call.
+- **`pull files` won't re-sync over an existing copy** — a site that's already
+  linked is refused with its current path, rather than clobbering local work.
+- **The path is optional only with exactly one `localRoots` entry** (it becomes
+  `<that root>/<domain>`). With several configured, which one a site belongs in
+  isn't knowable, so it's required.
+- **`--server <name>`** picks one site when a domain exists on more than one
+  server; it works on `ssh` and `ssh-exec` too.
+
 Config keys: `localRoots` (folders to scan) and `localSites` (per-site path +
 local URL — tool-agnostic: Valet, Cove, LocalWP, Herd, DDEV, …).
