@@ -5,6 +5,7 @@
 // trustworthy go/no-go rather than a guess.
 
 import type { AppConfig } from "../config.ts"
+import type { Server, Site } from "../api/types.ts"
 import type { SpinupWPClientLike } from "../api/client.ts"
 import { ApiError } from "../api/client.ts"
 import { resolveSiteSshTarget, SSH_OPTS } from "./probe.ts"
@@ -53,38 +54,39 @@ export type SshTargetResolution =
   | { ok: true; info: SshTargetInfo }
   | { ok: false; result: SshAccessResult & { ok: false } }
 
-// Domain -> site -> server -> SSH target/port, with no live connectivity check.
-// Split out of resolveSshAccess so callers that are about to run a real command
-// (which is itself a connectivity test) don't pay for a redundant probe first.
-export async function resolveSshTargetInfo(
+// A resolved domain, before anything is done with it. Shared by every
+// domain-addressed CLI command (`ssh`, `ssh-exec`, `pull`) so they all fail the
+// same way — same reason codes, same messages — on an unknown or ambiguous
+// domain, a rejected token, or a server with no IP.
+export type SiteResolution =
+  | { ok: true; site: Site; server: Server }
+  | { ok: false; result: SshAccessResult & { ok: false } }
+
+export async function resolveSiteByDomain(
   domain: string,
   client: SpinupWPClientLike,
   cfg: AppConfig,
-): Promise<SshTargetResolution> {
+): Promise<SiteResolution> {
+  const fail = (
+    partial: Omit<SshAccessResult & { ok: false }, "ok" | "domain">,
+  ): SiteResolution => ({ ok: false, result: { ok: false, domain, ...partial } })
+
   if (!cfg.token) {
-    return {
-      ok: false,
-      result: { ok: false, domain, reason: "no_token", message: "No API token configured. Run `spinuptui login`." },
-    }
+    return fail({ reason: "no_token", message: "No API token configured. Run `spinuptui login`." })
   }
 
-  let site
-  let server
+  let site: Site
+  let server: Server
   try {
     const sites = await client.listSites()
     const matches = sites.filter(
       (s) => s.domain === domain || s.additional_domains?.some((a) => a.domain === domain),
     )
     if (matches.length === 0) {
-      return {
-        ok: false,
-        result: {
-          ok: false,
-          domain,
-          reason: "site_not_found",
-          message: `No site matching "${domain}" found in this SpinupWP account.`,
-        },
-      }
+      return fail({
+        reason: "site_not_found",
+        message: `No site matching "${domain}" found in this SpinupWP account.`,
+      })
     }
     if (matches.length > 1) {
       const candidates: SshAccessCandidate[] = await Promise.all(
@@ -93,48 +95,45 @@ export async function resolveSshTargetInfo(
           return { siteId: s.id, serverId: s.server_id, server: srv.name }
         }),
       )
-      return {
-        ok: false,
-        result: {
-          ok: false,
-          domain,
-          reason: "multiple_matches",
-          message: `"${domain}" matches ${matches.length} sites in this account — cannot pick one automatically.`,
-          candidates,
-        },
-      }
+      return fail({
+        reason: "multiple_matches",
+        message: `"${domain}" matches ${matches.length} sites in this account — cannot pick one automatically.`,
+        candidates,
+      })
     }
-    site = matches[0]
+    site = matches[0]!
     server = await client.getServer(site.server_id)
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
-      return {
-        ok: false,
-        result: {
-          ok: false,
-          domain,
-          reason: "token_rejected",
-          message: "Saved API token was rejected (401) — it may be expired or revoked.",
-          remedy: "Run `spinuptui login` to save a fresh token.",
-        },
-      }
+      return fail({
+        reason: "token_rejected",
+        message: "Saved API token was rejected (401) — it may be expired or revoked.",
+        remedy: "Run `spinuptui login` to save a fresh token.",
+      })
     }
     const message = err instanceof ApiError ? err.message : `Unexpected error: ${(err as Error).message}`
-    return { ok: false, result: { ok: false, domain, reason: "api_error", message } }
+    return fail({ reason: "api_error", message })
   }
 
   if (!server.ip_address) {
-    return {
-      ok: false,
-      result: {
-        ok: false,
-        domain,
-        reason: "server_has_no_ip",
-        message: `Server "${server.name}" has no IP address on file.`,
-      },
-    }
+    return fail({ reason: "server_has_no_ip", message: `Server "${server.name}" has no IP address on file.` })
   }
 
+  return { ok: true, site, server }
+}
+
+// Domain -> site -> server -> SSH target/port, with no live connectivity check.
+// Split out of resolveSshAccess so callers that are about to run a real command
+// (which is itself a connectivity test) don't pay for a redundant probe first.
+export async function resolveSshTargetInfo(
+  domain: string,
+  client: SpinupWPClientLike,
+  cfg: AppConfig,
+): Promise<SshTargetResolution> {
+  const resolved = await resolveSiteByDomain(domain, client, cfg)
+  if (!resolved.ok) return resolved
+
+  const { site, server } = resolved
   const target = resolveSiteSshTarget(site, server, cfg.sshUser)
   const port = server.ssh_port && server.ssh_port !== 22 ? server.ssh_port : null
 
