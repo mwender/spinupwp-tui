@@ -173,11 +173,13 @@ to the version in the header (and in the `?` About panel).
 spinuptui            Launch the dashboard
 spinuptui login      Set or update your saved API token
 spinuptui where      Show the config path and which source the token came from
-spinuptui ssh <domain>  Print SSH access info for a site as JSON (resolves the
+spinuptui ssh <domain> [--server <name>]  Print SSH access info for a site
+                     as JSON (resolves the
                      site's server, builds its SSH target, and runs a live
                      connectivity probe — for external tooling, e.g. an
                      incident-diagnostics agent handed only a domain)
-spinuptui ssh-exec <domain> -- <command>  Resolve the domain's SSH target and
+spinuptui ssh-exec <domain> [--server <name>] -- <command>  Resolve the
+                     domain's SSH target and
                      run <command> on it, but only if the command is
                      read-only — anything matching a write/restart/destructive
                      pattern (plugin/theme changes, DB writes, service
@@ -226,6 +228,13 @@ spinuptui pull db <domain> [--url <local url>] [--server <name>] --yes [--json]
 spinuptui --version  Print the version
 spinuptui --help     Show help
 ```
+
+`--server <name>` works on every domain-addressed subcommand (`ssh`,
+`ssh-exec`, `pull files`, `pull db`). A domain can legitimately exist on more
+than one server — a clone-wizard destination, a staging twin — and without it
+those commands could only report the ambiguity, not resolve it. It matches the
+full server name or its first label (`web1` for `web1.example.com`), and the
+ambiguity message lists the candidates to pick from.
 
 Both `pull` commands write human-readable progress to **stderr** and their
 result to **stdout** — with `--json`, a single result object (`{ok:true, …}` or

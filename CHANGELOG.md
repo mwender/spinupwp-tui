@@ -46,6 +46,12 @@ versions; such changes are called out here.
     configured. With several, it's required: which root a site belongs in isn't
     knowable from here, and guessing would file a standard-WP site under
     Bedrock.
+- **`--server <name>` on `ssh` and `ssh-exec` too**, not just the `pull`
+  commands. A domain that exists on more than one server — a clone-wizard
+  destination, a staging twin — could previously be reported as ambiguous by
+  these commands but never resolved, leaving it simply unreachable from the
+  CLI. The ambiguity now also lists the candidates and names the flag that
+  picks one, everywhere it's raised.
 - **Clone a site's full local working copy from production** — `L` on a site
   with no local copy yet now opens a choose screen: `e` is the existing manual
   "enter a path" form, and the new `c` runs a guided clone. It pulls the code
