@@ -9,11 +9,11 @@ import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
-import { Panel, Field, StatusBadge, SiteMetaCell, Spinner, ControlPanel, siteGroups } from "../components.tsx"
+import { Panel, SiteMetaCell, Spinner } from "../components.tsx"
 import { isDbBackupInFlight } from "../../lib/dbBackup.ts"
 import { isDbSyncInFlight } from "../../lib/dbSync.ts"
 import { List, moveSelection } from "../List.tsx"
-import { ServerDetail, SiteDetail, SERVER_CONTROL } from "../Details.tsx"
+import { ServerDetail, SiteDetail, ControlStrip, CONTROL_STRIP_HEIGHT } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl, siteWebUrl } from "../../lib/spinupweb.ts"
@@ -35,11 +35,12 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite, setGrantKeySite, runProbe, setEnableLocalSyncSite } = store
+  const { servers, sites, serverById, sitesForServer, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite, setGrantKeySite, runProbe, setEnableLocalSyncSite, setVanityServer, vanityJob } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
-  // selected result's single-key actions (o/w/u/h) fire. Tab/→ enters, ←/Esc exits.
+  // selected result's single-key actions fire — listed in the Site/Server
+  // Control drawer below, same as the Servers tab. Tab/→ enters, ←/Esc exits.
   const [focus, setFocus] = useState<"query" | "actions">("query")
   const [flash, setFlash] = useState<string | null>(null)
   const flashMsg = (m: string) => {
@@ -160,11 +161,15 @@ export function Search({ rows }: { rows: number }) {
       case "L":
         if (current?.kind === "site") setLocalLinkSite(current.site)
         return
-      case "K":
-        // Grant Spinup's machine key to the selected site over SSH — matches
-        // Browser's K binding, which was already in the shared legend here.
-        if (current?.kind === "site") setGrantKeySite(current.site)
+      case "K": {
+        // Grant Spinup's machine key over SSH — matches Browser's K binding,
+        // which is site-anchored but works on a server result too (falls back
+        // to the server's first key-eligible site, mirroring Browser.tsx).
+        const anchor =
+          current?.kind === "site" ? current.site : current?.kind === "server" ? sitesForServer(current.server.id).find((s) => s.site_user) : undefined
+        if (anchor) setGrantKeySite(anchor)
         return
+      }
       case "s":
         if (current?.kind === "site") flashMsg(sshSite(current.site.id))
         return
@@ -262,6 +267,17 @@ export function Search({ rows }: { rows: number }) {
       case "N":
         if (current?.kind === "server") setDnsInventoryServer(current.server)
         return
+      case "V": {
+        // Create the vanity site at the server's own hostname, or resume an
+        // unfinished build — same gating as Browser's V.
+        if (current?.kind === "server") {
+          const s = current.server
+          const resumable = vanityJob && vanityJob.step !== "done" && vanityJob.serverId === s.id
+          const hasVanity = sitesForServer(s.id).some((site) => site.domain.toLowerCase() === s.name.toLowerCase())
+          if (resumable || !hasVanity) setVanityServer(s)
+        }
+        return
+      }
     }
   })
 
@@ -273,22 +289,14 @@ export function Search({ rows }: { rows: number }) {
           { key: "Tab/→", label: "actions" },
           { key: "esc", label: "dashboard" },
         ]
-      : current?.kind === "server"
-        ? [
-            { key: "↑↓", label: "select" },
-            { key: "w", label: "SpinupWP" },
-            { key: "a", label: "actions" },
-            { key: "h", label: "health" },
-            { key: "←/esc", label: "back" },
-          ]
-        : [
-            // The Actions panel (Details pane) already lists every per-site key —
-            // this footer is nav-only now, so the two can't drift out of sync.
-            { key: "↑↓", label: "select" },
-            { key: "←/esc", label: "back" },
-          ]
+      : [
+          // The Control drawer below already lists every key for the selected
+          // result — this footer stays nav-only so the two can't drift out of sync.
+          { key: "↑↓", label: "select" },
+          { key: "←/esc", label: "back" },
+        ]
 
-  const listRows = Math.max(3, rows - 8) // input box (3) + status bar (1) + chrome
+  const listRows = Math.max(3, rows - 9 - CONTROL_STRIP_HEIGHT) // input box (3) + status bar (1) + chrome + control drawer
 
   return (
     <box style={{ flexGrow: 1, flexDirection: "column" }}>
@@ -374,14 +382,9 @@ export function Search({ rows }: { rows: number }) {
           />
         </Panel>
 
-        <Panel title={focus === "actions" ? " Actions " : " Details "} active={focus === "actions"} width={64}>
+        <Panel title=" Details " width={64}>
           {!current ? (
             <text content="No selection" fg={theme.textFaint} />
-          ) : focus === "actions" ? (
-            <ActionsCard
-              result={current}
-              serverName={current.kind === "site" ? (serverById(current.site.server_id)?.name ?? "—") : current.server.name}
-            />
           ) : current.kind === "server" ? (
             <ServerDetail server={current.server} siteCount={store.sitesForServer(current.server.id).length} />
           ) : (
@@ -390,44 +393,13 @@ export function Search({ rows }: { rows: number }) {
         </Panel>
       </box>
 
-      <StatusBar hints={hints} message={flash ?? undefined} showGlobal={false} />
-    </box>
-  )
-}
+      <ControlStrip
+        site={current?.kind === "site" ? current.site : null}
+        server={current?.kind === "server" ? current.server : null}
+        serverName={current?.kind === "site" ? (serverById(current.site.server_id)?.name ?? "—") : current?.kind === "server" ? current.server.name : "—"}
+      />
 
-function ActionsCard({ result, serverName }: { result: Result; serverName: string }) {
-  const isSite = result.kind === "site"
-  const name = isSite ? result.site.domain : result.server.name
-  const status = isSite ? result.site.status : result.server.connection_status
-  // Server results reuse the SAME Server Control suite as the Browser detail pane.
-  const groups = isSite ? siteGroups(result.site.is_wordpress, isVanityPair(result.site.domain, serverName)) : SERVER_CONTROL
-  return (
-    <box style={{ flexDirection: "column" }}>
-      <box style={{ flexDirection: "row" }}>
-        <text content={truncate(name, 30)} fg={theme.text} attributes={1} wrapMode="none" />
-        <box style={{ flexGrow: 1 }} />
-        <StatusBadge status={status} />
-      </box>
-      {isSite ? (
-        <>
-          <text content={(result.site.https?.enabled ? "https://" : "http://") + result.site.domain} fg={theme.accent} wrapMode="none" />
-          <box style={{ height: 1 }} />
-          <Field label="Server" value={truncate(serverName, 28)} labelWidth={8} />
-          <Field label="PHP" value={result.site.php_version ?? "—"} labelWidth={8} />
-          <Field label="Stack" value={classifyStack(result.site)} valueColor={stackColor(classifyStack(result.site))} labelWidth={8} />
-        </>
-      ) : (
-        <>
-          <text content={result.server.ip_address ?? "—"} fg={theme.accent} wrapMode="none" />
-          <box style={{ height: 1 }} />
-          <Field label="Provider" value={result.server.provider_name ?? "—"} labelWidth={9} />
-          <Field label="Region" value={result.server.region ?? "—"} labelWidth={9} />
-        </>
-      )}
-      <box style={{ height: 1 }} />
-      <ControlPanel heading={isSite ? "Site Control" : "Server Control"} groups={groups} />
-      <box style={{ height: 1 }} />
-      <text content="↑↓ select · ←/Esc back to search" fg={theme.textFaint} wrapMode="none" />
+      <StatusBar hints={hints} message={flash ?? undefined} showGlobal={false} />
     </box>
   )
 }
