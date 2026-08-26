@@ -229,7 +229,7 @@ export async function runPullFiles(
   // rather than letting it surface as a bare "Access denied" three steps later.
   if (!plan.isGit && existsSync(join(plan.destPath, "wp-config.php"))) {
     warnings.push(
-      `wp-config.php came from production and still holds its database credentials. Point DB_NAME / DB_USER / DB_PASSWORD / DB_HOST at your local database before running \`spinuptui pull db ${site.domain}\`.`,
+      `${join(plan.destPath, "wp-config.php")} came from production and still holds its database credentials. Point DB_NAME / DB_USER / DB_PASSWORD / DB_HOST at your local database before running \`spinuptui pull db ${site.domain}\`.`,
     )
   }
 
