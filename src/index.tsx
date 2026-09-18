@@ -3,6 +3,9 @@
 // OpenTUI renderer and mounts either the first-run onboarding wizard (no token
 // yet) or the main app wrapped in the data store.
 
+// First, before any config read or spawn: keep a site checkout's .env from
+// leaking into child processes (see the module).
+import "./lib/cwdDotenv.ts"
 import { useState } from "react"
 import { createCliRenderer } from "@opentui/core"
 import { createRoot } from "@opentui/react"
