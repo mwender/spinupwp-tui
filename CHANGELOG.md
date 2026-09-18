@@ -13,6 +13,7 @@ versions; such changes are called out here.
 
 ### Fixed
 - **`pull db` (and every other local command) now works when spinuptui is launched from inside a site's checkout.** Bun auto-loads the current directory's `.env`, and child processes inherited it, so a Bedrock site's own `DB_*` values reached `wp` as environment variables. Bedrock then read blank database credentials, and the pre-import backup failed with `Access denied for user '<you>'@'localhost' (using password: NO)`. Keys from that `.env` are now dropped at startup, except the ones spinuptui reads itself (its token, provider credentials and Uptime Kuma settings).
+- **`pull db`'s "Access denied" hint now points Bedrock and Radicle sites at their `.env`.** It used to blame `wp-config.php` for every site, but those stacks keep their database credentials in `.env`. The hint also mentions that a `DB_*` variable exported in the shell can override that file.
 
 ## [0.26.0] - 2026-08-26
 
