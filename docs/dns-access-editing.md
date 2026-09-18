@@ -46,7 +46,7 @@ never shown or changed. Moving a site can't take down its email.
   supported, with a drill-down into each account's zones. Credentials are verified
   before they're stored, kept in `config.json` (chmod 600), and the matching
   environment variables are honored (`CLOUDFLARE_API_TOKEN`, `AWS_ACCESS_KEY_ID` /
-  `AWS_SECRET_ACCESS_KEY`, `GODADDY_API_KEY` / `GODADDY_API_SECRET`). Secrets are
+  `AWS_SECRET_ACCESS_KEY`, `GODADDY_API_KEY` / `GODADDY_API_SECRET`). Set them in your shell, or in a `.env` in spinuptui's own project directory: a `.env` in any other launch directory is a site's, so its provider keys are ignored (a Bedrock site's S3 `AWS_*` keys would otherwise become your Route 53 credentials). Secrets are
   masked as you type. Listing hosts needs only read access (Cloudflare `Zone:Read`);
   **editing (a TTL or a repoint)** needs write access — Route 53 record writes, or a
   Cloudflare `Zone.DNS:Edit` token.
