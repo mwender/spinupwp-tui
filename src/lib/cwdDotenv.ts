@@ -12,16 +12,34 @@
 //
 // So: drop every key those files defined, except the ones this app reads itself —
 // its token and provider credentials may legitimately live in a project-local
-// .env (see config.ts). Deleting from process.env only reaches children that are
+// .env (see config.ts). The provider keys have generic names a site's .env uses
+// too (Bedrock keeps S3 media credentials under AWS_*), so those are only trusted
+// from spinuptui's own project directory. Deleting from process.env only reaches children that are
 // handed process.env explicitly, which is what src/lib/spawn.ts is for. Must run
 // before anything reads config or spawns, which is why index.tsx imports this
 // module first.
 
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { join } from "node:path"
 
-// Keys spinuptui reads from the environment on purpose.
-const OWN = /^(SPINUP|CLOUDFLARE_API_TOKEN$|AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|REGION)$|GODADDY_API_(KEY|SECRET)$)/
+// Keys spinuptui reads from the environment on purpose. Only spinuptui uses the
+// SPINUP* names, so they're kept from any directory's .env.
+const OWN = /^SPINUP/
+
+// Provider credentials spinuptui also reads (config.ts). Kept only from the .env
+// in spinuptui's own project directory — anywhere else they're a site's keys.
+const PROVIDER = /^(CLOUDFLARE_API_TOKEN|AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|REGION)|GODADDY_API_(KEY|SECRET))$/
+
+// This file lives in <project>/src/lib.
+const PROJECT_DIR = join(import.meta.dir, "..", "..")
+
+function isProjectDir(dir: string): boolean {
+  try {
+    return realpathSync(dir) === realpathSync(PROJECT_DIR)
+  } catch {
+    return false
+  }
+}
 
 // Never removed, whatever a .env says: the spawned shells need these to work.
 const ESSENTIAL = new Set(["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "LANG", "SSH_AUTH_SOCK", "XDG_CONFIG_HOME"])
@@ -71,9 +89,10 @@ export function scrubCwdDotenv(cwd = process.cwd()): string[] {
     }
     for (const [key, value] of dotenvEntries(text)) entries.set(key, value)
   }
+  const ownDir = isProjectDir(cwd)
   const removed: string[] = []
   for (const [key, value] of entries) {
-    if (OWN.test(key) || ESSENTIAL.has(key) || !(key in process.env)) continue
+    if (OWN.test(key) || (ownDir && PROVIDER.test(key)) || ESSENTIAL.has(key) || !(key in process.env)) continue
     // Bun never overrides a variable the shell already set, so a value that differs
     // from the file's came from the shell — keep it. When the file's value can't be
     // read with certainty, assume it's the file's and drop it.
