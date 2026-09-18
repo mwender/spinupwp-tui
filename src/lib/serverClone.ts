@@ -12,6 +12,7 @@
 
 import type { Server } from "../api/types.ts"
 import { wpCliResolveScript } from "./wpCli.ts"
+import { spawn } from "./spawn.ts"
 
 const SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"]
 
@@ -42,7 +43,7 @@ export async function sudoExec(
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const proc = Bun.spawn(["ssh", ...SSH_OPTS, ...portOpt, target, "sudo -S -p '' bash -s"], {
+    const proc = spawn(["ssh", ...SSH_OPTS, ...portOpt, target, "sudo -S -p '' bash -s"], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -853,7 +854,7 @@ async function wpFacts(ctx: SudoCtx, root: string, user: string, phpVersion?: st
 // `curl --resolve` checks). 2xx/3xx counts as serving.
 async function curlStatus(domain: string, ip: string): Promise<string> {
   try {
-    const proc = Bun.spawn(
+    const proc = spawn(
       ["curl", "-sS", "-o", "/dev/null", "-m", "20", "-w", "%{http_code}", "-L", "--resolve", `${domain}:80:${ip}`, "--resolve", `${domain}:443:${ip}`, `http://${domain}/`],
       { stdout: "pipe", stderr: "pipe" },
     )

@@ -24,7 +24,8 @@
   "scripts": {
     "dev": "bun run src/index.tsx",
     "start": "bun run src/index.tsx",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && bun run check:spawn",
+    "check:spawn": "! grep -rnaE \"Bun\\\\.spawn(Sync)?\\\\(|child_process\" src --exclude=spawn.ts || (echo \"Use spawn() from src/lib/spawn.ts instead (see that file)\" >&2; exit 1)",
     "link-global": "bun link",
     "unlink-global": "bun unlink",
     "build:binary": "bun build src/index.tsx --compile --outfile spinuptui"

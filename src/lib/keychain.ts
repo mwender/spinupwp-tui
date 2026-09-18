@@ -7,6 +7,8 @@
 // as an argv value (-w), so it's briefly visible to `ps` on the local machine during
 // the write — acceptable for an opt-in convenience on a personal box; documented here.
 
+import { spawn } from "./spawn.ts"
+
 const SERVICE = "spinup-sudo"
 
 export function keychainAvailable(): boolean {
@@ -19,7 +21,7 @@ function account(serverId: number): string {
 
 async function security(args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   try {
-    const proc = Bun.spawn(["security", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+    const proc = spawn(["security", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" })
     const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
     return { ok: code === 0, stdout, stderr }
   } catch (err) {

@@ -11,6 +11,7 @@ import { join, sep } from "node:path"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { configDir } from "../config.ts"
 import { REPO_SLUG } from "../version.ts"
+import { spawn } from "./spawn.ts"
 
 const CACHE_VERSION = 1
 const TTL_MS = 6 * 60 * 60 * 1000 // 6 hours
@@ -161,7 +162,7 @@ function checkoutRoot(): string {
 }
 
 async function git(cwd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+  const proc = spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
   const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
   return { code, stdout: stdout.trim(), stderr: stderr.trim() }
 }

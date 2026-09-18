@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 import type { Server, Site } from "../api/types.ts"
 import { expandPath, type LocalLink } from "./local.ts"
+import { spawn } from "./spawn.ts"
 
 export const SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"]
 
@@ -114,7 +115,7 @@ export async function runProcess(
 ): Promise<{ code: number; stderr: string; stdout: string }> {
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore", cwd, env })
+    proc = spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore", cwd, env })
   } catch (err) {
     return { code: -1, stderr: `Failed to launch ${cmd[0]}: ${(err as Error).message}`, stdout: "" }
   }

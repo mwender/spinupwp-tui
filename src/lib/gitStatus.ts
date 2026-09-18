@@ -7,6 +7,7 @@
 // needs a network fetch + possibly SSH auth, against the app's no-slow-ops rule).
 
 import { expandPath, findProjectRoot } from "./local.ts"
+import { spawn } from "./spawn.ts"
 
 export interface Drift {
   dirty: boolean // uncommitted working-tree changes
@@ -15,7 +16,7 @@ export interface Drift {
 
 async function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   try {
-    const proc = Bun.spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+    const proc = spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
     const out = await new Response(proc.stdout).text()
     const code = await proc.exited
     return { ok: code === 0, out: out.trim() }
