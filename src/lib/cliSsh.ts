@@ -9,6 +9,7 @@ import type { Server, Site } from "../api/types.ts"
 import type { SpinupWPClientLike } from "../api/client.ts"
 import { ApiError } from "../api/client.ts"
 import { resolveSiteSshTarget, SSH_OPTS } from "./probe.ts"
+import { spawn } from "./spawn.ts"
 
 export type SshAccessReason =
   | "no_token"
@@ -181,7 +182,7 @@ export async function resolveSshAccess(
 
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(["ssh", ...SSH_OPTS, ...portOpt, target, "true"], {
+    proc = spawn(["ssh", ...SSH_OPTS, ...portOpt, target, "true"], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",

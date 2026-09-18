@@ -19,6 +19,7 @@
 import type { Server, Site } from "../api/types.ts"
 import { detectWpDirScript } from "./serverClone.ts"
 import { theme } from "./theme.ts"
+import { spawn } from "./spawn.ts"
 
 export type ProbeKind = "wordpress" | "bedrock" | "radicle" | "whmcs" | "laravel" | "static" | "unknown"
 
@@ -117,7 +118,7 @@ export async function probeSite(
 
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(["ssh", ...SSH_OPTS, target, buildRemoteScript(site.domain, site.public_folder)], {
+    proc = spawn(["ssh", ...SSH_OPTS, target, buildRemoteScript(site.domain, site.public_folder)], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",

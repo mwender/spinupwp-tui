@@ -15,6 +15,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { mkdir, chmod } from "node:fs/promises"
 import { keysDir } from "../config.ts"
 import type { Server, Site } from "../api/types.ts"
+import { spawn } from "./spawn.ts"
 
 export interface CpuCore {
   idx: number
@@ -122,7 +123,7 @@ export async function fetchRebootInfo(
 
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(["ssh", ...SSH_OPTS, target, REBOOT_SCRIPT], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+    proc = spawn(["ssh", ...SSH_OPTS, target, REBOOT_SCRIPT], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
   } catch (err) {
     return { ok: false, target, error: `Failed to launch ssh: ${(err as Error).message}` }
   }
@@ -161,7 +162,7 @@ export async function fetchServerHealth(
 
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(["ssh", ...SSH_OPTS, target, REMOTE_SCRIPT], {
+    proc = spawn(["ssh", ...SSH_OPTS, target, REMOTE_SCRIPT], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -258,7 +259,7 @@ export async function ensureSpinupKey(): Promise<{ path: string; pub: string; co
     return { path, pub: readFileSync(pub, "utf8").trim(), comment }
   }
   await mkdir(keysDir(), { recursive: true })
-  const proc = Bun.spawn(
+  const proc = spawn(
     ["ssh-keygen", "-t", "ed25519", "-N", "", "-C", comment, "-f", path],
     { stdout: "pipe", stderr: "pipe", stdin: "ignore" },
   )
@@ -360,7 +361,7 @@ async function runSshStdin(
   const portOpt = port && port !== 22 ? ["-p", String(port)] : []
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(["ssh", ...SSH_OPTS, ...portOpt, target, remoteCmd], {
+    proc = spawn(["ssh", ...SSH_OPTS, ...portOpt, target, remoteCmd], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: stdinPayload == null ? "ignore" : "pipe",
@@ -576,7 +577,7 @@ export async function listPersonalKeys(): Promise<GrantableKey[]> {
 
   // ssh-agent (keys the user has loaded). Best-effort; ignore if no agent.
   try {
-    const proc = Bun.spawn(["ssh-add", "-L"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+    const proc = spawn(["ssh-add", "-L"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
     const code = await proc.exited
     if (code === 0) {
       const out = await new Response(proc.stdout as ReadableStream<Uint8Array>).text()

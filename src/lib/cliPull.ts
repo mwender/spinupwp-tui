@@ -351,17 +351,22 @@ export async function runPullDb(
 
   if (result.stage === "error") {
     const error = result.error ?? "The sync failed."
-    // The overwhelmingly likely cause right after `pull files`: the copied
-    // wp-config.php still carries production's DB credentials, so local wp-cli
-    // authenticates as the production user against the local MySQL.
+    // Standard WP: the overwhelmingly likely cause right after `pull files` is the
+    // copied wp-config.php still carrying production's DB credentials, so local
+    // wp-cli authenticates as the production user against the local MySQL.
+    // Bedrock/Radicle keep credentials in .env instead (never pulled), and a
+    // DB_* variable exported in the shell can shadow that file.
     const deniedAs = /access denied for user '([^']+)'/i.exec(error)?.[1]
+    const envBased = plan.localKind === "bedrock" || plan.localKind === "radicle"
     return {
       ...fail(
         "sync_failed",
         error,
-        deniedAs
-          ? `Local MySQL refused the user "${deniedAs}". If this copy came from \`pull files\`, its wp-config.php still holds production's database credentials — point DB_NAME / DB_USER / DB_PASSWORD / DB_HOST at your local database and re-run.`
-          : undefined,
+        !deniedAs
+          ? undefined
+          : envBased
+            ? `Local MySQL refused the user "${deniedAs}". This is a ${plan.localKind} checkout, so its database credentials live in ${join(plan.localRoot, ".env")} — point DB_NAME / DB_USER / DB_PASSWORD / DB_HOST there at your local database and re-run. A DB_* variable exported in your shell can override that file, so check \`env | grep ^DB_\` too.`
+            : `Local MySQL refused the user "${deniedAs}". If this copy came from \`pull files\`, its wp-config.php still holds production's database credentials — point DB_NAME / DB_USER / DB_PASSWORD / DB_HOST at your local database and re-run.`,
       ),
       ...(result.failedStage ? { failedStage: result.failedStage } : {}),
     }

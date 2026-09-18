@@ -1,11 +1,13 @@
 // Open a URL in the user's default browser, cross-platform. Best-effort; never throws.
 
+import { spawn } from "./spawn.ts"
+
 export function openUrl(url: string): void {
   try {
     const platform = process.platform
     const cmd = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open"
     const args = platform === "win32" ? ["/c", "start", "", url] : [url]
-    Bun.spawn([cmd, ...args], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+    spawn([cmd, ...args], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
   } catch {
     // ignore — opening a browser is a convenience, not critical
   }
@@ -18,7 +20,7 @@ export function copyToClipboard(text: string): void {
   try {
     const platform = process.platform
     const cmd = platform === "darwin" ? ["pbcopy"] : platform === "win32" ? ["clip"] : ["xclip", "-selection", "clipboard"]
-    const proc = Bun.spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
+    const proc = spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
     proc.stdin.write(text)
     void proc.stdin.end()
   } catch {
@@ -71,11 +73,11 @@ export function openSshSession(user: string, host: string, port?: number | null,
         app === "iTerm"
           ? ["-e", `tell application "iTerm"\ncreate window with default profile command "${esc}"\nactivate\nend tell`]
           : ["-e", `tell application "Terminal" to do script "${esc}"`, "-e", `tell application "Terminal" to activate`]
-      Bun.spawn(["osascript", ...args], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+      spawn(["osascript", ...args], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
     } else if (platform === "win32") {
-      Bun.spawn(["cmd", "/c", "start", "cmd", "/k", cmd], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+      spawn(["cmd", "/c", "start", "cmd", "/k", cmd], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
     } else {
-      Bun.spawn(["x-terminal-emulator", "-e", cmd], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+      spawn(["x-terminal-emulator", "-e", cmd], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
     }
   } catch {
     // ignore — opening a shell is a convenience, not critical
@@ -90,12 +92,12 @@ export function openTerminalAt(dir: string, terminalApp?: string | null): void {
   try {
     const platform = process.platform
     if (platform === "darwin") {
-      Bun.spawn(["open", "-a", resolveTerminalApp(terminalApp), dir], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+      spawn(["open", "-a", resolveTerminalApp(terminalApp), dir], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
     } else if (platform === "win32") {
-      Bun.spawn(["cmd", "/c", "start", "cmd", "/k", `cd /d ${dir}`], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+      spawn(["cmd", "/c", "start", "cmd", "/k", `cd /d ${dir}`], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
     } else {
       // Try a few common terminal emulators; the first that exists wins.
-      Bun.spawn(["x-terminal-emulator", "--working-directory", dir], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+      spawn(["x-terminal-emulator", "--working-directory", dir], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
     }
   } catch {
     // ignore — opening a terminal is a convenience, not critical

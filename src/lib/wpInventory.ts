@@ -12,6 +12,7 @@ import type { Server, Site } from "../api/types.ts"
 import { SSH_OPTS, sshPort } from "./dbBackup.ts"
 import { detectWpDirScript } from "./serverClone.ts"
 import { wpCliResolveScript } from "./wpCli.ts"
+import { spawn } from "./spawn.ts"
 
 // One plugin or theme, mirroring `wp {plugin,theme} list` columns.
 export interface WpItem {
@@ -116,7 +117,7 @@ export async function fetchWpInventory(
 
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(["ssh", ...SSH_OPTS, ...sshPort(server.ssh_port ?? null), target, remote], {
+    proc = spawn(["ssh", ...SSH_OPTS, ...sshPort(server.ssh_port ?? null), target, remote], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",

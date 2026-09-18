@@ -12,6 +12,7 @@ import { resolveSshTargetInfo, type SshAccessReason, type SshAccessCandidate } f
 import { SSH_OPTS } from "./probe.ts"
 import { classifySshCommand } from "./sshExecPolicy.ts"
 import { logSshExecAttempt } from "./sshExecLog.ts"
+import { spawn } from "./spawn.ts"
 
 export type SshExecReason = SshAccessReason | "command_denied"
 
@@ -63,7 +64,7 @@ export async function execSshCommand(
   const start = Date.now()
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(["ssh", ...SSH_OPTS, ...portOpt, sshTarget, command], {
+    proc = spawn(["ssh", ...SSH_OPTS, ...portOpt, sshTarget, command], {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
