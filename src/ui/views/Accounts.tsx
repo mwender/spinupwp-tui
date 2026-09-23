@@ -19,6 +19,7 @@ import { SpinupWPClient } from "../../api/client.ts"
 import { deleteSudoPassword } from "../../lib/keychain.ts"
 import {
   DEFAULT_BASE_URL,
+  DEFAULT_PROFILE,
   PROFILE_CACHE_FILES,
   addProfile,
   listProfiles,
@@ -112,8 +113,14 @@ export function Accounts({ onClose }: { onClose: () => void }) {
   // Files in local working copies are never touched.
   async function doRemove(p: ProfileSummary) {
     for (const sid of p.keychainServers) await deleteSudoPassword(sid, p.id)
+    // The default account's caches sit beside machine-level files in the config
+    // dir itself, so only its named files go; any other account owns its folder.
     const dir = profileDataDir(p.id)
-    for (const f of PROFILE_CACHE_FILES) await rm(join(dir, f), { force: true }).catch(() => {})
+    if (p.id === DEFAULT_PROFILE) {
+      for (const f of PROFILE_CACHE_FILES) await rm(join(dir, f), { force: true }).catch(() => {})
+    } else {
+      await rm(dir, { recursive: true, force: true }).catch(() => {})
+    }
     await removeProfile(p.id)
     reload()
     setIndex(0)
