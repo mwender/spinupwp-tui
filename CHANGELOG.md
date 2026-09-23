@@ -11,6 +11,8 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-09-23
+
 ### Added
 - **Update WordPress core from `u`.** `u` is now **Update**, a menu with two choices: PHP version, the flow you already know, and WordPress core. The WordPress option checks the site over SSH with wp-cli and lists the available versions, with minor (security) releases picked first. After you confirm, it runs `wp core update` and then the database upgrade. The update keeps running if you close the overlay, and a toast reports when it's done. Bedrock and Radicle sites are included; for those, the confirm screen names the version `composer.lock` pins, and warns that the next `composer install` will put that version back until you run `composer update`.
 - **Stacks groups WordPress sites by core version.** Under Standard WP, Bedrock and Radicle, one indented row per WordPress version, newest first, shows how many sites run it (for example `└ WP 7.0.2  51`). The newest version in the fleet is highlighted green. Select a row to list its sites, which makes it easy to find the ones still waiting for a security release. `D` on a version row re-probes just those sites. Sites with no known version are grouped under `no version`, and the left pane now scrolls when the list is taller than the terminal.
@@ -1425,7 +1427,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.26.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/mwender/spinupwp-tui/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/mwender/spinupwp-tui/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/mwender/spinupwp-tui/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/mwender/spinupwp-tui/compare/v0.24.4...v0.25.0
