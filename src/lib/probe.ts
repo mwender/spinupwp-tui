@@ -167,6 +167,22 @@ function parseSections(out: string): Record<string, string> {
   return flat
 }
 
+// The same probe result with a newly learned WordPress core version, relabeled the
+// way classify() labels it. Returns null for kinds that don't carry a WP version
+// (a WHMCS/Laravel/static site's cached identity must never be rewritten).
+export function withWpVersion(r: ProbeResult, version: string): ProbeResult | null {
+  switch (r.kind) {
+    case "wordpress":
+      return { ...r, version, label: `WordPress ${version}` }
+    case "bedrock":
+      return { ...r, version, label: `Bedrock · WP ${version}` }
+    case "radicle":
+      return { ...r, version, label: `Radicle · WP ${version}` }
+    default:
+      return null
+  }
+}
+
 // Turn raw signals into a named stack. Order matters: name the distinctive apps
 // (WHMCS, Bedrock, Laravel) before falling back to a generic WordPress version.
 export function classify(sig: Record<string, string>): ProbeResult {

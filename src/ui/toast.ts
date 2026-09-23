@@ -3,7 +3,7 @@
 // Replaces the @opentui-ui/toast package, which is stuck on a peer-dependency
 // range from opentui's 0.1.x days and breaks against the @opentui/core 0.4.x
 // line we're on (see CHANGELOG v0.24.2/v0.24.3). Every call site in this app
-// only ever fires a single-line success message, so a small first-party
+// only ever fires a single-line success or error message, so a small first-party
 // implementation is simpler — and immune to upstream drift — than depending
 // on a package built for a much larger feature set we don't use.
 //
@@ -15,6 +15,7 @@
 export interface ToastItem {
   id: number
   message: string
+  kind: "success" | "error"
 }
 
 const TOAST_DURATION_MS = 4000
@@ -36,14 +37,19 @@ export function getToasts(): ToastItem[] {
   return toasts
 }
 
-export const toast = {
-  success(message: string) {
-    const id = nextId++
-    toasts = [...toasts, { id, message }]
+function push(message: string, kind: ToastItem["kind"]) {
+  const id = nextId++
+  toasts = [...toasts, { id, message, kind }]
+  notify()
+  setTimeout(() => {
+    toasts = toasts.filter((t) => t.id !== id)
     notify()
-    setTimeout(() => {
-      toasts = toasts.filter((t) => t.id !== id)
-      notify()
-    }, TOAST_DURATION_MS)
-  },
+  }, TOAST_DURATION_MS)
+}
+
+export const toast = {
+  success: (message: string) => push(message, "success"),
+  // For a background job that failed after its overlay was closed — points the
+  // user back at where the details are.
+  error: (message: string) => push(message, "error"),
 }

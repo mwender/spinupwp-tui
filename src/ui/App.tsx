@@ -15,7 +15,8 @@ import { Stacks } from "./views/Stacks.tsx"
 import { Search } from "./views/Search.tsx"
 import { Events } from "./views/Events.tsx"
 import { Health } from "./views/Health.tsx"
-import { PhpUpgrade } from "./views/PhpUpgrade.tsx"
+import { SiteUpdate } from "./views/SiteUpdate.tsx"
+import { BulkWpUpdate } from "./views/BulkWpUpdate.tsx"
 import { HttpsToggle } from "./views/HttpsToggle.tsx"
 import { PurgeCache } from "./views/PurgeCache.tsx"
 import { ReleaseNotes } from "./views/ReleaseNotes.tsx"
@@ -63,6 +64,7 @@ export function App() {
     store.healthServer !== null ||
     store.wpInventorySite !== null ||
     store.phpUpgradeSite !== null ||
+    store.bulkWpGroup !== null ||
     store.httpsToggleSite !== null ||
     store.purgeCacheSite !== null ||
     store.grantKeySite !== null ||
@@ -128,6 +130,9 @@ export function App() {
 
     // The PHP-upgrade overlay owns the keyboard while open.
     if (store.phpUpgradeSite) return
+
+    // The bulk WordPress-update overlay owns the keyboard while open.
+    if (store.bulkWpGroup) return
 
     // The HTTPS-toggle overlay owns the keyboard while open.
     if (store.httpsToggleSite) return
@@ -247,7 +252,8 @@ export function App() {
       {store.releaseNotesInfo && <ReleaseNotes />}
       {store.healthServer && <Health />}
       {store.wpInventorySite && <WpInventory />}
-      {store.phpUpgradeSite && <PhpUpgrade />}
+      {store.phpUpgradeSite && <SiteUpdate />}
+      {store.bulkWpGroup && <BulkWpUpdate />}
       {store.httpsToggleSite && <HttpsToggle />}
       {store.purgeCacheSite && <PurgeCache />}
       {store.grantKeySite && <GrantKey />}

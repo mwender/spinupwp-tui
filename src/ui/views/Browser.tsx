@@ -11,6 +11,7 @@ import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { effectiveStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
 import { Panel, PhpVersionCell, Spinner } from "../components.tsx"
+import { WpCoreRowMark } from "../wpCoreJobs.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { ServerDetail, SiteDetail, ControlStrip, CONTROL_STRIP_HEIGHT } from "../Details.tsx"
 import { StatusBar } from "../StatusBar.tsx"
@@ -387,6 +388,7 @@ export function Browser({ rows }: { rows: number }) {
                       linked/key/HTTPS/cache/backup/updates badges moved to the Details
                       pane (already shown there for the selected site) to give the
                       domain name room on narrower terminals. */}
+                  <WpCoreRowMark siteId={s.id} selected={selected} compact />
                   <text content={stackTag(stack).padEnd(7) + " "} fg={stackColor(stack, selected)} wrapMode="none" style={{ flexShrink: 0 }} />
                   <PhpVersionCell version={s.php_version} upgrade={phpUpgrades.get(s.id)} selected={selected} />
                 </>

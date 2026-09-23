@@ -20,7 +20,7 @@ import { resolveLocalLink, expandPath, normalizeLink, type LocalLink } from "../
 import { cloneStackFor, type Stack } from "../lib/stack.ts"
 import { openTerminalAt, openUrl, openSshSession } from "../lib/open.ts"
 import { gitDrift, type Drift } from "../lib/gitStatus.ts"
-import { probeSite } from "../lib/probe.ts"
+import { probeSite, withWpVersion } from "../lib/probe.ts"
 import { resolveZone, normalizeDomain, candidateHostnames, type ZoneHost } from "../lib/dns.ts"
 import { queryAuthoritative } from "../lib/dnsQuery.ts"
 import { DnsCache, type CachedDns } from "../lib/dnsCache.ts"
@@ -484,6 +484,11 @@ interface StoreValue extends DataState {
   // The site whose PHP-upgrade overlay is open, or null. Set by site views.
   phpUpgradeSite: Site | null
   setPhpUpgradeSite: (s: Site | null) => void
+  // The Stacks version group whose bulk WordPress-update overlay is open, or null.
+  // The sites are a snapshot taken when it opened (the group itself reshuffles as
+  // updates land and versions change).
+  bulkWpGroup: { title: string; sites: Site[] } | null
+  setBulkWpGroup: (g: { title: string; sites: Site[] } | null) => void
   // In-flight (and just-failed) PHP upgrades, keyed by site id. Tracked in the
   // store — not the overlay — so progress survives closing the modal; site rows
   // and detail panels read this to show a spinner/marker.
@@ -757,6 +762,9 @@ interface StoreValue extends DataState {
   probeErrors: Map<number, string> // last error per site id
   // Probe a single site over SSH (fire-and-forget); write-through to the cache.
   runProbe: (site: Site) => void
+  // Fold a WP core version read elsewhere (the `u` → WordPress check/update) into
+  // the cached probe, so rows showing "WordPress x.y.z" don't lag behind it.
+  noteWpVersion: (site: Site, version: string) => void
   // Probe many sites with a bounded concurrency pool (skips in-flight sites).
   runProbeMany: (sites: Site[]) => void
   // Whether a cached probe for this site is stale (site shape changed since).
@@ -949,6 +957,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [healthServer, setHealthServer] = useState<Server | null>(null)
   const [wpInventorySite, setWpInventorySite] = useState<Site | null>(null)
   const [phpUpgradeSite, setPhpUpgradeSite] = useState<Site | null>(null)
+  const [bulkWpGroup, setBulkWpGroup] = useState<{ title: string; sites: Site[] } | null>(null)
   const [phpUpgrades, setPhpUpgrades] = useState<Map<number, PhpUpgradeProgress>>(new Map())
   const [httpsToggleSite, setHttpsToggleSite] = useState<Site | null>(null)
   const [httpsToggles, setHttpsToggles] = useState<Map<number, HttpsToggleProgress>>(new Map())
@@ -1147,6 +1156,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Probe one site and reconcile state + cache. Concurrency-safe (all state
   // updates are functional), so the batch runner can pool several at once.
+  const noteWpVersion = useCallback((site: Site, version: string) => {
+    const cache = cacheRef.current!
+    const entry = cache.get(site.id)
+    // Only refresh an existing WP-family probe: with no probe we don't know the
+    // stack (Standard vs Bedrock vs Radicle), and that's the probe's job.
+    if (!entry || entry.result.version === version) return
+    const next = withWpVersion(entry.result, version)
+    if (!next) return
+    void cache.set(site.id, next, siteSignature(site)).then(() => setProbes(cache.snapshot()))
+  }, [])
+
   const probeOne = useCallback(
     async (site: Site) => {
       const cache = cacheRef.current!
@@ -4249,6 +4269,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setWpInventorySite,
     phpUpgradeSite,
     setPhpUpgradeSite,
+    bulkWpGroup,
+    setBulkWpGroup,
     phpUpgrades,
     startPhpUpgrade,
     clearPhpUpgrade,
@@ -4421,6 +4443,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     probingIds,
     probeErrors,
     runProbe,
+    noteWpVersion,
     runProbeMany,
     isProbeStale,
     dnsZones,

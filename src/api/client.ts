@@ -31,6 +31,42 @@ export class ApiError extends Error {
   }
 }
 
+// Pull the human-readable reason out of a SpinupWP error body. The API answers
+// validation failures Laravel-style — {"message": "...", "errors": {field: [..]}}
+// — and a bare "HTTP 400" hides exactly the part the user needs (which field,
+// and why). Returns "" when the body has nothing usable, so callers can fall
+// back to the status-only message.
+export function apiErrorDetail(body: string | undefined): string {
+  const text = (body ?? "").trim()
+  if (!text) return ""
+  let json: unknown
+  try {
+    json = JSON.parse(text)
+  } catch {
+    // Not JSON (an HTML error page, say) — a short plain-text body is still worth
+    // showing; anything long is noise.
+    return text.length <= 200 && !text.startsWith("<") ? text : ""
+  }
+  if (!json || typeof json !== "object") return ""
+  const j = json as { message?: unknown; error?: unknown; errors?: unknown }
+  const parts: string[] = []
+  const message = typeof j.message === "string" ? j.message : typeof j.error === "string" ? j.error : ""
+  if (j.errors && typeof j.errors === "object") {
+    for (const v of Object.values(j.errors as Record<string, unknown>)) {
+      for (const m of Array.isArray(v) ? v : [v]) if (typeof m === "string" && !parts.includes(m)) parts.push(m)
+    }
+  }
+  // Laravel's top-level message usually just repeats the first field error
+  // ("The php version is invalid. (and 1 more error)") — prefer the field list.
+  if (parts.length) return parts.join(" ")
+  return message
+}
+
+function httpErrorMessage(status: number, body: string): string {
+  const detail = apiErrorDetail(body)
+  return detail ? `SpinupWP API error (HTTP ${status}): ${detail}` : `SpinupWP API error (HTTP ${status}).`
+}
+
 export interface ClientOptions {
   token: string
   baseUrl: string
@@ -152,7 +188,7 @@ export class SpinupWPClient implements SpinupWPClientLike {
     }
     if (!res.ok) {
       const body = await res.text().catch(() => "")
-      throw new ApiError(`SpinupWP API error (HTTP ${res.status}).`, res.status, body)
+      throw new ApiError(httpErrorMessage(res.status, body), res.status, body)
     }
 
     return (await res.json()) as T
@@ -189,7 +225,7 @@ export class SpinupWPClient implements SpinupWPClientLike {
     }
     if (!res.ok) {
       const errBody = await res.text().catch(() => "")
-      throw new ApiError(`SpinupWP API error (HTTP ${res.status}).`, res.status, errBody)
+      throw new ApiError(httpErrorMessage(res.status, errBody), res.status, errBody)
     }
 
     // Some write endpoints (e.g. PHP upgrade) return a bare body, others 204.
