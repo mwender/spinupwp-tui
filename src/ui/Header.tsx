@@ -20,7 +20,7 @@ const TABS: { route: Route; key: string; label: string }[] = [
 // actions a user would reach for. Shown directly under the nav strip.
 const SUBTITLES: Record<Route, string> = {
   dashboard: "Your account at a glance — fleet health, what needs attention, recent activity",
-  servers: "Browse servers and their sites  ·  h server health  ·  u change PHP  ·  L link a local copy",
+  servers: "Browse servers and their sites  ·  h server health  ·  u update PHP/WP  ·  L link a local copy",
   stacks: "Your fleet grouped by app type  ·  d identify an app (SSH)  ·  S find local copies on your disk",
   search: "Jump to any server or site by name  ·  Tab hands focus to the result's actions",
   events: "Recent deploys, reboots, and operations across your account",

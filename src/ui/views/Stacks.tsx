@@ -3,21 +3,25 @@
 // Left pane: selectable composition groups. The three top-level buckets
 // (Standard WP / Bedrock / Non-WP) use the EFFECTIVE stack — a conclusive Tier-2
 // probe overrides the API heuristic — so counts drift toward reality as you
-// probe. Non-WP expands into named sub-rows (WHMCS / Laravel / Static HTML /
-// Unknown / unprobed) from cached probes.
+// probe. The WordPress buckets (Standard WP / Bedrock / Radicle) expand into one
+// sub-row per probed core version, newest first — the "who still needs the
+// security release" view; Non-WP expands into named sub-rows (WHMCS / Laravel /
+// Static HTML / Unknown / unprobed). Both come from cached probes.
 //
 // Middle pane: the sites in the selected group. `d` probes the selected site;
 // `D` probes the whole selected group (bounded concurrency). Right pane: the
 // fleet-wide PHP version distribution with EOL versions flagged.
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { bar, truncate } from "../../lib/format.ts"
 import { STACKS, effectiveStack, stackColor, type Stack } from "../../lib/stack.ts"
 import { phpSortKey } from "../../lib/phpEol.ts"
 import { probeKindColor, type ProbeKind } from "../../lib/probe.ts"
+import { compareVersions } from "../../lib/wpCore.ts"
 import { Panel, Spinner, PhpVersionCell, SiteMetaCell } from "../components.tsx"
+import { WpCoreRowMark, clearBulk, peekBulk, useWpCoreJobs } from "../wpCoreJobs.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { SiteContextStrip, SITE_CONTEXT_STRIP_HEIGHT } from "../Details.tsx"
@@ -29,14 +33,19 @@ import type { Site } from "../../api/types.ts"
 type Focus = "groups" | "sites"
 
 // A selectable row in the composition pane: a top-level bucket (level 0) or a
-// Non-WP sub-category (level 1).
+// sub-row (level 1) — a WP core version under a WordPress stack, or a Non-WP
+// sub-category.
 interface Group {
   id: string
   label: string
+  title?: string // sites-pane title when the bare label lacks context ("7.0.2" → "Bedrock · WP 7.0.2")
   level: 0 | 1
   color: string
   sites: Site[]
 }
+
+const WP_STACKS: Stack[] = ["Standard WP", "Bedrock", "Radicle"]
+
 
 // Non-WP sub-categories, in display order. `kind: null` = not yet probed.
 const NONWP_SUBS: { kind: ProbeKind | null; label: string }[] = [
@@ -49,10 +58,12 @@ const NONWP_SUBS: { kind: ProbeKind | null; label: string }[] = [
 
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite, setKumaSite } =
+  const wpCoreJobs = useWpCoreJobs()
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, setBulkWpGroup, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite, setKumaSite } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
+  const groupTopRef = useRef(0)
   const [siteIndex, setSiteIndex] = useState(0)
   const [focus, setFocus] = useState<Focus>("groups")
   const [flash, setFlash] = useState<string | null>(null)
@@ -75,10 +86,43 @@ export function Stacks({ rows }: { rows: number }) {
     }
     for (const list of byStack.values()) list.sort((a, b) => a.domain.localeCompare(b.domain))
 
+    // The newest core version seen anywhere in the fleet — the one every
+    // version row is measured against (highlighted; older rows are dimmed).
+    let newestWp: string | null = null
+    for (const st of WP_STACKS) {
+      for (const site of byStack.get(st)!) {
+        const v = probes.get(site.id)?.result.version
+        if (v && (!newestWp || compareVersions(v, newestWp) > 0)) newestWp = v
+      }
+    }
+
     const groups: Group[] = []
     for (const st of STACKS) {
       const bucket = byStack.get(st)!
       groups.push({ id: st, label: st, level: 0, color: stackColor(st), sites: bucket })
+      if (WP_STACKS.includes(st)) {
+        const byVersion = new Map<string, Site[]>()
+        const noVersion: Site[] = []
+        for (const site of bucket) {
+          const v = probes.get(site.id)?.result.version
+          if (v) byVersion.set(v, [...(byVersion.get(v) ?? []), site])
+          else noVersion.push(site)
+        }
+        for (const v of [...byVersion.keys()].sort((a, b) => compareVersions(b, a))) {
+          groups.push({
+            id: `wp:${st}:${v}`,
+            label: `WP ${v}`,
+            title: `${st} · WP ${v}`,
+            level: 1,
+            color: v === newestWp ? theme.good : theme.textDim,
+            sites: byVersion.get(v)!,
+          })
+        }
+        // Only worth a row when some are versioned — otherwise it'd just repeat the bucket.
+        if (noVersion.length && byVersion.size) {
+          groups.push({ id: `wp:${st}:none`, label: "no version", title: `${st} · version unknown`, level: 1, color: theme.textFaint, sites: noVersion })
+        }
+      }
       if (st === "Non-WP") {
         for (const sub of NONWP_SUBS) {
           const subSites = bucket.filter((site) => (probes.get(site.id)?.result.kind ?? null) === sub.kind)
@@ -101,6 +145,8 @@ export function Stacks({ rows }: { rows: number }) {
   const safeGroupIndex = Math.min(groupIndex, groups.length - 1)
   const selectedGroup = groups[safeGroupIndex]
   const groupSites = selectedGroup?.sites ?? []
+  // A "WP x.y.z" (or "no version") row under a WordPress stack — bulk-updatable.
+  const isVersionGroup = !!selectedGroup && selectedGroup.id.startsWith("wp:")
   const total = sites.length || 1
 
   useEffect(() => {
@@ -167,8 +213,20 @@ export function Stacks({ rows }: { rows: number }) {
         }
         return
       case "u":
-        // Upgrade the selected site's PHP version (sites pane only).
+        // Sites pane: the selected site's Update menu. Groups pane, on a WP
+        // version row: bulk-update that whole group (a running or unseen bulk
+        // run takes over the overlay instead — only one exists at a time).
         if (focus === "sites" && groupSites[siteIndex]) setPhpUpgradeSite(groupSites[siteIndex])
+        else if (focus === "groups" && isVersionGroup && groupSites.length) {
+          const title = selectedGroup.title ?? selectedGroup.label
+          // A finished run's summary belongs to its own group: reopening THAT
+          // group shows it, any other group starts fresh (and the old summary is
+          // dropped). A run still in progress takes over regardless — one at a time.
+          const prev = peekBulk()
+          if (prev?.phase === "done" && prev.title !== title) clearBulk()
+          setBulkWpGroup({ title, sites: groupSites })
+        }
+        else if (focus === "groups") flashMsg("u updates a WordPress version group — pick a “WP x.y.z” row, or a site")
         return
       case "H":
         // Enable/disable HTTPS on the selected site (sites pane only).
@@ -224,6 +282,13 @@ export function Stacks({ rows }: { rows: number }) {
   })
 
   const listRows = Math.max(3, rows - 6 - SITE_CONTEXT_STRIP_HEIGHT)
+  // Version sub-rows can outgrow a short terminal — scroll the groups pane just
+  // enough to keep the selection visible (same viewport as the sites list).
+  // Only moves when the selection leaves the viewport, like List does.
+  let groupTop = Math.min(groupTopRef.current, Math.max(0, groups.length - listRows))
+  if (safeGroupIndex < groupTop) groupTop = safeGroupIndex
+  else if (safeGroupIndex >= groupTop + listRows) groupTop = safeGroupIndex - listRows + 1
+  groupTopRef.current = groupTop
   const maxPhp = Math.max(1, ...php.map(([, n]) => n))
 
   const hints =
@@ -231,6 +296,7 @@ export function Stacks({ rows }: { rows: number }) {
       ? [
           { key: "↑↓/jk", label: "select" },
           { key: "→/⏎", label: "view sites" },
+          ...(isVersionGroup ? [{ key: "u", label: `update ${groupSites.length} ${groupSites.length === 1 ? "site" : "sites"}` }] : []),
           { key: "D", label: "identify all" },
           { key: "S", label: "find local copies" },
           { key: "f", label: "needs local copy" },
@@ -239,7 +305,7 @@ export function Stacks({ rows }: { rows: number }) {
           { key: "↑↓/jk", label: "select site" },
           { key: "←/esc", label: "back" },
           { key: "d", label: "identify app" },
-          { key: "u", label: "change PHP" },
+          { key: "u", label: "update" },
           { key: "o", label: "open" },
           { key: "w", label: "SpinupWP" },
           { key: "s", label: "ssh" },
@@ -257,7 +323,8 @@ export function Stacks({ rows }: { rows: number }) {
         {/* Composition groups (top-level buckets + Non-WP sub-rows) */}
         <Panel title={` Stacks (${sites.length}) `} active={focus === "groups"} width={36}>
           <box style={{ flexGrow: 1, flexDirection: "column" }}>
-            {groups.map((grp, i) => {
+            {groups.slice(groupTop, groupTop + listRows).map((grp, j) => {
+              const i = groupTop + j
               const n = grp.sites.length
               const selected = i === safeGroupIndex
               const sel = selected && focus === "groups"
@@ -291,7 +358,7 @@ export function Stacks({ rows }: { rows: number }) {
         </Panel>
 
         {/* Sites in the selected group */}
-        <Panel title={` ${selectedGroup?.label ?? "—"} · sites (${groupSites.length}) `} active={focus === "sites"} flexGrow={1}>
+        <Panel title={` ${selectedGroup?.title ?? selectedGroup?.label ?? "—"} · sites (${groupSites.length}) `} active={focus === "sites"} flexGrow={1}>
           <List
             items={groupSites}
             selectedIndex={siteIndex}
@@ -303,6 +370,7 @@ export function Stacks({ rows }: { rows: number }) {
               const cached = probes.get(s.id)
               const probing = probingIds.has(s.id)
               const errored = probeErrors.has(s.id)
+              const wpRunning = wpCoreJobs.get(s.id)?.result === null
               const faint = selected ? theme.text : theme.textFaint
               const updates = (s.wp_plugin_updates || 0) + (s.wp_theme_updates || 0) + (s.wp_core_update ? 1 : 0)
               return (
@@ -318,7 +386,10 @@ export function Stacks({ rows }: { rows: number }) {
                     <SiteMetaCell linked={localLinks.has(s.id)} updates={updates} selected={selected} />
                   </box>
                   <box style={{ flexShrink: 0, flexDirection: "row", marginLeft: 1 }}>
-                    {probing ? (
+                    {wpRunning ? (
+                      // A core update in flight replaces the version it's about to change.
+                      <WpCoreRowMark siteId={s.id} selected={selected} />
+                    ) : probing ? (
                       <Spinner color={selected ? theme.text : theme.brand} />
                     ) : cached ? (
                       <text
@@ -331,6 +402,8 @@ export function Stacks({ rows }: { rows: number }) {
                     ) : (
                       <text content="· press d" fg={faint} wrapMode="none" />
                     )}
+                    {/* Failed: keep the (unchanged) version, flag it — like PHP's ⬆!. */}
+                    {!wpRunning && <WpCoreRowMark siteId={s.id} selected={selected} />}
                   </box>
                   <text
                     content={truncate(serverById(s.server_id)?.name ?? "", 16)}

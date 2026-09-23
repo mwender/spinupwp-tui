@@ -11,6 +11,16 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Update WordPress core from `u`.** `u` is now **Update**, a menu with two choices: PHP version, the flow you already know, and WordPress core. The WordPress option checks the site over SSH with wp-cli and lists the available versions, with minor (security) releases picked first. After you confirm, it runs `wp core update` and then the database upgrade. The update keeps running if you close the overlay, and a toast reports when it's done. Bedrock and Radicle sites are included; for those, the confirm screen names the version `composer.lock` pins, and warns that the next `composer install` will put that version back until you run `composer update`.
+- **Stacks groups WordPress sites by core version.** Under Standard WP, Bedrock and Radicle, one indented row per WordPress version, newest first, shows how many sites run it (for example `└ WP 7.0.2  51`). The newest version in the fleet is highlighted green. Select a row to list its sites, which makes it easy to find the ones still waiting for a security release. `D` on a version row re-probes just those sites. Sites with no known version are grouped under `no version`, and the left pane now scrolls when the list is taller than the terminal.
+- **Update WordPress on a whole version group.** In Stacks, `u` on a version row (`└ WP 7.0.2`) checks every site in that group live over SSH, then shows a plan you can edit. The default target is the newest release in each site's own line (the security hotfix), and `m` switches to the newest release overall. `space` leaves a site out, and Bedrock and Radicle sites are marked `⚙` because of the `composer.lock` caveat. After you confirm, a canary site updates alone first, and if it fails nothing else is touched. The rest follow up to 4 at a time, one per server, stopping after 3 failures; `x` stops starting new sites. It keeps running if you close the overlay, and a single toast reports the result.
+- **Update progress shows on the site's row.** While a WordPress core update runs, the Stacks row replaces the version with a spinner and the target version (`⠹ → WP 7.1.2`). Servers and Search show a compact `WP` marker. If the update fails, the row keeps a `⬆!` marker until you open the result, and the toast that reports the failure is red instead of green.
+
+### Fixed
+- **The WordPress version on a site's row now follows the Update check.** Stacks and Servers show the version from the last `d` probe, so it went stale as soon as core changed. Opening **Update → WordPress core** reads the live version over SSH, and that value, along with the result of any update, now replaces the stored one.
+- **SpinupWP API errors now say why.** A rejected write used to show only "SpinupWP API error (HTTP 400)." The message now includes the reason from the API's response, such as which field it rejected.
+
 ## [0.26.1] - 2026-09-18
 
 ### Fixed

@@ -20,11 +20,11 @@ export function ToastStack() {
         <box
           key={t.id}
           border
-          borderColor={theme.good}
+          borderColor={t.kind === "error" ? theme.bad : theme.good}
           backgroundColor={theme.bgPanel}
           style={{ flexDirection: "row", gap: 1, maxWidth: TOAST_WIDTH, paddingLeft: 1, paddingRight: 1 }}
         >
-          <text content="✓" fg={theme.good} />
+          <text content={t.kind === "error" ? "✕" : "✓"} fg={t.kind === "error" ? theme.bad : theme.good} />
           <text content={t.message} fg={theme.text} />
         </box>
       ))}

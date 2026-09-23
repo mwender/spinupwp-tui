@@ -53,8 +53,8 @@
   pull a production DB into a linked local copy. → [docs/database-backup-sync.md](docs/database-backup-sync.md)
 - **Production media fallback** (`m`, Servers / Search tabs) — serve missing-locally images
   from production after a DB pull. → [docs/production-media-fallback.md](docs/production-media-fallback.md)
-- **Upgrade a site's PHP version** (`u`) — pick a version, apply it, watch the
-  event complete. → [docs/php-upgrade.md](docs/php-upgrade.md)
+- **Update a site** (`u`) — change its PHP version, or update WordPress core over
+  SSH (Standard WP, Bedrock and Radicle). → [docs/php-upgrade.md](docs/php-upgrade.md)
 - **Enable / disable HTTPS** (`H`) — toggle a site's certificate.
 - **Purge cache** (`P`) — clear page + object cache together.
 - **Server actions** (`a`) — reboot or restart a service, with the real reason a
@@ -320,7 +320,7 @@ These can be set in `config.json` or via an environment variable:
 | `D` | Identify every site in the selected stack (Stacks tab) |
 | `S` | Auto-discover & batch-link local copies (Stacks tab) |
 | `f` | Report sites with no usable local copy (Stacks tab only — `f` identifies a site's stack in Servers/Search, above) |
-| `u` | Upgrade a site's PHP version (Servers / Stacks / Search; needs a Read/Write token) |
+| `u` | Update a site: PHP version (needs a Read/Write token) or WordPress core (over SSH) (Servers / Stacks / Search) |
 | `H` | Enable / disable HTTPS on a site (Servers / Stacks / Search; needs a Read/Write token) |
 | `P` | Purge a site's page cache + object cache (Servers / Stacks / Search; needs a Read/Write token) |
 | `M` | Site/server monitoring — a two-pane browser of this site's Uptime Kuma monitors (capital, since lowercase `m` is media fallback in Servers/Search). Inside: `↑`/`↓` selects a monitor, `a` registers/recalibrates/repairs it (Front page and Cache bypass open a check-window picker), `x` removes Front page or Cache bypass, `o` opens the selected monitor in Kuma, `d` runs the site doctor, `n` shows/edits alert wiring, and vanity sites add `R`/`r` for page refresh/secret rotation (Servers / Stacks / Search) |

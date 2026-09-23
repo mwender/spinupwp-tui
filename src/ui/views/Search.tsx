@@ -10,6 +10,7 @@ import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { classifyStack, stackColor, stackTag } from "../../lib/stack.ts"
 import { truncate } from "../../lib/format.ts"
 import { Panel, SiteMetaCell, Spinner } from "../components.tsx"
+import { WpCoreRowMark } from "../wpCoreJobs.tsx"
 import { isDbBackupInFlight } from "../../lib/dbBackup.ts"
 import { isDbSyncInFlight } from "../../lib/dbSync.ts"
 import { List, moveSelection } from "../List.tsx"
@@ -370,6 +371,7 @@ export function Search({ rows }: { rows: number }) {
                     if (b?.stage === "error") return <text content="⬇! " fg={sel ? theme.text : theme.bad} wrapMode="none" style={{ flexShrink: 0 }} />
                     return null
                   })()}
+                  <WpCoreRowMark siteId={r.site.id} selected={sel} compact />
                   <SiteMetaCell
                     linked={localLinks.has(r.site.id)}
                     updates={(r.site.wp_plugin_updates || 0) + (r.site.wp_theme_updates || 0) + (r.site.wp_core_update ? 1 : 0)}

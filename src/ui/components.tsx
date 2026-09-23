@@ -459,7 +459,7 @@ export function siteGroups(isWordpress: boolean, isVanity: boolean): ActionGroup
     ["L", "Link / edit"],
   ]
   if (isWordpress) local.push(["m", "Media fallback"])
-  remote.push(["u", "PHP ver."])
+  remote.push(["u", "Update PHP / WP"])
   remote.push(["H", "Toggle HTTPS"])
   remote.push(["P", "Purge cache"])
   remote.push(["M", "Monitoring"])

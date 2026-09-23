@@ -40,7 +40,7 @@ const NAV: Section = {
     ["c", "Create a new server"],
     ["C", "Clone this server to a new one"],
     ["S", "Connect sudo on the server"],
-    ["u", "Change PHP version"],
+    ["u", "Update PHP version or WordPress core"],
     ["H", "Enable/disable HTTPS"],
     ["P", "Purge page + object cache"],
     ["K", "Grant SpinupTUI's SSH key (sudo)"],

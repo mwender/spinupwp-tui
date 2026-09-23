@@ -1,6 +1,6 @@
 // PHP-version upgrade overlay — the app's first *write* action.
 //
-// Opened with `u` on a selected site (Browser / Stacks). Walks through: pick a
+// Reached from the `u` Update menu (SiteUpdate.tsx) on a selected site. Walks through: pick a
 // version → confirm → fire the upgrade. The actual PUT + event polling live in
 // the store (`startPhpUpgrade`), so closing this modal (Esc/q) doesn't abandon
 // the upgrade — the site's row keeps a spinner until it settles. A site whose
@@ -24,7 +24,7 @@ function majorMinor(v: string | null | undefined): string {
   return min != null ? `${maj}.${min}` : maj
 }
 
-export function PhpUpgrade() {
+export function PhpUpgrade({ onBack }: { onBack?: () => void } = {}) {
   const store = useStore()
   const {
     phpUpgradeSite: site,
@@ -75,6 +75,8 @@ export function PhpUpgrade() {
     const name = key.name ?? ""
     // Esc/q always closes — the upgrade keeps running in the background.
     if (name === "escape" || name === "q") return close()
+
+    if ((dp === "pick" || dp === "blocked") && onBack && (name === "left" || name === "h")) return onBack()
 
     if (dp === "pick") {
       switch (name) {
@@ -281,6 +283,7 @@ export function PhpUpgrade() {
         return [
           { key: "↑↓/jk", label: "version" },
           { key: "⏎", label: "choose" },
+          ...(onBack ? [{ key: "←", label: "back" }] : []),
           { key: "esc", label: "cancel" },
         ]
       case "confirm":
