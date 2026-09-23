@@ -160,6 +160,24 @@ export function clearBulk() {
   emitBulk()
 }
 
+// Is any core update still running? Switching accounts waits for these — the
+// job maps are keyed by site id, which only means something within one account.
+export function wpCoreBusy(): boolean {
+  if (bulk && bulk.phase !== "done") return true
+  for (const j of jobs.values()) if (j.result === null) return true
+  return false
+}
+
+// Forget every job and finished bulk run — on an account switch, once nothing
+// is running (wpCoreBusy), so the new account's rows don't inherit markers.
+export function resetWpCoreJobs() {
+  jobs = new Map()
+  bulk = null
+  stopRequested = false
+  for (const l of jobListeners) l()
+  emitBulk()
+}
+
 export function startBulkCoreUpdate(
   title: string,
   plan: Omit<BulkItem, "state" | "error">[],

@@ -8,6 +8,7 @@
 // the write — acceptable for an opt-in convenience on a personal box; documented here.
 
 import { spawn } from "./spawn.ts"
+import { activeProfileId, DEFAULT_PROFILE } from "../config.ts"
 
 const SERVICE = "spinup-sudo"
 
@@ -15,8 +16,12 @@ export function keychainAvailable(): boolean {
   return process.platform === "darwin"
 }
 
-function account(serverId: number): string {
-  return `server-${serverId}`
+// Server ids are per SpinupWP account — two accounts can both have server #42 —
+// so each account's entries are namespaced by its profile id. The default
+// profile keeps the original un-namespaced name, so entries saved before
+// accounts existed are still found.
+function account(serverId: number, profileId = activeProfileId()): string {
+  return profileId === DEFAULT_PROFILE ? `server-${serverId}` : `${profileId}:server-${serverId}`
 }
 
 async function security(args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
@@ -53,8 +58,9 @@ export async function getSudoPassword(serverId: number): Promise<string | null> 
   return r.ok ? r.stdout.replace(/\n+$/, "") : null
 }
 
-// Remove a server's stored sudo password (best-effort).
-export async function deleteSudoPassword(serverId: number): Promise<void> {
+// Remove a server's stored sudo password (best-effort) — the active account's,
+// or another account's when removing that account.
+export async function deleteSudoPassword(serverId: number, profileId?: string): Promise<void> {
   if (!keychainAvailable()) return
-  await security(["delete-generic-password", "-s", SERVICE, "-a", account(serverId)])
+  await security(["delete-generic-password", "-s", SERVICE, "-a", account(serverId, profileId)])
 }

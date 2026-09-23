@@ -6,13 +6,15 @@
 // First, before any config read or spawn: keep a site checkout's .env from
 // leaking into child processes (see the module).
 import "./lib/cwdDotenv.ts"
-import { useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { createCliRenderer } from "@opentui/core"
 import { createRoot } from "@opentui/react"
 import pkg from "../package.json" with { type: "json" }
-import { hasToken, configPath, loadConfig } from "./config.ts"
+import { hasToken, configPath, loadConfig, pinActiveProfile, setActiveProfile, listProfiles } from "./config.ts"
 import { StoreProvider } from "./ui/store.tsx"
 import { App } from "./ui/App.tsx"
+import { AccountsContext, type AccountsApi } from "./ui/accounts.tsx"
+import { resetWpCoreJobs } from "./ui/wpCoreJobs.tsx"
 import { Onboarding } from "./ui/Onboarding.tsx"
 import { isDevMode } from "./dev/devMode.ts"
 import { SpinupWPClient } from "./api/client.ts"
@@ -94,7 +96,12 @@ Token resolution: SPINUPWP_ACCESS_TOKEN (env / .env) first, then the config
 file. Run \`spinuptui login\` once to save a token so \`spinuptui\` works from
 anywhere.
 
+Accounts: add and switch SpinupWP accounts in the app with A. Commands use the
+active one; SPINUPTUI_ACCOUNT=<id> picks another for a single run (ids are
+listed by \`spinuptui where\`).
+
 Config file: ${configPath()}
+Account: ${cfg.profileLabel} (${cfg.profileId})
 Token source: ${cfg.tokenSource}`)
   process.exit(0)
 }
@@ -107,7 +114,10 @@ if (args.includes("-v") || args.includes("--version") || command === "version") 
 if (command === "where") {
   const cfg = loadConfig()
   console.log(`config: ${configPath()}`)
+  console.log(`account: ${cfg.profileLabel} (${cfg.profileId})`)
   console.log(`token source: ${cfg.tokenSource}`)
+  const others = listProfiles().filter((p) => !p.active)
+  if (others.length) console.log(`other accounts: ${others.map((p) => `${p.label} (${p.id})`).join(", ")}`)
   process.exit(0)
 }
 
@@ -240,13 +250,23 @@ const forceLogin = command === "login"
 
 function Root() {
   const [configured, setConfigured] = useState(isDevMode() ? true : forceLogin ? false : hasToken())
+  // The store is keyed by account: switching remounts it (see ui/accounts.tsx).
+  const [account, setAccount] = useState(() => pinActiveProfile())
+  const switchAccount = useCallback(async (id: string) => {
+    await setActiveProfile(id)
+    resetWpCoreJobs()
+    setAccount(id)
+  }, [])
+  const accounts = useMemo<AccountsApi>(() => ({ switchAccount }), [switchAccount])
   if (!configured) {
     return <Onboarding onComplete={() => setConfigured(true)} />
   }
   return (
-    <StoreProvider>
-      <App />
-    </StoreProvider>
+    <AccountsContext.Provider value={accounts}>
+      <StoreProvider key={account}>
+        <App />
+      </StoreProvider>
+    </AccountsContext.Provider>
   )
 }
 

@@ -21,9 +21,11 @@ actually running where. It works in two tiers:
   Radicle is distinguished from Bedrock by its `roots/acorn` Composer dependency
   — a bare `roots/bedrock` string match isn't enough, since Radicle also pulls
   in `roots/bedrock-autoloader`. The Non-WP bucket expands into named sub-rows
-  (WHMCS / Laravel / Static HTML / Unknown / unprobed).
+  (WHMCS / Laravel / Static HTML / Vanity Site / Unknown / unprobed).
+
+**Vanity Site** is the one Non-WP sub-row that needs no probe. A site whose domain is its server's own hostname (e.g. `web1.example.com` on server `web1.example.com`) is the server's vanity site, the same rule every vanity feature uses, so it's known from the API alone. It claims the site when the probe is absent, Unknown or Static HTML, since the placeholder page reads as neither; a positively identified app (WHMCS, Laravel) living at the hostname keeps its own row, and a WordPress site at the hostname stays in its WordPress bucket.
 
 Probes reuse the same SSH access as the health view (`site_user@ip`, your local
 keys, `BatchMode`) and are **read-only**. Results are cached to
-`~/.config/spinupwp-tui/stack-cache.json`, hydrated at startup, so detections
+`~/.config/spinupwp-tui/stack-cache.json` (per account — see [multiple-accounts.md](multiple-accounts.md)), hydrated at startup, so detections
 survive restarts without re-running SSH.

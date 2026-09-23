@@ -6,6 +6,16 @@
 //
 // This lets the original author keep a project-local .env while letting other
 // users configure the tool globally after a `bun install -g`.
+//
+// Accounts (profiles): config.json can hold several SpinupWP accounts under
+// `profiles`, one of them active. Everything that belongs to an account — its
+// token, DNS connections, local-copy links, sudo users, jobs… (PROFILE_KEYS) —
+// lives inside its profile; machine-level settings (terminal app, local scan
+// roots, the Uptime Kuma login, last-seen version) stay at the top level and are
+// shared. Callers never see the split: readStoredConfig() returns the active
+// profile flattened over the globals, and saveConfig() routes each key back to
+// where it belongs. A pre-profiles file is read as a single profile, "default",
+// and rewritten in the new shape on its next save.
 
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -17,13 +27,16 @@ import { ALL_PROVIDERS, type Connection, type ConnProvider } from "./lib/provide
 export const DEFAULT_BASE_URL = "https://api.spinupwp.app/v1"
 
 export interface AppConfig {
+  // The active account's profile id and human label (see "Accounts" above).
+  profileId: string
+  profileLabel: string
   token: string
   baseUrl: string
   tokenSource: "env" | "file" | "none"
   // Optional override for the SSH user used by the server health view. When unset,
   // the health view derives the user from a site on the server (its `site_user`).
   sshUser: string | null
-  // SpinupWP account/team slug (e.g. "wenmark-digital-solutions"), used to build
+  // SpinupWP account/team slug (e.g. "acme-agency"), used to build
   // deep links into the SpinupWP web app. The API doesn't expose it, so it's
   // configured. When unset, deep links fall back to the dashboard root.
   accountSlug: string | null
@@ -191,6 +204,64 @@ export interface StoredConfig {
   lastSeenVersion?: string
 }
 
+// ---- Accounts (profiles) -------------------------------------------------------
+
+// The keys that belong to one SpinupWP account. Server and site ids are assigned
+// per account (two accounts can both have a server #42), so anything keyed by
+// them MUST be here, as must DNS provider credentials (each client's own).
+// Everything else in StoredConfig is machine-level and shared by every profile.
+// `kumaMonitors` is per account, the Kuma login (`uptimeKuma`) is shared: one
+// agency's Kuma watches every account's sites.
+const PROFILE_KEYS = [
+  "token",
+  "baseUrl",
+  "accountSlug",
+  "sshUser",
+  "localSites",
+  "localSync",
+  "providers",
+  "serverProviders",
+  "jobs",
+  "sudoUsers",
+  "preferredGrantKeys",
+  "grantedKeys",
+  "zoneAccessNotes",
+  "vanityHealthKeys",
+  "kumaMonitors",
+] as const satisfies readonly (keyof StoredConfig)[]
+type ProfileKey = (typeof PROFILE_KEYS)[number]
+const isProfileKey = (k: string): k is ProfileKey => (PROFILE_KEYS as readonly string[]).includes(k)
+
+export type StoredProfile = Pick<StoredConfig, ProfileKey> & { label?: string }
+
+// The on-disk shape: globals at the top, accounts under `profiles`.
+interface StoredFile extends Omit<StoredConfig, ProfileKey> {
+  activeProfile?: string
+  profiles?: Record<string, StoredProfile>
+}
+
+// The profile a pre-profiles config migrates into. Its Keychain entries and cache
+// files keep their original (un-namespaced) names, so migrating moves nothing.
+export const DEFAULT_PROFILE = "default"
+
+export interface ProfileSummary {
+  id: string
+  label: string
+  accountSlug: string | null
+  active: boolean
+  // How many sudo passwords this account has saved in the Keychain — what a
+  // removal will scrub.
+  keychainServers: number[]
+}
+
+// Picks a profile for this process only (no write) — the SPINUPTUI_ACCOUNT env
+// var, so a CLI command can target an account without switching the app's.
+let processProfile: string | null = process.env.SPINUPTUI_ACCOUNT?.trim() || null
+
+export function profileLabel(p: StoredProfile | undefined, id: string): string {
+  return p?.label?.trim() || p?.accountSlug?.trim() || id
+}
+
 export function configDir(): string {
   const xdg = process.env.XDG_CONFIG_HOME
   return xdg ? join(xdg, "spinupwp-tui") : join(homedir(), ".config", "spinupwp-tui")
@@ -206,19 +277,142 @@ export function keysDir(): string {
   return join(configDir(), "keys")
 }
 
-function readStoredConfig(): StoredConfig {
+function readRawFile(): Record<string, unknown> {
   try {
     const path = configPath()
     if (!existsSync(path)) return {}
-    return JSON.parse(readFileSync(path, "utf8")) as StoredConfig
+    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
   } catch {
     return {}
   }
 }
 
+// Read config.json in the profiles shape, migrating a flat (pre-profiles) file
+// in memory: its account keys become the "default" profile.
+function readStoredFile(): StoredFile {
+  const raw = readRawFile()
+  if (raw.profiles && typeof raw.profiles === "object") return raw as StoredFile
+  const file: Record<string, unknown> = {}
+  const profile: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(raw)) (isProfileKey(k) ? profile : file)[k] = v
+  // Nothing account-shaped yet (fresh install): no profile until one is saved.
+  if (Object.keys(profile).length === 0) return file as StoredFile
+  return { ...(file as StoredFile), activeProfile: DEFAULT_PROFILE, profiles: { [DEFAULT_PROFILE]: profile as StoredProfile } }
+}
+
+// The id of the profile this process reads and writes. Falls back to the first
+// profile when the stored pointer is missing or dangling.
+function resolveActive(file: StoredFile): string {
+  const ids = Object.keys(file.profiles ?? {})
+  for (const want of [processProfile, file.activeProfile]) if (want && ids.includes(want)) return want
+  return ids[0] ?? DEFAULT_PROFILE
+}
+
+export function activeProfileId(): string {
+  return resolveActive(readStoredFile())
+}
+
+// The active profile flattened over the machine-level settings — the shape every
+// caller has always read.
+function readStoredConfig(): StoredConfig {
+  const file = readStoredFile()
+  const { profiles, activeProfile: _active, ...globals } = file
+  const profile = profiles?.[resolveActive(file)] ?? {}
+  const { label: _label, ...fields } = profile
+  return { ...globals, ...fields }
+}
+
+// Where an account's disk caches (probe results, DNS, verified zones) live. The
+// default profile keeps the original top-level paths, so migrating moves no
+// files; any other account gets its own directory, since those caches are keyed
+// by per-account site ids and zones.
+export function profileDataDir(id = activeProfileId()): string {
+  return id === DEFAULT_PROFILE ? configDir() : join(configDir(), "profiles", id)
+}
+
+// The per-account cache files, by name, inside profileDataDir() — listed so
+// removing an account can delete exactly these (the default profile's sit
+// beside machine-level files in the config dir itself).
+export const PROFILE_CACHE_FILES = ["stack-cache.json", "dns-cache.json", "providers-cache.json"]
+
+export function listProfiles(): ProfileSummary[] {
+  const file = readStoredFile()
+  const active = resolveActive(file)
+  return Object.entries(file.profiles ?? {}).map(([id, p]) => ({
+    id,
+    label: profileLabel(p, id),
+    accountSlug: p.accountSlug?.trim() || null,
+    active: id === active,
+    keychainServers: Object.entries(p.sudoUsers ?? {})
+      .filter(([, u]) => u.keychain)
+      .map(([sid]) => Number(sid)),
+  }))
+}
+
+// A lowercase, dash-separated id from a label, unique among existing profiles.
+function profileIdFor(label: string, taken: string[]): string {
+  const base = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "account"
+  let id = base
+  for (let n = 2; taken.includes(id); n++) id = `${base}-${n}`
+  return id
+}
+
+// Add an account (token already validated by the caller). Does not switch to it.
+export async function addProfile(p: { label: string; token: string; baseUrl?: string; accountSlug?: string }): Promise<string> {
+  const file = readStoredFile()
+  const profiles = { ...(file.profiles ?? {}) }
+  const id = profileIdFor(p.label, Object.keys(profiles))
+  profiles[id] = {
+    label: p.label.trim(),
+    token: p.token.trim(),
+    baseUrl: p.baseUrl ?? DEFAULT_BASE_URL,
+    ...(p.accountSlug?.trim() ? { accountSlug: p.accountSlug.trim() } : {}),
+  }
+  await writeStoredFile({ ...file, activeProfile: resolveActive(file), profiles })
+  return id
+}
+
+export async function renameProfile(id: string, label: string): Promise<void> {
+  const file = readStoredFile()
+  const p = file.profiles?.[id]
+  if (!p || !label.trim()) return
+  await writeStoredFile({ ...file, activeProfile: resolveActive(file), profiles: { ...file.profiles, [id]: { ...p, label: label.trim() } } })
+}
+
+// Drop an account's profile. The caller scrubs its Keychain entries and cache
+// directory (see removeAccount in the Accounts overlay). The active account
+// can't be removed — switch away first.
+export async function removeProfile(id: string): Promise<void> {
+  const file = readStoredFile()
+  const active = resolveActive(file)
+  if (id === active || !file.profiles?.[id]) return
+  const { [id]: _gone, ...rest } = file.profiles
+  await writeStoredFile({ ...file, activeProfile: active, profiles: rest })
+}
+
+// Lock this process to the account active right now. The TUI calls it at
+// launch: without it, a second instance on the same machine
+// switching accounts would rewrite `activeProfile` in the shared file, and this
+// process's call-time reads — Keychain names, cache dirs, jobs, local links —
+// would quietly follow it while its screens still show the old account.
+export function pinActiveProfile(): string {
+  processProfile = resolveActive(readStoredFile())
+  return processProfile
+}
+
+// Make `id` the active account, for this process and future launches.
+export async function setActiveProfile(id: string): Promise<void> {
+  const file = readStoredFile()
+  if (!file.profiles?.[id]) return
+  processProfile = id
+  await writeStoredFile({ ...file, activeProfile: id })
+}
+
 // Resolve the active config from env + stored file. Never throws.
 export function loadConfig(): AppConfig {
   const stored = readStoredConfig()
+  const file = readStoredFile()
+  const profileId = resolveActive(file)
   const envToken = process.env.SPINUPWP_ACCESS_TOKEN?.trim()
   const fileToken = stored.token?.trim()
 
@@ -257,11 +451,16 @@ export function loadConfig(): AppConfig {
   }
 
   return {
+    profileId,
+    profileLabel: profileLabel(file.profiles?.[profileId], profileId),
     token,
     baseUrl: (stored.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ""),
     tokenSource,
     sshUser: process.env.SPINUPWP_SSH_USER?.trim() || stored.sshUser?.trim() || null,
-    accountSlug: process.env.SPINUPWP_ACCOUNT_SLUG?.trim() || stored.accountSlug?.trim() || null,
+    // The env slug describes the env token's account (or the one account a
+    // pre-profiles setup had) — never another profile the user switched to.
+    accountSlug:
+      ((tokenSource === "env" || profileId === DEFAULT_PROFILE) && process.env.SPINUPWP_ACCOUNT_SLUG?.trim()) || stored.accountSlug?.trim() || null,
     terminalApp: process.env.SPINUPWP_TERMINAL_APP?.trim() || stored.terminalApp?.trim() || null,
     localSync: ((): boolean => {
       // Env overrides the file when present; otherwise the stored flag (default off).
@@ -295,12 +494,37 @@ export function hasToken(): boolean {
   return loadConfig().token.length > 0
 }
 
-// Persist a token (and optional base URL) to the config file. Used by onboarding.
-export async function saveConfig(partial: StoredConfig): Promise<void> {
+// Merge settings into the config file: account keys into the active profile
+// (created as "default" if there is none yet — first-run onboarding), the rest
+// at the top level. `profileId` pins the account keys to a specific profile —
+// the app passes the one it was started for, so a write that lands after an
+// account switch can't leak into the newly active account (and one for an
+// account removed meanwhile is dropped).
+export async function saveConfig(partial: StoredConfig, profileId?: string): Promise<void> {
+  const file = readStoredFile()
+  const active = resolveActive(file)
+  if (profileId && profileId !== active && !file.profiles?.[profileId]) {
+    partial = Object.fromEntries(Object.entries(partial).filter(([k]) => !isProfileKey(k)))
+    if (Object.keys(partial).length === 0) return
+  }
+  const target = profileId && file.profiles?.[profileId] ? profileId : active
+  const profile: StoredProfile = { ...(file.profiles?.[target] ?? {}) }
+  const next: StoredFile = { ...file }
+  for (const [k, v] of Object.entries(partial)) {
+    if (isProfileKey(k)) (profile as Record<string, unknown>)[k] = v
+    else (next as Record<string, unknown>)[k] = v
+  }
+  const hasProfile = file.profiles?.[target] || PROFILE_KEYS.some((k) => k in partial)
+  if (hasProfile) {
+    next.profiles = { ...(file.profiles ?? {}), [target]: profile }
+    next.activeProfile = active
+  }
+  await writeStoredFile(next)
+}
+
+async function writeStoredFile(next: StoredFile): Promise<void> {
   const dir = configDir()
   await mkdir(dir, { recursive: true })
-  const current = readStoredConfig()
-  const next: StoredConfig = { ...current, ...partial }
   const path = configPath()
   await Bun.write(path, JSON.stringify(next, null, 2) + "\n")
   // The file holds an API token — restrict it to the owner.

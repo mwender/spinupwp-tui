@@ -12,7 +12,7 @@
 import { join } from "node:path"
 import { existsSync, readFileSync } from "node:fs"
 import { chmod, mkdir } from "node:fs/promises"
-import { configDir } from "../config.ts"
+import { profileDataDir } from "../config.ts"
 import type { ProbeResult } from "./probe.ts"
 
 const CACHE_VERSION = 1
@@ -28,8 +28,8 @@ interface CacheFile {
   entries: Record<string, CachedProbe> // key: String(site.id)
 }
 
-export function stackCachePath(): string {
-  return join(configDir(), "stack-cache.json")
+export function stackCachePath(dir = profileDataDir()): string {
+  return join(dir, "stack-cache.json")
 }
 
 // A cached probe is considered stale when the site's relevant shape changes.
@@ -40,6 +40,9 @@ export function siteSignature(site: { is_wordpress: boolean; public_folder: stri
 }
 
 export class StackCache {
+  // Pinned to the account active when the cache was created, so a write that
+  // lands after an account switch still goes to its own account\'s file.
+  private readonly dir = profileDataDir()
   private entries = new Map<number, CachedProbe>()
   // Serializes disk writes so concurrent probes (batch mode) can't tear the
   // file or drop each other's updates. Each persist() runs after the previous.
@@ -49,7 +52,7 @@ export class StackCache {
   // simply yields an empty cache.
   load(): void {
     try {
-      const path = stackCachePath()
+      const path = stackCachePath(this.dir)
       if (!existsSync(path)) return
       const parsed = JSON.parse(readFileSync(path, "utf8")) as CacheFile
       if (parsed?.version !== CACHE_VERSION || !parsed.entries) return
@@ -99,10 +102,10 @@ export class StackCache {
   }
 
   private async writeFile(): Promise<void> {
-    await mkdir(configDir(), { recursive: true })
+    await mkdir(this.dir, { recursive: true })
     const file: CacheFile = { version: CACHE_VERSION, entries: {} }
     for (const [id, entry] of this.entries) file.entries[String(id)] = entry
-    const path = stackCachePath()
+    const path = stackCachePath(this.dir)
     await Bun.write(path, JSON.stringify(file, null, 2) + "\n")
     try {
       await chmod(path, 0o600)

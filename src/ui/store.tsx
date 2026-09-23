@@ -11,7 +11,7 @@ import { SpinupWPClient, ApiError, type ServerService, type SpinupWPClientLike }
 import { isDevMode } from "../dev/devMode.ts"
 import { createMockClient } from "../dev/mockClient.ts"
 import type { Server, Site, Event, ProviderMetadata, CreateServerPayload, CreateSitePayload, AdditionalDomain } from "../api/types.ts"
-import { loadConfig, saveConfig, type ServerProviderRef, type KumaMonitorRef, type UptimeKumaConn } from "../config.ts"
+import { loadConfig, saveConfig, type StoredConfig, type ServerProviderRef, type KumaMonitorRef, type UptimeKumaConn } from "../config.ts"
 import { saveJob, removeJob } from "../lib/jobs.ts"
 import { APP_VERSION } from "../version.ts"
 import { cachedUpdateInfo, refreshUpdateInfo, type UpdateInfo } from "../lib/appUpdate.ts"
@@ -53,9 +53,10 @@ import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword
 import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { resolveUbuntuEolDates, refreshUbuntuEolDates, isUbuntuEol as isUbuntuEolWith, type UbuntuEolDates } from "../lib/ubuntuEol.ts"
-import { planDbBackup, runDbBackup, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
-import { planDbSync, runDbSync, type DbSyncProgress, type SyncPlanResult } from "../lib/dbSync.ts"
-import { planLocalSetup, runLocalSetup, type LocalSetupProgress, type LocalSetupPlanResult } from "../lib/localSetup.ts"
+import { wpCoreBusy } from "./wpCoreJobs.tsx"
+import { planDbBackup, runDbBackup, isDbBackupInFlight, type DbBackupProgress, type PlanResult } from "../lib/dbBackup.ts"
+import { planDbSync, runDbSync, isDbSyncInFlight, type DbSyncProgress, type SyncPlanResult } from "../lib/dbSync.ts"
+import { planLocalSetup, runLocalSetup, isLocalSetupInFlight, type LocalSetupProgress, type LocalSetupPlanResult } from "../lib/localSetup.ts"
 import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
 
 export type Route = "dashboard" | "servers" | "stacks" | "search" | "events"
@@ -754,6 +755,18 @@ interface StoreValue extends DataState {
   enableLocalSync: () => void
   // SpinupWP account slug (from env/config) for building web deep links.
   accountSlug: string | null
+  // The account (profile) this store is mounted for — see config.ts "Accounts".
+  // Switching remounts the whole store, so these never change under a view.
+  profileId: string
+  profileLabel: string
+  setProfileLabel: (label: string) => void // after a rename in the Accounts overlay
+  // The token came from SPINUPWP_ACCESS_TOKEN, which pins the account: switching
+  // would change nothing until it's unset.
+  tokenFromEnv: boolean
+  // What's still running that an account switch would orphan, in words — or
+  // null when it's safe to switch. Only work that writes (to SpinupWP, a server,
+  // DNS, or a local database) counts; reads and probes are simply dropped.
+  switchBlocker: () => string | null
   sitesForServer: (serverId: number) => Site[]
   serverById: (id: number | null | undefined) => Server | undefined
   // Tier-2 stack probes (on-demand SSH), hydrated from disk at startup.
@@ -895,6 +908,9 @@ export function useStore(): StoreValue {
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const cfgRef = useRef(loadConfig())
+  // Every config write from this store targets the account it was mounted for —
+  // a late write from an async flow can't land in an account switched to since.
+  const saveProfileConfig = (partial: StoredConfig) => saveConfig(partial, cfgRef.current.profileId)
   const clientRef = useRef<SpinupWPClientLike | null>(null)
   if (!clientRef.current) {
     clientRef.current = isDevMode() ? createMockClient() : new SpinupWPClient(cfgRef.current)
@@ -927,7 +943,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Fresh install, or upgrading from a pre-this-feature version — nothing
       // meaningful to announce. Seed silently so future bumps trigger correctly.
       cfgRef.current.lastSeenVersion = APP_VERSION
-      void saveConfig({ lastSeenVersion: APP_VERSION })
+      void saveProfileConfig({ lastSeenVersion: APP_VERSION })
       return
     }
     void fetchReleaseNotes(APP_VERSION).then((notes) => {
@@ -939,7 +955,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const dismissReleaseNotes = useCallback(() => {
     setReleaseNotesInfo(null)
     cfgRef.current.lastSeenVersion = APP_VERSION
-    void saveConfig({ lastSeenVersion: APP_VERSION })
+    void saveProfileConfig({ lastSeenVersion: APP_VERSION })
   }, [])
   // On-demand replay (Help overlay's `n`) — bypasses the "seen" gate entirely,
   // since viewing the current version's notes again is always valid regardless
@@ -951,6 +967,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (notes) setReleaseNotesInfo(notes)
     })
   }, [])
+  const [profileLabel, setProfileLabel] = useState(cfgRef.current.profileLabel)
   const [route, setRoute] = useState<Route>("dashboard")
   const [inputMode, setInputMode] = useState(false)
   const [overlayOpen, setOverlayOpen] = useState(false)
@@ -1640,7 +1657,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const next = { ...prev, [providerKey]: { ...(prev[providerKey] ?? {}), id } }
     cfgRef.current.serverProviders = next
     setServerProviders(next)
-    void saveConfig({ serverProviders: next })
+    void saveProfileConfig({ serverProviders: next })
   }, [])
 
   // Poll a server-create event to completion, mirroring its status into the job
@@ -1734,7 +1751,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const record: Record<string, LocalLink> = {}
     for (const [id, link] of next) record[String(id)] = link
     cfgRef.current.localSites = record
-    void saveConfig({ localSites: record })
+    void saveProfileConfig({ localSites: record })
   }, [])
 
   const linkSite = useCallback(
@@ -1766,14 +1783,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (prev.includes(trimmed)) return prev
       const next = [...prev, trimmed]
       cfgRef.current.localRoots = next
-      void saveConfig({ localRoots: next })
+      void saveProfileConfig({ localRoots: next })
       return next
     })
   }, [])
 
   const enableLocalSync = useCallback(() => {
     cfgRef.current.localSync = true
-    void saveConfig({ localSync: true })
+    void saveProfileConfig({ localSync: true })
     setLocalSyncState(true)
   }, [])
 
@@ -1823,7 +1840,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const record: Record<string, { user: string; keychain?: boolean }> = {}
     for (const [id, u] of users) record[String(id)] = saved.has(id) ? { user: u, keychain: true } : { user: u }
     cfgRef.current.sudoUsers = record
-    void saveConfig({ sudoUsers: record })
+    void saveProfileConfig({ sudoUsers: record })
   }, [])
   const isSudoConnected = useCallback((serverId: number) => sudoConnected.has(serverId), [sudoConnected])
   const sudoSavedFor = useCallback((serverId: number) => sudoSaved.has(serverId), [sudoSaved])
@@ -1920,7 +1937,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const setPreferredGrantKeys = useCallback((ids: string[]) => {
     cfgRef.current.preferredGrantKeys = ids
     setPreferredGrantKeysState(ids)
-    void saveConfig({ preferredGrantKeys: ids })
+    void saveProfileConfig({ preferredGrantKeys: ids })
   }, [])
 
   // Persist the granted-keys map (only non-empty entries) to config, write-through.
@@ -1928,7 +1945,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const rec: Record<string, string[]> = {}
     for (const [id, set] of next) if (set.size) rec[String(id)] = [...set]
     cfgRef.current.grantedKeys = rec
-    void saveConfig({ grantedKeys: rec })
+    void saveProfileConfig({ grantedKeys: rec })
   }, [])
 
   // Record / forget which keys (by body) Spinup has granted on a site.
@@ -1970,7 +1987,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       else next.delete(apex)
       const rec = Object.fromEntries(next)
       cfgRef.current.zoneAccessNotes = rec
-      void saveConfig({ zoneAccessNotes: rec })
+      void saveProfileConfig({ zoneAccessNotes: rec })
       return next
     })
   }, [])
@@ -2447,7 +2464,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     for (const p of ALL_PROVIDERS) {
       providers[p] = next[p].filter((c) => !c.env).map((c) => ({ id: c.id, label: c.label, creds: c.creds }))
     }
-    void saveConfig({ providers })
+    void saveProfileConfig({ providers })
   }, [])
 
   // Verify a connection and write the result through to the cache.
@@ -2682,7 +2699,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (keys[domain] !== key) {
       keys[domain] = key
       cfgRef.current.vanityHealthKeys = keys
-      void saveConfig({ vanityHealthKeys: keys })
+      void saveProfileConfig({ vanityHealthKeys: keys })
     }
     return key
   }, [])
@@ -2696,7 +2713,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const newKey = crypto.randomUUID().replace(/-/g, "")
     keys[domain] = newKey
     cfgRef.current.vanityHealthKeys = keys
-    void saveConfig({ vanityHealthKeys: keys })
+    void saveProfileConfig({ vanityHealthKeys: keys })
     return { oldKey, newKey }
   }, [])
 
@@ -2705,13 +2722,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const persistKumaAuth = useCallback((conn: UptimeKumaConn, jwt: string) => {
     if (conn.env || jwt === conn.jwt) return
     cfgRef.current.uptimeKuma = { ...conn, jwt }
-    void saveConfig({ uptimeKuma: { ...conn, jwt } })
+    void saveProfileConfig({ uptimeKuma: { ...conn, jwt } })
   }, [])
 
   const persistKumaMonitors = useCallback((domain: string, ref: KumaMonitorRef) => {
     const map = { ...cfgRef.current.kumaMonitors, [domain]: ref }
     cfgRef.current.kumaMonitors = map
-    void saveConfig({ kumaMonitors: map })
+    void saveProfileConfig({ kumaMonitors: map })
   }, [])
 
   // The step machine. Each step performs its work then hands off to the next; it
@@ -3127,7 +3144,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (!login.ok) return { ok: false, error: login.error, tokenRequired: login.tokenRequired }
           const stored = { url, username: conn.username, password: conn.password, jwt: login.jwt }
           cfgRef.current.uptimeKuma = stored
-          void saveConfig({ uptimeKuma: stored })
+          void saveProfileConfig({ uptimeKuma: stored })
           setKumaEpoch((e) => e + 1) // start the status poll loop now
           await kuma.waitForVersion() // `info` can land after the login ack
           return { ok: true, version: kuma.version }
@@ -4245,6 +4262,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [trackServerEvent, trackPhpUpgradeEvent, trackHttpsToggleEvent, driveVanity])
 
+  const switchBlocker = (): string | null => {
+    const count = <T,>(m: Map<unknown, T>, busy: (p: T) => boolean) => [...m.values()].filter(busy).length
+    const running: [number, string][] = [
+      [count(phpUpgrades, isUpgradeInFlight), "PHP upgrade"],
+      [count(httpsToggles, isHttpsToggleInFlight), "HTTPS change"],
+      [count(purgeCacheProgress, isPurgeCacheInFlight), "cache purge"],
+      [count(serverOps, isServerOpInFlight), "server reboot/restart"],
+      [count(keyGrants, isKeyGrantInFlight), "SSH key grant"],
+      [count(dbBackups, isDbBackupInFlight), "database backup"],
+      [count(dbSyncs, isDbSyncInFlight), "database sync"],
+      [count(localSetups, isLocalSetupInFlight), "local copy setup"],
+      [count(recordWrites, isRecordWriteInFlight), "DNS change"],
+      [count(kumaOps, (o) => o.status === "running"), "monitoring change"],
+      [isNewServerInFlight(newServerJob) ? 1 : 0, "server build"],
+      [isVanityInFlight(vanityJob) ? 1 : 0, "vanity-site build"],
+      // A clone still being planned hasn't touched anything yet — only a launched one counts.
+      [isCloneInFlight(cloneJob) && cloneJob!.step !== "plan" && cloneJob!.step !== "server" ? 1 : 0, "server clone"],
+      [wpCoreBusy() ? 1 : 0, "WordPress update"],
+    ]
+    const busy = running.filter(([n]) => n > 0).map(([n, what]) => (n > 1 ? `${n} ${what}s` : `a ${what}`))
+    return busy.length ? `Still running: ${busy.join(", ")}. Switch accounts once ${busy.length > 1 ? "they finish" : "it finishes"}.` : null
+  }
+
   const value: StoreValue = {
     servers,
     sites,
@@ -4437,6 +4477,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setEnableLocalSyncSite,
     enableLocalSync,
     accountSlug: cfgRef.current.accountSlug,
+    profileId: cfgRef.current.profileId,
+    profileLabel,
+    setProfileLabel,
+    tokenFromEnv: cfgRef.current.tokenSource === "env",
+    switchBlocker,
     sitesForServer,
     serverById,
     probes,

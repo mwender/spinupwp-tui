@@ -27,7 +27,7 @@ const SUBTITLES: Record<Route, string> = {
 }
 
 export function Header() {
-  const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob, vanityJob, cloneJob, cloneServer, kumaStatus } = useStore()
+  const { route, servers, sites, loading, lastUpdated, updateInfo, newServerJob, vanityJob, cloneJob, cloneServer, kumaStatus, profileLabel } = useStore()
   // Name the domain(s) when there are few enough to fit the header row; fall
   // back to a bare count once there are too many to list safely. Deliberately
   // still just the plain up/down signal (kumaStatus.up) — not expanding what
@@ -119,6 +119,10 @@ export function Header() {
       <box style={{ flexDirection: "row", height: 1, paddingLeft: 1, paddingRight: 1, alignItems: "center" }}>
         <text content="💡 " fg={theme.accent} style={{ flexShrink: 0 }} />
         <text content={SUBTITLES[route]} fg={theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+        {/* Always visible, so it's never a guess which client's fleet this is. */}
+        <text content="  Account: " fg={theme.textFaint} style={{ flexShrink: 0 }} />
+        <text content={truncate(profileLabel, 32)} fg={theme.text} wrapMode="none" style={{ flexShrink: 0 }} />
+        <text content="  A switch" fg={theme.textFaint} style={{ flexShrink: 0 }} />
       </box>
     </box>
   )
