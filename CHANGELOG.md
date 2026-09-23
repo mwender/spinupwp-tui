@@ -11,9 +11,14 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-09-23
+
 ### Added
 - **Multiple SpinupWP accounts.** Press `A` from anywhere to open **Accounts**: add another account (its token is checked with SpinupWP before it's saved), switch between accounts, rename them, or remove one. You work in one account at a time, never a merged fleet, so an action can't land on the wrong client's server, and the header always shows `Account: …`. Switching reloads the app on the new account, and it waits until running changes (PHP upgrades, DNS edits, clones, WordPress updates…) finish. Each account keeps its own token, DNS provider connections, local-copy links, sudo users and saved Keychain passwords, monitors, and cached probes. Machine-level settings (terminal app, local scan roots, the Uptime Kuma login) are shared by all of them. Your existing setup becomes the first account automatically; nothing moves on disk. Removing an account also deletes its Keychain passwords and caches, but never files in your local working copies. For commands, `SPINUPTUI_ACCOUNT=<id>` picks an account for one run, and `spinuptui where` lists the account ids.
 - **Vanity Site in Stacks.** Non-WP now has a **Vanity Site** row for each server's own-hostname site, the same rule the vanity features use, so these show up without an SSH probe instead of sitting under Unknown or unprobed. Their rows read `Vanity Site` in place of `Unknown`.
+
+### Notes
+- **Config migration.** The first time this version saves a setting, `config.json` is rewritten in the new accounts shape. A version before 0.28.0 can't read the token from it and would run first-time setup, so back up `~/.config/spinupwp-tui/config.json` if you might downgrade. Accounts are stored per machine; add them on each machine where you use SpinupTUI.
 
 ## [0.27.0] - 2026-09-23
 
@@ -1431,7 +1436,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/mwender/spinupwp-tui/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/mwender/spinupwp-tui/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/mwender/spinupwp-tui/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/mwender/spinupwp-tui/compare/v0.25.0...v0.26.0
