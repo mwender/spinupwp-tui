@@ -38,6 +38,7 @@
   probe for precise identification. → [docs/stack-detection.md](docs/stack-detection.md)
 - **Global search** — fuzzy search across every server and site by name, domain,
   or IP, with inline actions on the result.
+- **Multiple SpinupWP accounts** (`A`) — keep several accounts (say, your agency's and a client's) and switch between them in-app; the header always names the one you're on. → [docs/multiple-accounts.md](docs/multiple-accounts.md)
 - **Events feed** — recent provisioning/operation activity with per-event detail.
 - **Live server health** (`h`) — real-time CPU/load/memory/disk over SSH.
   → [docs/server-health.md](docs/server-health.md)
@@ -262,13 +263,15 @@ The token is resolved in this order (first match wins):
 To reconfigure, delete the config file (the path is shown on the onboarding
 screen) and relaunch, or set the environment variable.
 
+More than one SpinupWP account? Add the others in-app with `A`. Each keeps its own token and account settings; see [docs/multiple-accounts.md](docs/multiple-accounts.md).
+
 ### Optional settings
 
 These can be set in `config.json` or via an environment variable:
 
 - **`accountSlug`** / `SPINUPWP_ACCOUNT_SLUG` — your SpinupWP account/team slug
-  (the first path segment in a SpinupWP URL, e.g. `wenmark-digital-solutions` in
-  `https://spinupwp.app/wenmark-digital-solutions/servers/35633`). The API
+  (the first path segment in a SpinupWP URL, e.g. `acme-agency` in
+  `https://spinupwp.app/acme-agency/servers/12345`). The API
   doesn't expose it, so set it to enable the `w` deep links into the web app.
   Without it, `w` opens the SpinupWP dashboard root.
 - **`sshUser`** / `SPINUPWP_SSH_USER` — override the SSH user for the health view
@@ -333,6 +336,7 @@ These can be set in `config.json` or via an environment variable:
 | `K` | Grant / revoke an SSH key on a site, or every site on the server (Servers / Search; needs sudo connected) |
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
+| `A` | Accounts — switch, add, rename, or remove SpinupWP accounts (from anywhere) |
 | `r` | Refresh data from the API |
 | `i` | Explain the current screen (what each pane and key does) |
 | `?` | Toggle the help overlay |

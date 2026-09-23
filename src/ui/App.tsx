@@ -39,6 +39,7 @@ import { WpInventory } from "./views/WpInventory.tsx"
 import { ProviderConnect } from "./views/ProviderConnect.tsx"
 import { DnsRecords } from "./views/DnsRecords.tsx"
 import { KumaSite } from "./views/KumaSite.tsx"
+import { Accounts } from "./views/Accounts.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -49,6 +50,7 @@ export function App() {
   const [splashDone, setSplashDone] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [showExplain, setShowExplain] = useState(false)
+  const [showAccounts, setShowAccounts] = useState(false)
 
   // Enforce a minimum splash duration so the intro is visible even on fast loads.
   useEffect(() => {
@@ -60,6 +62,7 @@ export function App() {
   const overlayActive =
     showHelp ||
     showExplain ||
+    showAccounts ||
     store.releaseNotesInfo !== null ||
     store.healthServer !== null ||
     store.wpInventorySite !== null ||
@@ -118,6 +121,9 @@ export function App() {
 
     // While a text field is focused, let it consume everything else.
     if (store.inputMode) return
+
+    // The Accounts overlay owns the keyboard while open.
+    if (showAccounts) return
 
     // The release-notes overlay owns the keyboard while open (any key dismisses).
     if (store.releaseNotesInfo) return
@@ -193,6 +199,9 @@ export function App() {
 
     // The site-monitoring (Uptime Kuma) overlay owns the keyboard while open.
     if (store.kumaSite) return
+
+    // A (Shift+a): the Accounts overlay — the header advertises it from every tab.
+    if (key.shift && key.name === "a") return setShowAccounts(true)
 
     switch (key.name) {
       case "q":
@@ -274,6 +283,7 @@ export function App() {
       {store.connectZoneTarget && <ProviderConnect />}
       {store.dnsRecordsTarget && <DnsRecords />}
       {store.kumaSite && <KumaSite />}
+      {showAccounts && <Accounts onClose={() => setShowAccounts(false)} />}
       <ToastStack />
     </box>
   )

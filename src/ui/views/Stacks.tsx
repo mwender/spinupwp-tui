@@ -6,7 +6,8 @@
 // probe. The WordPress buckets (Standard WP / Bedrock / Radicle) expand into one
 // sub-row per probed core version, newest first — the "who still needs the
 // security release" view; Non-WP expands into named sub-rows (WHMCS / Laravel /
-// Static HTML / Unknown / unprobed). Both come from cached probes.
+// Static HTML / Vanity Site / Unknown / unprobed). Both come from cached probes,
+// except Vanity Site, which is derived with no SSH (see `nonWpSub`).
 //
 // Middle pane: the sites in the selected group. `d` probes the selected site;
 // `D` probes the whole selected group (bounded concurrency). Right pane: the
@@ -27,6 +28,7 @@ import { StatusBar } from "../StatusBar.tsx"
 import { SiteContextStrip, SITE_CONTEXT_STRIP_HEIGHT } from "../Details.tsx"
 import { openUrl } from "../../lib/open.ts"
 import { siteWebUrl } from "../../lib/spinupweb.ts"
+import { isVanityPair } from "../../lib/vanitySite.ts"
 import { useStore } from "../store.tsx"
 import type { Site } from "../../api/types.ts"
 
@@ -47,14 +49,28 @@ interface Group {
 const WP_STACKS: Stack[] = ["Standard WP", "Bedrock", "Radicle"]
 
 
-// Non-WP sub-categories, in display order. `kind: null` = not yet probed.
-const NONWP_SUBS: { kind: ProbeKind | null; label: string }[] = [
+// Non-WP sub-categories, in display order. `kind: null` = not yet probed;
+// "vanity" is the site at its server's own hostname (see `nonWpSub`).
+type NonWpSub = ProbeKind | "vanity" | null
+const NONWP_SUBS: { kind: NonWpSub; label: string }[] = [
   { kind: "whmcs", label: "WHMCS" },
   { kind: "laravel", label: "Laravel" },
   { kind: "static", label: "Static HTML" },
+  { kind: "vanity", label: "Vanity Site" },
   { kind: "unknown", label: "Unknown" },
   { kind: null, label: "unprobed" },
 ]
+const VANITY_COLOR = theme.info
+
+// Which Non-WP sub-row a site belongs in. A vanity site is known from the API
+// alone (domain === its server's hostname, the same `isVanityPair` every other
+// vanity feature keys off), so it claims the site whether it's unprobed or the
+// probe came back Unknown/Static — the placeholder page reads as neither. A
+// positively identified app (WHMCS/Laravel) living at the hostname still wins.
+function nonWpSub(kind: ProbeKind | null, vanity: boolean): NonWpSub {
+  if (vanity && (kind === null || kind === "unknown" || kind === "static")) return "vanity"
+  return kind
+}
 
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
@@ -125,13 +141,15 @@ export function Stacks({ rows }: { rows: number }) {
       }
       if (st === "Non-WP") {
         for (const sub of NONWP_SUBS) {
-          const subSites = bucket.filter((site) => (probes.get(site.id)?.result.kind ?? null) === sub.kind)
+          const subSites = bucket.filter(
+            (site) => nonWpSub(probes.get(site.id)?.result.kind ?? null, isVanityPair(site.domain, serverById(site.server_id)?.name ?? "")) === sub.kind,
+          )
           if (subSites.length === 0) continue
           groups.push({
             id: `nonwp:${sub.label}`,
             label: sub.label,
             level: 1,
-            color: sub.kind ? probeKindColor(sub.kind) : theme.textFaint,
+            color: sub.kind === "vanity" ? VANITY_COLOR : sub.kind ? probeKindColor(sub.kind) : theme.textFaint,
             sites: subSites,
           })
         }
@@ -139,7 +157,7 @@ export function Stacks({ rows }: { rows: number }) {
     }
     const php = [...phpCounts.entries()].sort((a, b) => phpSortKey(b[0]) - phpSortKey(a[0]))
     return { groups, php }
-  }, [sites, probes])
+  }, [sites, probes, serverById])
 
   // Keep selection in range as groups appear/disappear with probing.
   const safeGroupIndex = Math.min(groupIndex, groups.length - 1)
@@ -372,6 +390,11 @@ export function Stacks({ rows }: { rows: number }) {
               const errored = probeErrors.has(s.id)
               const wpRunning = wpCoreJobs.get(s.id)?.result === null
               const faint = selected ? theme.text : theme.textFaint
+              // Vanity rows say so instead of the probe's "Unknown"/"Static HTML"
+              // (or "· press d" — there's nothing to identify).
+              const vanity =
+                effectiveStack(s, cached?.result.kind) === "Non-WP" &&
+                nonWpSub(cached?.result.kind ?? null, isVanityPair(s.domain, serverById(s.server_id)?.name ?? "")) === "vanity"
               const updates = (s.wp_plugin_updates || 0) + (s.wp_theme_updates || 0) + (s.wp_core_update ? 1 : 0)
               return (
                 <>
@@ -391,6 +414,8 @@ export function Stacks({ rows }: { rows: number }) {
                       <WpCoreRowMark siteId={s.id} selected={selected} />
                     ) : probing ? (
                       <Spinner color={selected ? theme.text : theme.brand} />
+                    ) : vanity ? (
+                      <text content="Vanity Site" fg={selected ? theme.text : VANITY_COLOR} wrapMode="none" />
                     ) : cached ? (
                       <text
                         content={truncate(cached.result.label, 20) + (isProbeStale(s) ? "*" : "")}

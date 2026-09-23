@@ -5,9 +5,9 @@
 // individual site's configured version, and can be missing extensions that
 // version's CLI SAPI never got configured with.
 //
-// Verified live 2026-07-09 on web4.wenmarkdigital.com: the system default had
+// Verified live 2026-07-09 on a production server: the system default had
 // drifted to 8.4, whose CLI lacked `mysqli` (its FPM pool likely never needed
-// it — no site there runs 8.4), while lp.anchoredconstructiontn.com's actual
+// it — no site there runs 8.4), while a site's actual
 // configured version (8.1) has a fully working php8.1-cli. Bare `wp` silently
 // ran under 8.4 and failed on anything touching $wpdb (post/user/plugin list,
 // option get) — while `wp core version`, and `wp db export/import/check/size`

@@ -11,6 +11,10 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Multiple SpinupWP accounts.** Press `A` from anywhere to open **Accounts**: add another account (its token is checked with SpinupWP before it's saved), switch between accounts, rename them, or remove one. You work in one account at a time, never a merged fleet, so an action can't land on the wrong client's server, and the header always shows `Account: …`. Switching reloads the app on the new account, and it waits until running changes (PHP upgrades, DNS edits, clones, WordPress updates…) finish. Each account keeps its own token, DNS provider connections, local-copy links, sudo users and saved Keychain passwords, monitors, and cached probes. Machine-level settings (terminal app, local scan roots, the Uptime Kuma login) are shared by all of them. Your existing setup becomes the first account automatically; nothing moves on disk. Removing an account also deletes its Keychain passwords and caches, but never files in your local working copies. For commands, `SPINUPTUI_ACCOUNT=<id>` picks an account for one run, and `spinuptui where` lists the account ids.
+- **Vanity Site in Stacks.** Non-WP now has a **Vanity Site** row for each server's own-hostname site, the same rule the vanity features use, so these show up without an SSH probe instead of sitting under Unknown or unprobed. Their rows read `Vanity Site` in place of `Unknown`.
+
 ## [0.27.0] - 2026-09-23
 
 ### Added

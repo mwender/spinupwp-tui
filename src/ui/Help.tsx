@@ -18,6 +18,7 @@ const GLOBAL: Section = {
     ["1 … 5", "Switch tabs"],
     ["r", "Refresh from the API"],
     ["/", "Global search"],
+    ["A", "Switch SpinupWP accounts"],
     ["i", "Explain the current screen"],
     ["?", "This help"],
     ["q · Ctrl+C", "Quit · force quit"],

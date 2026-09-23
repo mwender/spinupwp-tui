@@ -13,7 +13,7 @@
 import { join } from "node:path"
 import { existsSync, readFileSync } from "node:fs"
 import { chmod, mkdir } from "node:fs/promises"
-import { configDir } from "../config.ts"
+import { profileDataDir } from "../config.ts"
 import type { ZoneHost } from "./dns.ts"
 
 const CACHE_VERSION = 1
@@ -29,11 +29,14 @@ interface CacheFile {
   entries: Record<string, CachedDns> // key: normalized domain
 }
 
-export function dnsCachePath(): string {
-  return join(configDir(), "dns-cache.json")
+export function dnsCachePath(dir = profileDataDir()): string {
+  return join(dir, "dns-cache.json")
 }
 
 export class DnsCache {
+  // Pinned to the account active when the cache was created, so a write that
+  // lands after an account switch still goes to its own account\'s file.
+  private readonly dir = profileDataDir()
   private entries = new Map<string, CachedDns>()
   // Serializes writes so concurrent batch lookups can't tear the file.
   private writeChain: Promise<void> = Promise.resolve()
@@ -42,7 +45,7 @@ export class DnsCache {
   // an empty cache.
   load(): void {
     try {
-      const path = dnsCachePath()
+      const path = dnsCachePath(this.dir)
       if (!existsSync(path)) return
       const parsed = JSON.parse(readFileSync(path, "utf8")) as CacheFile
       if (parsed?.version !== CACHE_VERSION || !parsed.entries) return
@@ -80,10 +83,10 @@ export class DnsCache {
   }
 
   private async writeFile(): Promise<void> {
-    await mkdir(configDir(), { recursive: true })
+    await mkdir(this.dir, { recursive: true })
     const file: CacheFile = { version: CACHE_VERSION, entries: {} }
     for (const [k, entry] of this.entries) file.entries[k] = entry
-    const path = dnsCachePath()
+    const path = dnsCachePath(this.dir)
     await Bun.write(path, JSON.stringify(file, null, 2) + "\n")
     try {
       await chmod(path, 0o600)
