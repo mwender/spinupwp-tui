@@ -269,6 +269,7 @@ export interface CloneSiteState {
   gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
   gitBranch?: string // source git.branch
   deployScript?: string // source git deploy script — the dest's own, and Radicle's build step
+  pushEnabled?: boolean // source push-to-deploy on/off — the dest is created to match
   pageCache?: boolean // source page cache on/off — the dest is created to match
   gitDeployKey?: { privateKey: string; publicKey: string } // unique per-site key (stamped leaving gitaccess) → create payload
   additionalDomains?: string[] // extra domains served by the site → extra cutover records
@@ -301,6 +302,7 @@ export interface CloneSiteState {
   // script set on create, and there's no API to set it after. The verify pane
   // offers it for copy with a link to the dest's Git settings.
   deployScriptLost?: boolean
+  pushMismatch?: boolean // the dest's push-to-deploy reads back different from the source's
 }
 // Slice 6: per-site DNS cutover. Each A record among the site's domains (primary +
 // additional_domains) is repointed from the old server IP to the new one. www-style
@@ -3582,6 +3584,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           gitRepo: s.git?.repo ?? undefined,
           gitBranch: s.git?.branch ?? undefined,
           deployScript: s.git?.deploy_script ?? undefined,
+          pushEnabled: s.git?.push_enabled ?? undefined,
           pageCache: s.page_cache?.enabled ?? undefined,
           additionalDomains: (s.additional_domains ?? []).map((d) => d.domain),
           additionalDomainConfigs: s.additional_domains ?? [],
@@ -3851,7 +3854,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                     git: {
                       repo: site.gitRepo!,
                       branch: site.gitBranch ?? "main",
-                      push_to_deploy: true,
+                      // Match the source (on when unknown, the long-standing default).
+                      push_to_deploy: site.pushEnabled ?? true,
                       // unique per-site key (gitaccess step) — the server-wide
                       // git_publickey fits only ONE GitHub repo, so it can't be
                       // reused; SpinupWP installs this pair as the site's git identity.
@@ -3962,17 +3966,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // Did the dest keep the deploy script we sent on create? (It usually
         // doesn't — see the create payload.) Re-read rather than assume, so this
         // goes quiet on its own if SpinupWP fixes it.
+        // Same re-read for push-to-deploy (which does stick, as of 2026-09-24 —
+        // checked anyway, since the create is the only chance to set it).
         let deployScriptLost = false
-        if (site.deployScript?.trim() && destSiteId != null) {
+        let pushMismatch = false
+        if (site.gitRepo && destSiteId != null) {
           try {
             const destSite = await client.getSite(destSiteId)
-            deployScriptLost = !destSite.git?.deploy_script?.trim()
+            deployScriptLost = !!site.deployScript?.trim() && !destSite.git?.deploy_script?.trim()
+            pushMismatch = site.pushEnabled != null && destSite.git?.push_enabled !== site.pushEnabled
           } catch {
             /* unknown — say nothing rather than guess */
           }
         }
-        logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel, deployScriptLost })
-        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel, cronAdded: cron.added, cronError: cron.ok ? undefined : cron.error, deployScriptLost }))
+        logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel, deployScriptLost, pushMismatch })
+        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel, cronAdded: cron.added, cronError: cron.ok ? undefined : cron.error, deployScriptLost, pushMismatch }))
       } catch (err) {
         fail(site.step, (err as Error).message)
       }
