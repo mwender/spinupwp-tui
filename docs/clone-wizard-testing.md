@@ -26,7 +26,8 @@ the `cloneJob` slice in `src/ui/store.tsx`, `src/lib/dnsRecords.ts` (cutover wri
   - `wp.spinuptui.com` — Standard WP — **clone**
   - `bedrock.spinuptui.com` — Bedrock (repo `mwender/bedrock-spinuptui`) — **clone**
   - `web1.spinuptui.com` — vanity placeholder — **do NOT clone**
-- **Dest = `web2.spinuptui.com`.**
+  - `avn.wenmarkdigital.com` — Radicle (private repo, copy of a real Radicle site's code, DB and uploads; `noindex`) — **clone**. Its crontab carries one commented-out owner line, to exercise the crontab carry-over without running the job. Push-to-deploy stays **off**: SpinupWP appears to share one deploy webhook per repo, so a push to the real site's repo could otherwise redeploy the fixture.
+- **Dest = `web2.spinuptui.com`.** Both boxes have Node 22 (Radicle deploy scripts run `npm ci` / `npm run build`); remove it from web2 to re-test the "destination needs Node" preflight stop.
 - Server IDs / IPs / the dest sudo user: see the API-findings doc and your `.env`.
 - **`.env`** (gitignored) carries the dev shortcuts and creds:
   - `SPINUP_DEV_CLONE_DEST` — the dest server id (pre-points the Destination picker).
@@ -107,6 +108,9 @@ private, remove all deploy keys except web1's `spinupwp-*` key, delete the dest 
   `static.spinuptui.com` (fixture left in place; PHP executes on the clone).
   Additional-domain carry-over applies as usual — that's the main event for
   redirect shells.
+- **Radicle takes the Bedrock pull** (it requires `roots/bedrock-autoloader`, so it passes the Bedrock check; `roots/acorn` is what tells them apart). Differences handled there: uploads live in `{public}/content/uploads`, not `app/uploads`; and the front-end build (gitignored `public/build`) + Acorn caches come from running the **source's own deploy script** on the dest, AFTER the DB import (it calls wp-cli). Verified live web1→web2 2026-09-24: 200, built assets, uploads, crontab carried.
+- **SpinupWP clears `deploy_script` a minute or two after `POST /sites`** — it's echoed back on create and on an immediate GET, then `null` (verified with three probe sites, with and without `always_run_deploy_script`). No endpoint can set it afterwards. `page_cache.enabled` and `git.push_to_deploy` DO persist. The clone therefore never relies on the dest's stored script: it reads the SOURCE's and runs it over SSH, re-reads the dest when done, and the verify pane offers `g` (copy + open the dest's `#git` settings).
+- **Owner crontab lines are carried** (`syncCrontab`): everything in the source site user's crontab except SpinupWP's `#Ansible:` block and blank lines, env lines the dest already sets skipped, idempotent. Paths are valid as-is because a clone keeps the domain.
 - **Dest DB `table_prefix` must match the source** (production uses `wzl_`, `s81_`,
   etc.) — the create payload now copies `database.table_prefix`.
 - **Additional domains must be re-created on the dest** — a fresh site's nginx

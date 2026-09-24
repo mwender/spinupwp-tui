@@ -80,10 +80,13 @@ export function cloneStackFor(site: Site, probeKind?: ProbeKind | null): "wp" | 
     if (probeKind === "whmcs" || probeKind === "laravel" || probeKind === "static") return "files"
     return "bedrock"
   }
-  // A "radicle" probe never falls into "wp" here since effectiveStack maps it
-  // to "Radicle", not "Standard WP" — deliberate: the Standard-WP pull chain
-  // assumes a flat webroot and would corrupt a Radicle clone. Real Radicle
-  // clone-wizard support is a separate, not-yet-built phase (issue #38).
+  // A git-deployed Radicle site took the branch above: the Bedrock pull handles
+  // it (it detects Radicle itself, pulls content/uploads, and runs the site's
+  // deploy script to build the front-end). A "radicle" probe with no git repo
+  // never falls into "wp" here since effectiveStack maps it to "Radicle", not
+  // "Standard WP" — deliberate: the Standard-WP pull chain assumes a flat webroot
+  // and would corrupt a Radicle clone, and without the repo there's nothing to
+  // rebuild it from.
   return effectiveStack(site, probeKind) === "Standard WP" ? "wp" : "files"
 }
 

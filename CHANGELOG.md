@@ -13,9 +13,17 @@ versions; such changes are called out here.
 
 ### Added
 - **API headroom in the header.** The top bar now shows how many SpinupWP API requests are left in the current minute (`API 52/60`). It stays dim while there's plenty, turns amber once three-quarters of the minute's budget is spent, and red when SpinupTUI starts spacing out requests to avoid hitting the limit, so a slow moment has a visible reason. It refills on its own when the minute rolls over.
+- **Clone Radicle sites.** The clone wizard now clones git-deployed Radicle sites properly. Uploads come across from `content/uploads`, and after the database import the site's own deploy script runs on the new server, so the front-end is built (`npm ci`, `npm run build`, Acorn caches) the way a normal deploy would. Before creating anything, the wizard stops if the Radicle site has no deploy script, or if its script needs Node and the destination server doesn't have it. SpinupWP servers don't come with Node, so install it on the destination first.
+- **Clones keep your cron jobs.** Lines you added to a site's crontab (a feed import, a report, an Acorn or Laravel command) are copied to the clone under a `# Carried over from …` comment. Lines you commented out are copied as they are, SpinupWP's own WordPress cron entry is left to SpinupWP, and a retry never adds a line twice. The verify pane (`v`) says how many lines came across.
+
+### Changed
+- **Clones match the source's page cache and push-to-deploy** instead of using fixed defaults, and send the source's own deploy script.
 
 ### Fixed
 - **Plugins & themes (`e`) no longer shows an empty list on sites with noisy plugins.** Some plugins print PHP notices into wp-cli's output, sometimes on the same line as the plugin list, and the view read that as "no plugins installed". The list is now found wherever it sits in the output, and if wp-cli returns no list at all the view says so, with the first line of what it printed, instead of showing zero plugins. The WordPress core update check uses the same parsing.
+
+### Notes
+- **SpinupWP clears a deploy script set through its API** a minute or two after the site is created, and there's no API call to set it afterwards. After a clone, the wizard checks the new site; if the script is gone, the roster marks the site and the verify pane offers `g`, which copies the source's script and opens the new site's Git settings so you can paste it back. The same check flags a push-to-deploy setting that didn't carry over.
 
 ## [0.28.0] - 2026-09-23
 

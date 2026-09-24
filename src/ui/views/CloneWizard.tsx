@@ -16,8 +16,8 @@ import { Panel, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl, copyToClipboard } from "../../lib/open.ts"
 import { consoleForHost } from "../../lib/providers.ts"
-import { serverWebUrl } from "../../lib/spinupweb.ts"
-import { useStore, cloneNeedsGitAccess, type CloneStep, type CloneSiteStep, type RepoKeyState } from "../store.tsx"
+import { serverWebUrl, siteGitUrl } from "../../lib/spinupweb.ts"
+import { useStore, cloneNeedsGitAccess, type CloneStep, type CloneSiteStep, type CloneSiteState, type RepoKeyState } from "../store.tsx"
 import type { VerifyCheck } from "../../lib/serverClone.ts"
 
 // Choosing an existing server as the dest is a first-class feature now (the `d` picker
@@ -305,6 +305,13 @@ export function CloneWizard() {
           return cloneRetrySite(verifyOpen)
         }
         if (name === "v" && drilled?.step === "done") return verifyCloneSite(verifyOpen)
+        // g — the dest's Git settings need a hand (lost deploy script, push-to-deploy
+        // mismatch): open them, with the source's script on the clipboard when it's
+        // missing, so re-entering it is one paste.
+        if (name === "g" && (drilled?.deployScriptLost || drilled?.pushMismatch) && drilled.destSiteId != null) {
+          if (drilled.deployScriptLost && drilled.deployScript) copyToClipboard(drilled.deployScript)
+          return openUrl(siteGitUrl(drilled.destSiteId, accountSlug))
+        }
         return
       }
       const n = sel.length
@@ -726,7 +733,7 @@ export function CloneWizard() {
           {selected.map((s, i) => {
             const active = !["queued", "done", "error"].includes(s.step)
             const cur = i === idx
-            const vmark = s.verify ? (s.verify.ok ? " ✓verified" : " ✕mismatch") : s.verifying ? " verifying…" : ""
+            const vmark = (s.verify ? (s.verify.ok ? " ✓verified" : " ✕mismatch") : s.verifying ? " verifying…" : "") + (s.deployScriptLost || s.pushMismatch || s.cronError ? " · ⚠ see verify" : "")
             return (
               <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1, backgroundColor: cur ? theme.bgAlt : undefined }}>
                 {active ? <Spinner color={theme.brand} /> : <text content={s.step === "done" ? "✓" : s.step === "error" ? "✕" : "○"} fg={s.step === "done" ? theme.good : s.step === "error" ? theme.bad : theme.textFaint} style={{ flexShrink: 0 }} />}
@@ -793,13 +800,34 @@ export function CloneWizard() {
               {v.checks.map(row)}
               <box style={{ flexGrow: 1 }} />
               <text content={v.ok ? "✓ Clone matches the source." : "✕ Differences found — review the ✕ rows above."} fg={v.ok ? theme.good : theme.bad} wrapMode="none" />
-              <text content="v re-run · ← back to roster" fg={theme.textFaint} wrapMode="none" />
+              {cloneNotes(site)}
+              <text content={`v re-run${site.deployScriptLost ? " · g copy deploy script + open Git settings" : site.pushMismatch ? " · g open Git settings" : ""} · ← back to roster`} fg={theme.textFaint} wrapMode="none" />
             </>
           ) : (
             <text content="Press v to compare this clone against its source." fg={theme.textDim} wrapMode="none" />
           )}
         </box>
       </Panel>
+    )
+  }
+
+  // What the clone did beyond files + DB, and anything left for the user to do.
+  function cloneNotes(site: CloneSiteState) {
+    const cron = site.cronError
+      ? { text: `✕ Crontab not carried over: ${site.cronError}`, fg: theme.bad }
+      : site.cronAdded?.length
+        ? { text: `✓ Crontab: carried ${site.cronAdded.length} line${site.cronAdded.length === 1 ? "" : "s"} you added on the source`, fg: theme.good }
+        : null
+    return (
+      <>
+        {cron ? <text content={cron.text} fg={cron.fg} wrapMode="none" /> : null}
+        {site.pushMismatch ? (
+          <text content={`⚠ Push-to-deploy is ${site.pushEnabled ? "off" : "on"} here but ${site.pushEnabled ? "on" : "off"} on the source — switch it in the new site's Git settings (g)`} fg={theme.warn} wrapMode="none" />
+        ) : null}
+        {site.deployScriptLost ? (
+          <text content="⚠ SpinupWP didn't keep this site's deploy script — press g to copy the source's and paste it into the new site's Git settings" fg={theme.warn} wrapMode="none" />
+        ) : null}
+      </>
     )
   }
 
@@ -856,7 +884,7 @@ export function CloneWizard() {
       if (verifyOpen != null) {
         const drilled = job!.sites.find((s) => s.sourceSiteId === verifyOpen)
         if (drilled?.step === "error") return [{ key: "r", label: "retry site" }, { key: "←", label: "back" }, { key: "esc", label: "close" }]
-        return [{ key: "v", label: "re-run" }, { key: "←", label: "back" }, { key: "esc", label: "close" }]
+        return [{ key: "v", label: "re-run" }, ...(drilled?.deployScriptLost || drilled?.pushMismatch ? [{ key: "g", label: "Git settings" }] : []), { key: "←", label: "back" }, { key: "esc", label: "close" }]
       }
       const done = selected.filter((s) => s.step === "done").length
       const errored = selected.filter((s) => s.step === "error").length

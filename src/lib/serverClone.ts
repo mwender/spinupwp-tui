@@ -472,6 +472,13 @@ export interface BedrockPullSpec {
   destDbPassword: string
   excludeUploads: boolean
   publicFolder?: string // a signal, not a fact (CLAUDE.md) — re-verified below, independently, on both ends
+  // The source site's own git deploy script. Run on the dest after the DB import
+  // when the source is Radicle: its front-end (Vite build → public/build) and
+  // Acorn caches are gitignored, so composer install alone leaves the theme
+  // unbuilt, and the owner's deploy script is their own definition of "build this
+  // site". It runs last because Radicle deploy scripts call wp-cli (acorn
+  // optimize, cache purge, rewrite flush), which needs the imported database.
+  deployScript?: string
 }
 
 export async function runBedrockPull(
@@ -515,9 +522,12 @@ export async function runBedrockPull(
     //    source happened to detect — its structure comes from the git repo's own
     //    content, which can legitimately diverge from the source's on-disk state.
     onProgress("detect", "start")
-    const det = await run("detect", source, `${detectWpDirScript(root, spec.publicFolder)}; echo "WPCORE:$W"; echo "BEDROCKROOT:$B"`, 30_000)
+    const det = await run("detect", source, `${detectWpDirScript(root, spec.publicFolder)}; echo "WPCORE:$W"; echo "BEDROCKROOT:$B"; echo "RADICLEROOT:$RD"`, 30_000)
     const wpCore = (det.stdout.match(/^WPCORE:(.*)$/m)?.[1] ?? "").trim()
     const srcProjectRoot = (det.stdout.match(/^BEDROCKROOT:(.*)$/m)?.[1] ?? "").trim()
+    // Radicle requires roots/bedrock-autoloader, so it passes the Bedrock check
+    // above too — this is what tells the two apart.
+    const radicle = (det.stdout.match(/^RADICLEROOT:(.*)$/m)?.[1] ?? "").trim() !== ""
     if (!det.ok || !wpCore || !srcProjectRoot) {
       return fail("detect", `couldn't find a Bedrock project (composer.json + WordPress core) under ${root} on the source — is the public folder set correctly?`)
     }
@@ -577,20 +587,23 @@ export async function runBedrockPull(
     if (!composer.ok) return fail("build", (composer.stdout + composer.stderr).trim().split("\n").slice(-3).join(" ") || "composer install failed")
     onProgress("build", "ok")
 
-    // 3. files — pull {web}/app/uploads (unless excluded), `web` being whatever the
-    //    detected public folder is actually named — which can differ in nesting
-    //    depth between source and dest (the repo's own content vs. how deep the
-    //    source's on-disk state happens to be). Archiving/extracting relative to
-    //    EACH side's own web dir (not `root`) with a fixed member name sidesteps
-    //    that — the two ends never need to agree on a shared relative path. Best-
-    //    effort: a site with no uploads dir yields an empty stream we simply skip.
+    // 3. files — pull the uploads dir under the public folder: Bedrock's
+    //    app/uploads or Radicle's content/uploads, whichever the source has.
+    //    `web` is whatever the detected public folder is actually named, and it
+    //    can differ in nesting depth between source and dest (the repo's own
+    //    content vs. how deep the source's on-disk state happens to be).
+    //    Archiving/extracting relative to EACH side's own web dir (not `root`)
+    //    keeps the member name (app/uploads or content/uploads) the same on both
+    //    ends, so they never need to agree on a shared relative path. Best-effort:
+    //    a site with no uploads dir yields an empty stream we simply skip.
     onProgress("files", "start")
     if (!spec.excludeUploads) {
       const stopUpPoll = pollTransferSize(dest, `${tmp}_up.tgz`, (b) => onTransfer?.("files", b))
+      const srcUploads = `cd ${shq(webDir)} && for d in app/uploads content/uploads; do if [ -d "$d" ]; then tar --warning=no-file-changed -czf - "$d"; rc=$?; [ $rc -le 1 ] && exit 0; exit $rc; fi; done; true`
       const up = await run(
         "files",
         dest,
-        `set -e; timeout -k 5 3600 ${remote(`[ -d ${shq(`${webDir}/app/uploads`)} ] && tar -C ${shq(webDir)} --warning=no-file-changed -czf - app/uploads || true`)} > ${tmp}_up.tgz; if [ -s ${tmp}_up.tgz ]; then tar -C ${shq(destWebDir)} -xzf ${tmp}_up.tgz && chown -R ${shq(du)}:${shq(du)} ${shq(`${destWebDir}/app/uploads`)}; fi; rm -f ${tmp}_up.tgz`,
+        `set -e; timeout -k 5 3600 ${remote(srcUploads)} > ${tmp}_up.tgz; if [ -s ${tmp}_up.tgz ]; then tar -C ${shq(destWebDir)} -xzf ${tmp}_up.tgz && for d in app/uploads content/uploads; do [ -d ${shq(destWebDir)}/$d ] && chown -R ${shq(du)}:${shq(du)} ${shq(destWebDir)}/$d; done; true; fi; rm -f ${tmp}_up.tgz`,
         3_660_000, // outer must exceed the in-script `timeout 3600` so the inner reports a clean 124
       )
       stopUpPoll()
@@ -641,6 +654,23 @@ export async function runBedrockPull(
     if (!imp.ok) return fail("db", imp.stderr.trim() || "db pull/import failed")
     onProgress("db", "ok")
 
+    // 5b. deploy — Radicle only: run the source's own deploy script (see
+    //     BedrockPullSpec.deployScript). Staged as a file owned by the site user
+    //     (base64 in, so no quoting of the owner's script is ever needed) and run
+    //     from the project root, exactly where SpinupWP's own deploys run it.
+    if (radicle && spec.deployScript?.trim()) {
+      onProgress("build", "start", "deploy script")
+      const b64 = Buffer.from(spec.deployScript.replace(/\r\n/g, "\n")).toString("base64")
+      const deploy = await run(
+        "build",
+        dest,
+        `set -e; echo ${shq(b64)} | base64 -d > ${tmp}_deploy.sh; chown ${shq(du)}:${shq(du)} ${tmp}_deploy.sh; chmod 600 ${tmp}_deploy.sh; cd ${shq(destProjectRoot)}; rc=0; sudo -u ${shq(du)} -H bash -lc ${shq(`cd ${shq(destProjectRoot)} && bash ${tmp}_deploy.sh`)} 2>&1 || rc=$?; rm -f ${tmp}_deploy.sh; exit $rc`,
+        1_200_000,
+      )
+      if (!deploy.ok) return fail("build", `the site's deploy script failed: ${(deploy.stdout + deploy.stderr).trim().split("\n").slice(-3).join(" ") || `exit ${deploy.code}`}`)
+      onProgress("build", "ok")
+    }
+
     // 6. verify — wp-cli on the dest (HTTP --resolve is the caller's).
     onProgress("verify", "start")
     const ver = await run("verify", dest, `cd ${shq(destProjectRoot)}; sudo -u ${shq(du)} -H wp core is-installed`, 30_000)
@@ -652,7 +682,7 @@ export async function runBedrockPull(
     // 7. revoke — drop the pull key (by marker) on source, clean dest temp + staged dump.
     onProgress("revoke", "start")
     await run("revoke", source, `AK=${shq(home)}/.ssh/authorized_keys; [ -f "$AK" ] && sed -i ${shq(`/${MARKER}/d`)} "$AK" && chown ${shq(su)}:${shq(su)} "$AK"; rm -f ${shq(home)}/.clone_db.sql.gz`, 30_000).catch(() => {})
-    await run("revoke", dest, `rm -f ${KEY} ${KEY}.pub ${tmp}_auth.json ${tmp}_up.tgz ${tmp}_env ${tmp}.sql.gz ${tmp}.sql`, 30_000).catch(() => {})
+    await run("revoke", dest, `rm -f ${KEY} ${KEY}.pub ${tmp}_auth.json ${tmp}_up.tgz ${tmp}_env ${tmp}.sql.gz ${tmp}.sql ${tmp}_deploy.sh`, 30_000).catch(() => {})
     onProgress("revoke", "ok")
   }
 }
@@ -667,11 +697,20 @@ export async function runBedrockPull(
 // just BEFORE a destination site (and its git clone) gets created for nothing.
 // Silent no-op for anything that isn't a detectable Bedrock install; that's
 // covered by the pull chain's own detection, not this pre-check's job.
-export async function preflightBedrockSource(source: SudoCtx, spec: { domain: string; publicFolder?: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+//
+// For a Radicle source whose deploy script builds the front-end with npm/yarn/
+// pnpm, it also checks the destination has Node: a stock SpinupWP server doesn't,
+// and finding out after the create would leave a half-built site behind. We stop
+// and say so rather than install it — the server's packages aren't ours to manage.
+export async function preflightBedrockSource(
+  source: SudoCtx,
+  spec: { domain: string; publicFolder?: string; deployScript?: string },
+  dest?: SudoCtx,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const root = `/sites/${spec.domain}/files`
   const expectedWebDir = webrootFor(root, spec.publicFolder)
   const expectedProjectRoot = expectedWebDir === root ? root : expectedWebDir.slice(0, expectedWebDir.lastIndexOf("/"))
-  const r = await exec(source, `${detectWpDirScript(root, spec.publicFolder)}; echo "BEDROCKROOT:$B"`, 30_000)
+  const r = await exec(source, `${detectWpDirScript(root, spec.publicFolder)}; echo "BEDROCKROOT:$B"; echo "RADICLEROOT:$RD"`, 30_000)
   const detected = (r.stdout.match(/^BEDROCKROOT:(.*)$/m)?.[1] ?? "").trim()
   if (!r.ok || !detected) return { ok: true }
   if (detected !== expectedProjectRoot) {
@@ -680,7 +719,101 @@ export async function preflightBedrockSource(source: SudoCtx, spec: { domain: st
       error: `this site's actual files (Bedrock project at ${detected}) don't match its configured Public Folder (implies ${expectedProjectRoot}) — align them and retry`,
     }
   }
+  const radicle = (r.stdout.match(/^RADICLEROOT:(.*)$/m)?.[1] ?? "").trim() !== ""
+  // Radicle's front-end build lives only in the deploy script (see
+  // BedrockPullSpec.deployScript) — without one the clone would come up with no
+  // built assets and answer 500. SpinupWP can drop a script set through its API
+  // (one sent on create is gone a minute or two later), so this is reachable.
+  if (radicle && !spec.deployScript?.trim()) {
+    return {
+      ok: false,
+      error: "this Radicle site has no deploy script in SpinupWP, so there's nothing to build its front-end with — add one (Site → Git) and retry",
+    }
+  }
+  if (radicle && dest && /\b(npm|npx|yarn|pnpm|node)\b/.test(spec.deployScript ?? "")) {
+    const n = await exec(dest, `command -v node >/dev/null 2>&1 && echo HASNODE || echo NONODE`, 30_000)
+    if (n.stdout.includes("NONODE")) {
+      return {
+        ok: false,
+        error: `this Radicle site's deploy script builds its front-end with Node, and ${dest.server.name} doesn't have Node installed — install Node on it and retry`,
+      }
+    }
+  }
   return { ok: true }
+}
+
+// ---- Crontab carry-over --------------------------------------------------------
+//
+// SpinupWP writes each site user's crontab itself: a PATH line and an
+// `#Ansible: <domain>` block running WP cron. A new site gets its own copy at
+// create, so those are never copied. Anything else in the source user's crontab
+// was added by the site owner (a feed import, an Acorn/Laravel command, a report
+// job), and without this step a clone silently stops running it. Lines are copied
+// verbatim, commented-out ones included (a disabled job stays disabled), which is
+// safe because a clone keeps the domain and site user, so every path matches.
+// Idempotent: a line the dest already has is skipped, so a retry adds nothing.
+
+export interface CrontabSyncResult {
+  ok: boolean
+  added: string[] // the lines appended to the dest crontab (empty = nothing to carry)
+  error?: string
+}
+
+// The owner-added lines of a crontab: everything except SpinupWP's `#Ansible:`
+// marker + the job line after it, and blank lines. Environment lines (PATH=…,
+// MAILTO=…) are kept here; the caller drops the ones the dest already sets.
+// Exported for the test harness.
+export function ownerCrontabLines(crontab: string): string[] {
+  const out: string[] = []
+  const lines = crontab.split("\n").map((l) => l.replace(/\r$/, ""))
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^#Ansible:/.test(line)) {
+      i++ // the managed job line that follows the marker
+      continue
+    }
+    if (line.trim() === "") continue
+    out.push(line)
+  }
+  return out
+}
+
+const envName = (line: string): string | null => line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1] ?? null
+
+export async function syncCrontab(
+  source: SudoCtx,
+  dest: SudoCtx,
+  spec: { domain: string; sourceSiteUser: string; destSiteUser: string },
+  onExec?: CloneExecLog,
+): Promise<CrontabSyncResult> {
+  const read = async (ctx: SudoCtx, user: string) => {
+    const t0 = Date.now()
+    const script = `crontab -l -u ${shq(user)} 2>/dev/null || true`
+    const r = await exec(ctx, script, 30_000)
+    onExec?.({ domain: spec.domain, stage: "config", host: ctx.server.name, ok: r.ok, code: r.code, ms: Date.now() - t0, script, stdout: r.stdout, stderr: r.stderr })
+    return r
+  }
+  const src = await read(source, spec.sourceSiteUser)
+  if (!src.ok) return { ok: false, added: [], error: src.stderr.trim() || "couldn't read the source crontab" }
+  const wanted = ownerCrontabLines(src.stdout)
+  if (wanted.length === 0) return { ok: true, added: [] }
+
+  const dst = await read(dest, spec.destSiteUser)
+  if (!dst.ok) return { ok: false, added: [], error: dst.stderr.trim() || "couldn't read the destination crontab" }
+  const have = new Set(dst.stdout.split("\n").map((l) => l.replace(/\r$/, "")))
+  const haveEnv = new Set([...have].map(envName).filter((n): n is string => n != null))
+  // An env line the dest already sets (SpinupWP's own PATH, typically) stays the dest's.
+  const added = wanted.filter((l) => !have.has(l) && !(envName(l) && haveEnv.has(envName(l)!)))
+  if (added.length === 0) return { ok: true, added: [] }
+
+  const block = ["", `# Carried over from ${source.server.name} by the SpinupTUI clone`, ...added].join("\n") + "\n"
+  const b64 = Buffer.from(block).toString("base64")
+  const script = `set -e; { crontab -l -u ${shq(spec.destSiteUser)} 2>/dev/null || true; echo ${shq(b64)} | base64 -d; } | crontab -u ${shq(spec.destSiteUser)} -`
+  const t0 = Date.now()
+  const w = await exec(dest, script, 30_000)
+  onExec?.({ domain: spec.domain, stage: "config", host: dest.server.name, ok: w.ok, code: w.code, ms: Date.now() - t0, script, stdout: w.stdout, stderr: w.stderr })
+  if (!w.ok) return { ok: false, added: [], error: w.stderr.trim() || "couldn't write the destination crontab" }
+  return { ok: true, added }
 }
 
 // ---- Files-only pull chain (non-WP sites: redirect shells, static/PHP sites) --
