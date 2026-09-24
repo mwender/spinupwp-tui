@@ -11,7 +11,8 @@
     "src",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "bun.lock"
   ],
   "repository": {
     "type": "git",

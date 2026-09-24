@@ -97,7 +97,7 @@ Run these in order. Replace `X.Y.Z` with the new version.
    ## Notes
    - …
 
-   **Update:** \`bun add -g spinuptui@latest\` (npm install) or \`git pull\` in your checkout (a linked global \`spinuptui\` picks it up immediately).
+   **Update:** \`brew upgrade spinuptui\` (Homebrew), \`bun add -g spinuptui@latest\` (npm install) or \`git pull\` in your checkout (a linked global \`spinuptui\` picks it up immediately).
 
    **Full changelog:** https://github.com/mwender/spinupwp-tui/compare/vPREV...vX.Y.Z"
    ```
@@ -117,6 +117,14 @@ Run these in order. Replace `X.Y.Z` with the new version.
      that npm masks/garbles without a real TTY attached, so it needs to run
      from an actual Terminal/iTerm window, not a scripted or agent shell.
    - Verify it landed: `npm view spinuptui version` should print `X.Y.Z`.
+8. **Update the Homebrew formula** in [`mwender/homebrew-tap`](https://github.com/mwender/homebrew-tap) (`Formula/spinuptui.rb`), once npm serves the new version.
+   ```sh
+   VER=X.Y.Z
+   curl -sL https://registry.npmjs.org/spinuptui/-/spinuptui-$VER.tgz | shasum -a 256
+   ```
+   - Set `url` to `https://registry.npmjs.org/spinuptui/-/spinuptui-X.Y.Z.tgz` and `sha256` to the hash above, then commit and push the tap.
+   - Check it from a neutral directory (`cd /` first — Homebrew's build sandbox can't read a cwd inside Dropbox and fails with a misleading "Failed to fix install linkage"): `brew update && brew upgrade spinuptui && brew test spinuptui`.
+   - The formula runs `bun install --production --frozen-lockfile`, so the npm tarball **must include `bun.lock`** (it's in `package.json` `files`); `npm pack --dry-run` should list it.
 
 ## Quick checklist
 
@@ -128,4 +136,5 @@ Run these in order. Replace `X.Y.Z` with the new version.
 - [ ] `vX.Y.Z` annotated tag pushed
 - [ ] GitHub release published in house style
 - [ ] Published to npm (`npm publish` from a real terminal — passkey 2FA), `npm view spinuptui version` confirms it
+- [ ] Homebrew tap formula bumped (url + sha256), `brew upgrade spinuptui && brew test spinuptui` passes
 - [ ] No client domains anywhere

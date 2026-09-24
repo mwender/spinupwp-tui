@@ -129,13 +129,25 @@ export async function refreshUpdateInfo(current: string): Promise<UpdateInfo | n
 // ---- In-app updater (`u` in the Help/About overlay) ------------------------
 
 // How this copy of the app was installed, which decides the update path shown
-// in Help/About: a package-manager install (bun/npm global) lives under a
-// node_modules dir and updates via `bun update -g spinuptui`; anything else is
+// in Help/About: a Homebrew install lives in the Cellar (the formula unpacks the
+// package into its libexec) and updates via `brew upgrade`; a package-manager
+// install (bun/npm global) lives under a node_modules dir; anything else is
 // treated as a git checkout and updates via `git pull` (runSelfUpdate).
-export type InstallChannel = "git" | "package"
+export type InstallChannel = "git" | "package" | "brew"
 
 export function installChannel(): InstallChannel {
+  if (import.meta.dir.includes(`${sep}Cellar${sep}spinuptui${sep}`)) return "brew"
   return import.meta.dir.includes(`${sep}node_modules${sep}`) ? "package" : "git"
+}
+
+// Homebrew owns its copy — `bun add -g` beside it would install a second one
+// that the `spinuptui` on PATH never runs.
+export const BREW_UPDATE_CMD = "brew upgrade spinuptui"
+
+// The manual update command for this install (null for a git checkout).
+export function updateCommand(): string | null {
+  const ch = installChannel()
+  return ch === "brew" ? BREW_UPDATE_CMD : ch === "package" ? PACKAGE_UPDATE_CMD : null
 }
 
 // The one-liner Help shows for a package install (also used by runSelfUpdate's
@@ -187,7 +199,7 @@ export async function runSelfUpdate(cwd: string = checkoutRoot()): Promise<SelfU
   try {
     const isRepo = await git(cwd, ["rev-parse", "--is-inside-work-tree"])
     if (isRepo.code !== 0 || isRepo.stdout !== "true") {
-      return { ok: false, message: `This install isn't a git checkout — update with \`${PACKAGE_UPDATE_CMD}\`.`, needsInstall: false }
+      return { ok: false, message: `This install isn't a git checkout — update with \`${updateCommand() ?? PACKAGE_UPDATE_CMD}\`.`, needsInstall: false }
     }
     const status = await git(cwd, ["status", "--porcelain"])
     if (status.stdout.length > 0) {
