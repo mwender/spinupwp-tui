@@ -17,7 +17,7 @@
 import type { Server, Site } from "../api/types.ts"
 import { SSH_OPTS, sshPort } from "./dbBackup.ts"
 import { detectWpDirScript } from "./serverClone.ts"
-import { wpCliResolveScript } from "./wpCli.ts"
+import { extractJsonArray, wpCliResolveScript } from "./wpCli.ts"
 import { spawn } from "./spawn.ts"
 
 export interface WpCoreOffer {
@@ -177,24 +177,13 @@ export async function checkWpCore(server: Server, site: Site, sshUser: string | 
   const current = lastVersionLine(s.VERSION)
   if (!current) return { ok: false, target: p.target, error: "wp-cli couldn't read the WordPress version on this site." }
 
-  // Belt and braces with --skip-plugins: scan back for the line that parses as
-  // the JSON array, ignoring any other noise (a mu-plugin's notices still load).
+  // Belt and braces with --skip-plugins: a mu-plugin's notices still load, so
+  // pull the JSON array out of any surrounding noise.
   // No match = "Success: WordPress is at the latest version." (plain text).
-  let offers: WpCoreOffer[] = []
-  for (const line of [...(s.UPDATES ?? [])].reverse()) {
-    if (!line.trim().startsWith("[")) continue
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(line.trim())
-    } catch {
-      continue
-    }
-    if (!Array.isArray(parsed)) continue
-    offers = parsed
-      .filter((o) => o && typeof o.version === "string")
-      .map((o) => ({ version: o.version as string, updateType: typeof o.update_type === "string" ? o.update_type : "" }))
-    break
-  }
+  const parsed = extractJsonArray(s.UPDATES) ?? []
+  const offers: WpCoreOffer[] = parsed
+    .filter((o): o is { version: string; update_type?: unknown } => !!o && typeof (o as { version?: unknown }).version === "string")
+    .map((o) => ({ version: o.version, updateType: typeof o.update_type === "string" ? o.update_type : "" }))
 
   const comp = (s.COMPOSER ?? []).join("\n").trim()
   const locked = comp.match(/^locked (.+)$/m)

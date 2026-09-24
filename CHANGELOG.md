@@ -11,6 +11,12 @@ versions; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **API headroom in the header.** The top bar now shows how many SpinupWP API requests are left in the current minute (`API 52/60`). It stays dim while there's plenty, turns amber once three-quarters of the minute's budget is spent, and red when SpinupTUI starts spacing out requests to avoid hitting the limit, so a slow moment has a visible reason. It refills on its own when the minute rolls over.
+
+### Fixed
+- **Plugins & themes (`e`) no longer shows an empty list on sites with noisy plugins.** Some plugins print PHP notices into wp-cli's output, sometimes on the same line as the plugin list, and the view read that as "no plugins installed". The list is now found wherever it sits in the output, and if wp-cli returns no list at all the view says so, with the first line of what it printed, instead of showing zero plugins. The WordPress core update check uses the same parsing.
+
 ## [0.28.0] - 2026-09-23
 
 ### Added

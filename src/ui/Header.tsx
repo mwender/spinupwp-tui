@@ -6,6 +6,8 @@ import { timeAgo, truncate } from "../lib/format.ts"
 import { Spinner } from "./components.tsx"
 import { APP_NAME, APP_VERSION } from "../version.ts"
 import { isDevMode } from "../dev/devMode.ts"
+import { RL_LOW_WATER, onRateLimitChange, rateLimitSnapshot, type RateLimitSnapshot } from "../api/client.ts"
+import { useEffect, useState } from "react"
 
 const TABS: { route: Route; key: string; label: string }[] = [
   { route: "dashboard", key: "1", label: "Dashboard" },
@@ -24,6 +26,29 @@ const SUBTITLES: Record<Route, string> = {
   stacks: "Your fleet grouped by app type  ·  d identify an app (SSH)  ·  S find local copies on your disk",
   search: "Jump to any server or site by name  ·  Tab hands focus to the result's actions",
   events: "Recent deploys, reboots, and operations across your account",
+}
+
+// SpinupWP allows 60 API requests a minute. Show what's left of this minute so
+// the wall is visible before it's hit: dim while there's plenty, amber past
+// three-quarters spent, red once the client has started pacing requests (the
+// point where the app slows down on purpose). Hidden until a response has
+// reported the limit (and in Dev Mode, which never calls the API).
+function ApiHeadroom() {
+  const [rl, setRl] = useState<RateLimitSnapshot | null>(rateLimitSnapshot)
+  useEffect(() => {
+    const refresh = () => setRl(rateLimitSnapshot())
+    const off = onRateLimitChange(refresh)
+    // The window rolls over with no request to announce it; re-read so a spent
+    // budget doesn't sit on screen after it has refilled.
+    const tick = setInterval(refresh, 5_000)
+    return () => {
+      off()
+      clearInterval(tick)
+    }
+  }, [])
+  if (!rl) return null
+  const color = rl.remaining <= RL_LOW_WATER ? theme.bad : rl.remaining <= rl.limit / 4 ? theme.warn : theme.textFaint
+  return <text content={`API ${rl.remaining}/${rl.limit}  `} fg={color} style={{ flexShrink: 0 }} wrapMode="none" />
 }
 
 export function Header() {
@@ -114,6 +139,7 @@ export function Header() {
         )}
         {loading && <Spinner interval={100} />}
         <text content={`  ${servers.length} servers · ${sites.length} sites  `} fg={theme.textDim} style={{ flexShrink: 0 }} />
+        <ApiHeadroom />
         <text content={lastUpdated ? `updated ${timeAgo(lastUpdated.toISOString())}` : "loading…"} fg={theme.textFaint} style={{ flexShrink: 0 }} />
       </box>
       <box style={{ flexDirection: "row", height: 1, paddingLeft: 1, paddingRight: 1, alignItems: "center" }}>
