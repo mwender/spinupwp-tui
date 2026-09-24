@@ -31,3 +31,10 @@ export function serverProvidersSettingsUrl(accountSlug: string | null): string {
 export function siteSftpUrl(id: number, accountSlug: string | null): string {
   return accountSlug ? `${WEB_BASE}/${accountSlug}/sites/${id}#sftp` : WEB_BASE
 }
+
+// A site's Git settings (repo, branch, deploy script). The clone wizard links here
+// when a dest site's deploy script needs re-entering: SpinupWP drops a script
+// set through the API (see the create payload in store.tsx).
+export function siteGitUrl(id: number, accountSlug: string | null): string {
+  return accountSlug ? `${WEB_BASE}/${accountSlug}/sites/${id}#git` : WEB_BASE
+}

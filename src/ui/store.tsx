@@ -45,7 +45,7 @@ import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, reg
 import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
-import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, preflightBedrockSource, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
+import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, preflightBedrockSource, syncCrontab, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
@@ -268,6 +268,8 @@ export interface CloneSiteState {
   stack: "wp" | "bedrock" | "files" // git repo → bedrock; is_wordpress → wp; else files-only (redirect shells, static/PHP sites)
   gitRepo?: string // source git.repo (Bedrock) — the dest is created as a `git` site of it
   gitBranch?: string // source git.branch
+  deployScript?: string // source git deploy script — the dest's own, and Radicle's build step
+  pageCache?: boolean // source page cache on/off — the dest is created to match
   gitDeployKey?: { privateKey: string; publicKey: string } // unique per-site key (stamped leaving gitaccess) → create payload
   additionalDomains?: string[] // extra domains served by the site → extra cutover records
   additionalDomainConfigs?: AdditionalDomain[] // full source configs (redirects) — re-created on the dest
@@ -293,6 +295,12 @@ export interface CloneSiteState {
   verify?: CloneVerifyResult // source-vs-clone comparison + HTTP check
   verifyError?: string
   cutover?: CloneCutoverState // slice 6: DNS repoint state for this site's domain
+  cronAdded?: string[] // owner crontab lines carried to the dest (empty = none to carry)
+  cronError?: string // crontab carry-over failed (the clone itself still succeeded)
+  // The source had a deploy script but the dest reads back none — SpinupWP drops a
+  // script set on create, and there's no API to set it after. The verify pane
+  // offers it for copy with a link to the dest's Git settings.
+  deployScriptLost?: boolean
 }
 // Slice 6: per-site DNS cutover. Each A record among the site's domains (primary +
 // additional_domains) is repointed from the old server IP to the new one. www-style
@@ -3573,6 +3581,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           stack,
           gitRepo: s.git?.repo ?? undefined,
           gitBranch: s.git?.branch ?? undefined,
+          deployScript: s.git?.deploy_script ?? undefined,
+          pageCache: s.page_cache?.enabled ?? undefined,
           additionalDomains: (s.additional_domains ?? []).map((d) => d.domain),
           additionalDomainConfigs: s.additional_domains ?? [],
           excludeUploads: false,
@@ -3801,7 +3811,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // site-creation + auth cycle on a clone that can't succeed. Not a guarantee
         // (see preflightBedrockSource) — the real check is still the one after create.
         if (site.stack === "bedrock") {
-          const pre = await preflightBedrockSource(source, { domain: site.domain, publicFolder: site.publicFolder })
+          const pre = await preflightBedrockSource(source, { domain: site.domain, publicFolder: site.publicFolder, deployScript: site.deployScript }, dest)
           if (!pre.ok) return fail("create", pre.error)
         }
         // create — Bedrock → `git` site (SpinupWP clones the repo); Standard WP →
@@ -3831,10 +3841,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                     php_version: site.phpVersion,
                     public_folder: site.publicFolder ?? "/web/",
                     database: { name: dbName, username: dbName, password: dbPw, table_prefix: site.tablePrefix || "wp_" },
-                    // deploy_script is TOP-LEVEL; we send the corrected canonical (the
-                    // source's stored value has a known typo) for future push-to-deploy —
-                    // we composer install over SSH regardless (git/deploy won't run it).
-                    deploy_script: "composer install -o --no-dev",
+                    // deploy_script is TOP-LEVEL; we send the source's own (canonical
+                    // only as the fallback). CAVEAT, verified 2026-09-24: SpinupWP stores
+                    // it, echoes it back, then clears it a minute or two later — so the
+                    // dest's script has to be re-entered in the dashboard. Nothing here
+                    // depends on it: the pull runs composer (and a Radicle source's own
+                    // script) over SSH.
+                    deploy_script: site.deployScript?.trim() || "composer install -o --no-dev",
                     git: {
                       repo: site.gitRepo!,
                       branch: site.gitBranch ?? "main",
@@ -3863,6 +3876,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                       public_folder: site.publicFolder,
                       database: { name: dbName, username: dbName, password: dbPw, table_prefix: site.tablePrefix || "wp_" },
                     }
+            // Match the source's page cache — a deploy script that purges it
+            // (`wp spinupwp cache purge-site`) fails on a site where it's off, and
+            // it can't be switched on through the API after the create.
+            if (site.pageCache != null) payload.page_cache = { enabled: site.pageCache }
             ev = await client.createSite(payload)
             logger?.log({ event: "create-requested", domain: site.domain, eventId: ev?.event_id })
           } catch (err) {
@@ -3928,7 +3945,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const onExec = logger ? (e: CloneExecRecord) => logger.log({ event: "exec", ...e }) : undefined
         const res =
           site.stack === "bedrock"
-            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads, publicFolder: site.publicFolder }, onProgress, onExec, onTransfer)
+            ? await runBedrockPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, excludeUploads: site.excludeUploads, publicFolder: site.publicFolder, deployScript: site.deployScript }, onProgress, onExec, onTransfer)
             : site.stack === "files"
               ? await runFilesOnlyPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, approxFilesBytes: site.sizeWebBytes }, onProgress, onExec, onTransfer)
               : await runStandardWpPull(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser, destDbName: dbName, destDbUser: dbName, destDbPassword: dbPw, publicFolder: site.publicFolder, approxFilesBytes: site.sizeWebBytes }, onProgress, onExec, onTransfer)
@@ -3937,8 +3954,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return fail(stageToStep(stage), res.error ?? "pull failed")
         }
         const { sourceWebrootRel, destWebrootRel } = res as { sourceWebrootRel?: string; destWebrootRel?: string }
-        logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel })
-        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel }))
+        // Owner-added cron jobs (see syncCrontab). Best-effort: a failure is
+        // reported on the site, never fails a clone whose files and DB are in place.
+        set((s) => ({ ...s, detail: "crontab" }))
+        const cron = await syncCrontab(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser }, onExec)
+        logger?.log({ event: "crontab", domain: site.domain, ok: cron.ok, added: cron.added, error: cron.error })
+        // Did the dest keep the deploy script we sent on create? (It usually
+        // doesn't — see the create payload.) Re-read rather than assume, so this
+        // goes quiet on its own if SpinupWP fixes it.
+        let deployScriptLost = false
+        if (site.deployScript?.trim() && destSiteId != null) {
+          try {
+            const destSite = await client.getSite(destSiteId)
+            deployScriptLost = !destSite.git?.deploy_script?.trim()
+          } catch {
+            /* unknown — say nothing rather than guess */
+          }
+        }
+        logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel, deployScriptLost })
+        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel, cronAdded: cron.added, cronError: cron.ok ? undefined : cron.error, deployScriptLost }))
       } catch (err) {
         fail(site.step, (err as Error).message)
       }
