@@ -5,11 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-While the project is in `0.x`, the public surface (CLI subcommands/flags, config
-file location and format, and token-resolution behavior) may change between minor
-versions; such changes are called out here.
+From 1.0.0, the public surface (CLI subcommands/flags, config file location and
+format, and token-resolution behavior) changes incompatibly only in a major
+version; such changes are called out here.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-09-24
 
 ### Added
 - **Install with Homebrew.** `brew install mwender/tap/spinuptui` installs SpinupTUI along with Bun, and `brew upgrade spinuptui` updates it. The About panel (`?`) recognizes a Homebrew install and shows `brew upgrade spinuptui` as its update command instead of the Bun one.
@@ -1451,7 +1453,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/mwender/spinupwp-tui/compare/v0.28.0...v1.0.0
 [0.28.0]: https://github.com/mwender/spinupwp-tui/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/mwender/spinupwp-tui/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/mwender/spinupwp-tui/compare/v0.26.0...v0.26.1

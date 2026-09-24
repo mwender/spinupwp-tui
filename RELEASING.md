@@ -53,10 +53,11 @@ docs/ pages against the new `## [Unreleased]` changelog entries** and backfill
 anything that slipped — a prior release's features missing from the README is
 the exact failure mode this step exists to catch.
 
-## Versioning (SemVer, while in `0.x`)
+## Versioning (SemVer)
 
-- New user-facing feature → **minor** bump (`0.2.0` → `0.3.0`).
-- Bug-fix / docs only → **patch** bump (`0.3.0` → `0.3.1`).
+- Breaking change to the public surface (CLI subcommands/flags, config file location or format, token resolution) → **major** bump (`1.4.2` → `2.0.0`). Call it out under `### Notes` in the changelog and the release.
+- New user-facing feature → **minor** bump (`1.0.0` → `1.1.0`).
+- Bug-fix / docs only → **patch** bump (`1.1.0` → `1.1.1`).
 - The version lives in `package.json` (the app reads `pkg.version`).
 
 ## Cutting a release
