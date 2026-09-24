@@ -11,7 +11,7 @@
 import type { Server, Site } from "../api/types.ts"
 import { SSH_OPTS, sshPort } from "./dbBackup.ts"
 import { detectWpDirScript } from "./serverClone.ts"
-import { wpCliResolveScript } from "./wpCli.ts"
+import { extractJsonArray, wpCliResolveScript } from "./wpCli.ts"
 import { spawn } from "./spawn.ts"
 
 // One plugin or theme, mirroring `wp {plugin,theme} list` columns.
@@ -68,17 +68,11 @@ function splitSections(out: string): Record<string, string[]> {
   return sections
 }
 
-// wp --format=json emits a single-line JSON array; tolerate blank/garbage by
-// returning [] rather than throwing (a fresh site can legitimately have 0 themes).
-function parseJsonArray(lines: string[] | undefined): RawItem[] {
-  const text = (lines ?? []).join("").trim()
-  if (!text) return []
-  try {
-    const parsed = JSON.parse(text)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
+// First non-blank line of a section — the likeliest culprit when wp-cli's JSON is
+// missing (a PHP fatal or notice printed in its place).
+function firstNoise(lines: string[] | undefined): string {
+  const line = (lines ?? []).map((l) => l.trim()).find(Boolean) ?? ""
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line
 }
 
 export async function fetchWpInventory(
@@ -147,8 +141,18 @@ export async function fetchWpInventory(
     return { ok: false, target, error: `No WordPress core found under ${root} — is this a WordPress site?` }
   }
   const wpDir = (s.WPDIR?.[0] || root).trim()
-  const plugins = normalize(parseJsonArray(s.PLUGINS))
-  const themes = normalize(parseJsonArray(s.THEMES))
+  // A plugin's PHP notices can print to stdout alongside the JSON (see
+  // extractJsonArray). No JSON at all means wp-cli failed; say so instead of
+  // showing an empty list that reads as "no plugins installed".
+  const rawPlugins = extractJsonArray(s.PLUGINS)
+  const rawThemes = extractJsonArray(s.THEMES)
+  if (!rawPlugins || !rawThemes) {
+    const which = !rawPlugins ? "plugin" : "theme"
+    const noise = firstNoise(!rawPlugins ? s.PLUGINS : s.THEMES)
+    return { ok: false, target, error: `wp-cli didn't return the ${which} list${noise ? `: ${noise}` : "."}` }
+  }
+  const plugins = normalize(rawPlugins as RawItem[])
+  const themes = normalize(rawThemes as RawItem[])
   return { ok: true, target, wpDir, inventory: { plugins, themes } }
 }
 

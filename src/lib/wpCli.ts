@@ -28,3 +28,55 @@ export function wpCliResolveScript(phpVersion?: string | null): string {
   const phpBin = phpVersion ? `php${phpVersion}` : "php"
   return [`WP=$(command -v wp 2>/dev/null || echo /usr/local/bin/wp)`, `PHP=$(command -v ${phpBin} 2>/dev/null || command -v php)`].join("\n")
 }
+
+// Pull wp-cli's `--format=json` array out of a section of remote stdout that may
+// also carry noise: under the CLI SAPI a plugin's PHP notices/deprecations print
+// to STDOUT (2>/dev/null doesn't catch them), and with no newline of their own
+// they can sit on the same line as the JSON — before it, or after it when they
+// fire at shutdown (seen live: an Elementor Pro deprecation glued to the end of
+// `plugin list` output). So: from every `[`, bracket-match to its closing `]`
+// (skipping brackets inside JSON strings), and keep the longest slice that parses
+// as an array of objects — which is what every wp-cli list is, and what notice
+// text like "on line [3]" or "[array (" never is.
+// Returns null when nothing parses, so callers can tell "wp-cli printed no list"
+// (an error worth surfacing) from a genuinely empty `[]`.
+export function extractJsonArray(lines: string[] | undefined): unknown[] | null {
+  const text = (lines ?? []).join("\n")
+  let best: unknown[] | null = null
+  let bestLen = -1
+  for (let start = text.indexOf("["); start !== -1; start = text.indexOf("[", start + 1)) {
+    const end = matchingBracket(text, start)
+    if (end === -1 || end - start <= bestLen) continue
+    try {
+      const parsed = JSON.parse(text.slice(start, end + 1))
+      if (Array.isArray(parsed) && parsed.every((o) => o !== null && typeof o === "object")) {
+        best = parsed
+        bestLen = end - start
+      }
+    } catch {
+      /* not JSON from here — try the next `[` */
+    }
+  }
+  return best
+}
+
+// Index of the `]` closing the `[` at `start`, or -1. Tracks JSON string state so
+// a bracket inside a value (a plugin name, a URL) doesn't end the match early.
+function matchingBracket(text: string, start: number): number {
+  let depth = 0
+  let inString = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (ch === "\\") i++
+      else if (ch === '"') inString = false
+    } else if (ch === '"') inString = true
+    else if (ch === "[" || ch === "{") depth++
+    else if (ch === "]" || ch === "}") {
+      depth--
+      if (depth === 0) return ch === "]" ? i : -1
+      if (depth < 0) return -1
+    }
+  }
+  return -1
+}

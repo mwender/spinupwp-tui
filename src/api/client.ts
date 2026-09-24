@@ -110,15 +110,44 @@ const MAX_PAGES = 100 // hard safety cap when auto-paginating
 // event polling burned the window and made SUCCESSFUL operations look failed.
 let rlRemaining = Infinity
 let rlResetAt = 0
-const RL_LOW_WATER = 8 // start pacing when fewer than this many requests remain
+let rlLimit = 0 // X-RateLimit-Limit as last seen; 0 = no response yet
+export const RL_LOW_WATER = 8 // start pacing when fewer than this many requests remain
 const RL_MAX_RETRIES = 3
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 function rlUpdate(headers: Headers): void {
-  const rem = Number(headers.get("x-ratelimit-remaining"))
-  if (Number.isFinite(rem)) rlRemaining = rem
+  // Number(null) is 0, so a missing header must not read as "0 left".
+  const remHeader = headers.get("x-ratelimit-remaining")
+  const rem = Number(remHeader)
+  if (remHeader !== null && Number.isFinite(rem)) rlRemaining = rem
+  const limit = Number(headers.get("x-ratelimit-limit"))
+  if (Number.isFinite(limit) && limit > 0) rlLimit = limit
   // No reset header outside 429s — assume the standard 1-minute window rolls over.
   if (rlResetAt < Date.now()) rlResetAt = Date.now() + 60_000
+  rlNotify()
+}
+
+// Read side for the header's headroom indicator: what's left of this minute's
+// budget, so a user sees the wall coming before a 429 (or before pacing makes
+// the app feel slow). null until the first response has told us the limit.
+export interface RateLimitSnapshot {
+  remaining: number
+  limit: number
+  resetAt: number
+}
+const rlListeners = new Set<() => void>()
+function rlNotify(): void {
+  for (const l of rlListeners) l()
+}
+export function rateLimitSnapshot(): RateLimitSnapshot | null {
+  if (!rlLimit || !Number.isFinite(rlRemaining)) return null
+  // Past the window's end the last count is stale: a fresh window is full.
+  const remaining = rlResetAt < Date.now() ? rlLimit : rlRemaining
+  return { remaining, limit: rlLimit, resetAt: rlResetAt }
+}
+export function onRateLimitChange(listener: () => void): () => void {
+  rlListeners.add(listener)
+  return () => rlListeners.delete(listener)
 }
 
 async function rlGate(): Promise<void> {
@@ -154,6 +183,7 @@ export class SpinupWPClient implements SpinupWPClientLike {
         const waitMs = (Number.isFinite(ra) && ra > 0 ? ra : 20) * 1000
         rlRemaining = 0
         rlResetAt = Date.now() + waitMs
+        rlNotify()
         await sleep(waitMs + Math.random() * 500)
         continue
       }
