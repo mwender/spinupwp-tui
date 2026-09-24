@@ -112,12 +112,18 @@
 
 ## Install & run
 
-The easy way — install the published package globally:
+The easy way — Homebrew (it installs Bun for you):
+
+```sh
+brew install mwender/tap/spinuptui
+spinuptui login          # save your API token to the config file (once)
+spinuptui                # launch from any directory
+```
+
+Or, if you already have Bun, install the published package globally:
 
 ```sh
 bun install -g spinuptui
-spinuptui login          # save your API token to the config file (once)
-spinuptui                # launch from any directory
 ```
 
 On first launch, if no token is configured you'll be guided through a short
@@ -155,6 +161,8 @@ bun run build:binary     # produces ./spinuptui — move it onto your PATH
 The app tells you when a newer release exists — a gold `✦ vX.Y.Z` appears next
 to the version in the header (and in the `?` About panel).
 
+- **Homebrew:** `brew upgrade spinuptui` (the About panel shows the same
+  command).
 - **Package install:** `bun add -g spinuptui@latest` (the About panel shows
   the same command). Don't use `bun update -g` — while spinuptui is pre-1.0,
   it records a caret range (e.g. `^0.22.2`) that excludes every later minor

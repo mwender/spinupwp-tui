@@ -8,7 +8,7 @@ import { theme } from "../lib/theme.ts"
 import { APP_NAME, APP_VERSION, REPO_URL } from "../version.ts"
 import { Sparkle, Spinner } from "./components.tsx"
 import { useStore } from "./store.tsx"
-import { runSelfUpdate, installChannel, PACKAGE_UPDATE_CMD, type UpdateInfo, type SelfUpdateResult } from "../lib/appUpdate.ts"
+import { runSelfUpdate, installChannel, updateCommand, type UpdateInfo, type SelfUpdateResult } from "../lib/appUpdate.ts"
 
 type Section = { title: string; keys: [string, string][] }
 
@@ -191,10 +191,10 @@ function AboutColumn({
       {selfUpdate !== "idle" && selfUpdate !== "running" ? (
         <text content={selfUpdate.message} fg={selfUpdate.ok ? theme.good : theme.bad} />
       ) : null}
-      {installChannel() === "package" ? (
+      {installChannel() !== "git" ? (
         <>
           {line("Manual:")}
-          {line(PACKAGE_UPDATE_CMD, theme.text)}
+          {line(updateCommand() ?? "", theme.text)}
         </>
       ) : (
         <>
