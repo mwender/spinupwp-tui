@@ -4015,7 +4015,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // (see the create payload), so re-read and, if it's gone, set it again with
         // PUT /git — push-to-deploy too, should it read back different. Only what's
         // still wrong after that is flagged for the user.
-        const git = site.gitRepo && destSiteId != null ? await restoreDestGit(client, destSiteId, site, createdAt, logger, () => set((s) => ({ ...s, detail: "restoring deploy script", stageStartedAt: Date.now() }))) : undefined
+        const git = site.gitRepo && destSiteId != null ? await restoreDestGit(client, destSiteId, site, createdAt, logger, () => set((s) => ({ ...s, step: "config", detail: "restoring deploy script", stageStartedAt: Date.now() }))) : undefined
         const deployScriptLost = git?.deployScriptLost ?? false
         const pushMismatch = git?.pushMismatch ?? false
         const deployScriptRestored = git?.deployScriptRestored ?? false
