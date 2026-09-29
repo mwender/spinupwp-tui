@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Changed
+- **Clones put the deploy script back themselves.** SpinupWP clears a deploy script set when a site is created, and until now you had to paste it back into the new site's Git settings. SpinupWP's API can now update a site's Git settings, so the clone wizard sets the source's script again once the site is done, and fixes push-to-deploy the same way if it came out different. The verify pane (`v`) says when it did. The `g` copy-and-open fallback only appears if the script still doesn't stick. A clone that finishes within about two minutes of creating the site waits out the rest first, since an earlier write would be cleared along with the original.
+
 ## [1.0.0] - 2026-09-24
 
 ### Added
