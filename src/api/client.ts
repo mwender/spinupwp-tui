@@ -16,6 +16,9 @@ import type {
   AdditionalDomain,
   AddDomainPayload,
   UpdateSiteGitPayload,
+  PageCachePayload,
+  NginxSettings,
+  PathRedirect,
 } from "./types.ts"
 
 // The restartable services SpinupWP exposes (POST /servers/{id}/services/{svc}/restart).
@@ -86,6 +89,15 @@ export interface SpinupWPClientLike {
   getSite(id: number): Promise<Site>
   createSite(payload: CreateSitePayload): Promise<{ event_id: number }>
   updateSiteGit(siteId: number, payload: UpdateSiteGitPayload): Promise<{ event_id: number | null } | undefined>
+  enablePageCache(siteId: number, payload?: PageCachePayload): Promise<{ event_id: number }>
+  updatePageCache(siteId: number, payload: PageCachePayload): Promise<{ event_id: number }>
+  disablePageCache(siteId: number): Promise<{ event_id: number }>
+  updateNginx(siteId: number, payload: NginxSettings): Promise<{ event_ids: number[] }>
+  listPathRedirects(siteId: number): Promise<PathRedirect[]>
+  addPathRedirect(siteId: number, payload: Omit<PathRedirect, "created_at">): Promise<{ event_id: number }>
+  enableWpCron(siteId: number, interval: number): Promise<{ event_id: number }>
+  updateWpCron(siteId: number, interval: number): Promise<{ event_id: number }>
+  disableWpCron(siteId: number): Promise<{ event_id: number }>
   enableHttps(siteId: number): Promise<{ event_id: number }>
   disableHttps(siteId: number): Promise<{ event_id: number } | undefined>
   purgePageCache(siteId: number): Promise<{ event_id: number }>
@@ -359,6 +371,49 @@ export class SpinupWPClient implements SpinupWPClientLike {
   // token.
   updateSiteGit(siteId: number, payload: UpdateSiteGitPayload): Promise<{ event_id: number | null } | undefined> {
     return this.mutate<{ event_id: number | null } | undefined>(`/sites/${siteId}/git`, "PUT", payload)
+  }
+
+  // Page cache on an existing site (the API added enable/disable/settings in
+  // 2026-09; before that only purge existed). Async → event_id. Lists in the
+  // payload are newline-separated. Needs a Read/Write token.
+  enablePageCache(siteId: number, payload: PageCachePayload = {}): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/page-cache`, "POST", payload)
+  }
+  updatePageCache(siteId: number, payload: PageCachePayload): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/page-cache`, "PUT", payload)
+  }
+  disablePageCache(siteId: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/page-cache`, "DELETE")
+  }
+
+  // Nginx toggles (PHP in uploads, xmlrpc.php, multisite subdirectory rewrites;
+  // public_folder too, unused here). One event PER CHANGED SETTING comes back as
+  // `event_ids` — empty when nothing changed. Needs a Read/Write token.
+  updateNginx(siteId: number, payload: NginxSettings): Promise<{ event_ids: number[] }> {
+    return this.mutate<{ event_ids: number[] }>(`/sites/${siteId}/nginx`, "PUT", payload)
+  }
+
+  // Path redirects (nginx-level, per site). Adding a from+to pair the site already
+  // has is rejected. Async → event_id. Needs a Read/Write token.
+  async listPathRedirects(siteId: number): Promise<PathRedirect[]> {
+    return this.listAll<PathRedirect>(`/sites/${siteId}/path-redirects`)
+  }
+  addPathRedirect(siteId: number, payload: Omit<PathRedirect, "created_at">): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/path-redirects`, "POST", payload)
+  }
+
+  // Server-level WP cron (a system cron job replacing WordPress's page-load cron).
+  // interval is minutes, one of WP_CRON_INTERVALS. The Site object doesn't report
+  // it — read the site user's crontab instead (wpCronInterval in serverClone.ts).
+  // Async → event_id. Needs a Read/Write token.
+  enableWpCron(siteId: number, interval: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/cron`, "POST", { interval })
+  }
+  updateWpCron(siteId: number, interval: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/cron`, "PUT", { interval })
+  }
+  disableWpCron(siteId: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/cron`, "DELETE")
   }
 
   // Enable HTTPS on a site. `type: "webroot"` requests a Let's Encrypt cert (the

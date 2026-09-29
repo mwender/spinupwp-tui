@@ -757,6 +757,10 @@ export interface CrontabSyncResult {
   ok: boolean
   added: string[] // the lines appended to the dest crontab (empty = nothing to carry)
   error?: string
+  // SpinupWP's server-level WP cron on each end, in minutes (see wpCronInterval):
+  // null = no managed WP cron job, undefined = that crontab wasn't read.
+  sourceWpCron?: number | null
+  destWpCron?: number | null
 }
 
 // The owner-added lines of a crontab: everything except SpinupWP's `#Ansible:`
@@ -778,6 +782,27 @@ export function ownerCrontabLines(crontab: string): string[] {
   return out
 }
 
+// The interval, in minutes, of SpinupWP's managed WP cron job — the line after the
+// `#Ansible:` marker. The API doesn't report it, so the crontab is the only place
+// to read it. SpinupWP staggers the start minute per site, so every-5 is written
+// "4,9,14,…,59 * * * *": the gap between the first two minutes is the interval, a
+// single minute is hourly, "*" every minute. null = no managed WP cron job (or one
+// in a shape we don't recognize). Exported for the test harness.
+export function wpCronInterval(crontab: string): number | null {
+  const lines = crontab.split("\n").map((l) => l.replace(/\r$/, ""))
+  const at = lines.findIndex((l) => /^#Ansible:/.test(l))
+  const job = at >= 0 ? lines[at + 1] : undefined
+  if (!job || !/wp cron event run/.test(job)) return null
+  const [minute, hour] = job.trim().split(/\s+/)
+  if (hour !== "*" || !minute) return null
+  if (minute === "*") return 1
+  const step = minute.match(/^\*\/(\d+)$/)
+  if (step) return Number(step[1])
+  const mins = minute.split(",").map(Number)
+  if (mins.some((m) => !Number.isInteger(m))) return null
+  return mins.length === 1 ? 60 : mins[1]! - mins[0]!
+}
+
 const envName = (line: string): string | null => line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1] ?? null
 
 export async function syncCrontab(
@@ -796,15 +821,18 @@ export async function syncCrontab(
   const src = await read(source, spec.sourceSiteUser)
   if (!src.ok) return { ok: false, added: [], error: src.stderr.trim() || "couldn't read the source crontab" }
   const wanted = ownerCrontabLines(src.stdout)
-  if (wanted.length === 0) return { ok: true, added: [] }
+  const sourceWpCron = wpCronInterval(src.stdout)
 
+  // Read even when there's nothing to append: the caller compares WP cron intervals.
   const dst = await read(dest, spec.destSiteUser)
-  if (!dst.ok) return { ok: false, added: [], error: dst.stderr.trim() || "couldn't read the destination crontab" }
+  if (!dst.ok) return { ok: false, added: [], error: dst.stderr.trim() || "couldn't read the destination crontab", sourceWpCron }
+  const destWpCron = wpCronInterval(dst.stdout)
+  if (wanted.length === 0) return { ok: true, added: [], sourceWpCron, destWpCron }
   const have = new Set(dst.stdout.split("\n").map((l) => l.replace(/\r$/, "")))
   const haveEnv = new Set([...have].map(envName).filter((n): n is string => n != null))
   // An env line the dest already sets (SpinupWP's own PATH, typically) stays the dest's.
   const added = wanted.filter((l) => !have.has(l) && !(envName(l) && haveEnv.has(envName(l)!)))
-  if (added.length === 0) return { ok: true, added: [] }
+  if (added.length === 0) return { ok: true, added: [], sourceWpCron, destWpCron }
 
   const block = ["", `# Carried over from ${source.server.name} by the SpinupTUI clone`, ...added].join("\n") + "\n"
   const b64 = Buffer.from(block).toString("base64")
@@ -812,8 +840,8 @@ export async function syncCrontab(
   const t0 = Date.now()
   const w = await exec(dest, script, 30_000)
   onExec?.({ domain: spec.domain, stage: "config", host: dest.server.name, ok: w.ok, code: w.code, ms: Date.now() - t0, script, stdout: w.stdout, stderr: w.stderr })
-  if (!w.ok) return { ok: false, added: [], error: w.stderr.trim() || "couldn't write the destination crontab" }
-  return { ok: true, added }
+  if (!w.ok) return { ok: false, added: [], error: w.stderr.trim() || "couldn't write the destination crontab", sourceWpCron, destWpCron }
+  return { ok: true, added, sourceWpCron, destWpCron }
 }
 
 // ---- Files-only pull chain (non-WP sites: redirect shells, static/PHP sites) --

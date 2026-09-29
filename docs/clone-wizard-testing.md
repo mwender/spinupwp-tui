@@ -26,7 +26,7 @@ the `cloneJob` slice in `src/ui/store.tsx`, `src/lib/dnsRecords.ts` (cutover wri
   - `wp.spinuptui.com` — Standard WP — **clone**
   - `bedrock.spinuptui.com` — Bedrock (repo `mwender/bedrock-spinuptui`) — **clone**
   - `web1.spinuptui.com` — vanity placeholder — **do NOT clone**
-  - `avn.wenmarkdigital.com` — Radicle (private repo, copy of a real Radicle site's code, DB and uploads; `noindex`) — **clone**. Its crontab carries one commented-out owner line, to exercise the crontab carry-over without running the job. Push-to-deploy stays **off**: SpinupWP appears to share one deploy webhook per repo, so a push to the real site's repo could otherwise redeploy the fixture.
+  - `avn.wenmarkdigital.com` — Radicle (private repo, copy of a real Radicle site's code, DB and uploads; `noindex`) — **clone**. Its crontab carries one commented-out owner line, to exercise the crontab carry-over without running the job. It also has one path redirect (`/spinuptui-redirect-test` → `/`, 301) and full page-cache exclusion lists, to exercise the settings carry-over; check the redirect on the dest with `curl --resolve <domain>:80:<dest IP> http://<domain>/spinuptui-redirect-test`. Push-to-deploy stays **off**: SpinupWP appears to share one deploy webhook per repo, so a push to the real site's repo could otherwise redeploy the fixture.
 - **Dest = `web2.spinuptui.com`.** Both boxes have Node 22 (Radicle deploy scripts run `npm ci` / `npm run build`); remove it from web2 to re-test the "destination needs Node" preflight stop.
 - Server IDs / IPs / the dest sudo user: see the API-findings doc and your `.env`.
 - **`.env`** (gitignored) carries the dev shortcuts and creds:

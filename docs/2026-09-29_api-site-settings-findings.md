@@ -35,6 +35,9 @@ The Site object's read shape now documents `nginx.{uploads_directory_protected, 
 - **`PUT /sites/{id}/git` restores a wiped deploy script, and it sticks.** On a git-deployed clone on the test destination whose `deploy_script` read back `null`, a PUT with only `deploy_script` returned `{ "event_id": null }`, read back immediately, and was still there 3+ minutes later and after a `git/deploy`.
 - **`POST /sites/{id}/git/deploy` still does not run the deploy script,** even with one configured. The event finished in 3 s with output `Git pull from origin / Checkout changes / Already on 'main'`. Caveat: there were no new commits to pull, so this doesn't rule out the script running when a pull brings changes. It is the case that matters for the clone wizard (a fresh clone has nothing new), so the wizard keeps its own SSH build.
 - **Event `output` can contain raw control characters.** Parse it leniently (Python's `json` needs `strict=False`).
+- **Page-cache exclusion lists round-trip exactly** when the pipe-joined read value is split on top-level pipes and written newline-separated (all three lists, including regex entries like `sitemap(_index)?.xml`, read back identical).
+- **Backups are stored per domain** (`{BUCKET}/{DOMAIN}/{DATE}-files.tar.gz`, per SpinupWP's backup docs), so a clone with the same domain backing up before cutover would write into production's folder.
+- **WP cron interval is readable from the site user's crontab**: the line after `#Ansible: <domain>`, e.g. `4,9,14,…,59 * * * *` = every 5 min (the start minute is staggered per site). The Site object also has an undocumented `user_auth` field (`"publickey"` on every site in one fleet).
 - Side observation for settings parity: the same clone's `page_cache` read back `cookie_exclusions: null` and `ignored_query_params: null` while its source has full lists. Create-time `page_cache.enabled` doesn't carry the source's exclusion settings.
 
 ## What this changes in SpinupTUI
@@ -70,7 +73,7 @@ In order, each step shippable on its own:
 
 1. **Clone wizard: restore the deploy script after create**, then re-read to confirm. *Built on branch `feat/clone-restore-deploy-script`; the API behavior is verified, a full wizard run is still to do.*
 2. ~~Test `git/deploy` with a configured script.~~ *Done 2026-09-29: it doesn't run the script; the wizard's SSH build stays.*
-3. **Clone wizard: full settings parity** (page cache settings, nginx toggles, basic auth, redirects, backups). Update the "what carries over" docs.
+3. *Built on `feat/clone-settings-parity`, live-tested 2026-09-29: page cache (duration + exclusions), nginx toggles, redirects, WP cron interval (from the crontab); basic auth flagged. Backups moved to their own step, applied at DNS cutover (user decision: they're stored per domain, so a clone backing up before cutover would overwrite production's files).* **Clone wizard: full settings parity** (page cache settings, nginx toggles, basic auth, redirects, backups). Update the "what carries over" docs.
 4. **Page cache toggle** on existing sites (`P` gains enable/disable, or a settings panel absorbs it).
 5. **Fleet baseline / policy check**, the headline candidate for the next minor release.
 6. The rest of the ideas above, as prioritized at the time.
