@@ -10,7 +10,7 @@ import { toast } from "./toast.ts"
 import { SpinupWPClient, ApiError, type ServerService, type SpinupWPClientLike } from "../api/client.ts"
 import { isDevMode } from "../dev/devMode.ts"
 import { createMockClient } from "../dev/mockClient.ts"
-import type { Server, Site, Event, ProviderMetadata, CreateServerPayload, CreateSitePayload, AdditionalDomain } from "../api/types.ts"
+import type { Server, Site, Event, ProviderMetadata, CreateServerPayload, CreateSitePayload, AdditionalDomain, UpdateSiteGitPayload } from "../api/types.ts"
 import { loadConfig, saveConfig, type StoredConfig, type ServerProviderRef, type KumaMonitorRef, type UptimeKumaConn } from "../config.ts"
 import { saveJob, removeJob } from "../lib/jobs.ts"
 import { APP_VERSION } from "../version.ts"
@@ -298,10 +298,11 @@ export interface CloneSiteState {
   cutover?: CloneCutoverState // slice 6: DNS repoint state for this site's domain
   cronAdded?: string[] // owner crontab lines carried to the dest (empty = none to carry)
   cronError?: string // crontab carry-over failed (the clone itself still succeeded)
-  // The source had a deploy script but the dest reads back none — SpinupWP drops a
-  // script set on create, and there's no API to set it after. The verify pane
-  // offers it for copy with a link to the dest's Git settings.
+  // The source had a deploy script but the dest still reads back none after we set
+  // it again (SpinupWP drops a script set on create). The verify pane offers it for
+  // copy with a link to the dest's Git settings.
   deployScriptLost?: boolean
+  deployScriptRestored?: boolean // SpinupWP dropped the script and we set it again
   pushMismatch?: boolean // the dest's push-to-deploy reads back different from the source's
 }
 // Slice 6: per-site DNS cutover. Each A record among the site's domains (primary +
@@ -396,6 +397,52 @@ const INTERRUPTED_LOCAL_SETUP_MSG = "Interrupted by a restart — the local copy
 // writes, whose terminal is "deployed"); finished_at also implies done.
 const SERVER_DONE = new Set(["deployed", "completed", "provisioned", "finished", "success"])
 const SERVER_FAIL = new Set(["failed", "errored", "error"])
+
+// SpinupWP clears a deploy script sent with POST /sites a minute or two after the
+// create (seen at ~90s, 2026-09-24). A PUT made before that would be wiped along
+// with it, so the restore below waits until this long after the create.
+const DEPLOY_SCRIPT_WIPE_MS = 150_000
+
+// Put a cloned git site's deploy script and push-to-deploy back to the source's
+// values if the dest reads back different, then re-read so only what's still
+// wrong is reported. Best-effort: a failed write or read never fails the clone.
+async function restoreDestGit(
+  client: SpinupWPClientLike,
+  destSiteId: number,
+  site: Pick<CloneSiteState, "domain" | "deployScript" | "pushEnabled">,
+  createdAt: number | undefined,
+  logger: CloneLogger | null | undefined,
+  onWait: () => void,
+): Promise<{ deployScriptLost: boolean; deployScriptRestored: boolean; pushMismatch: boolean } | undefined> {
+  const wantScript = site.deployScript?.trim()
+  const diff = (dest: Site) => ({
+    script: !!wantScript && !dest.git?.deploy_script?.trim(),
+    push: site.pushEnabled != null && dest.git?.push_enabled !== site.pushEnabled,
+  })
+  try {
+    const wait = createdAt != null ? DEPLOY_SCRIPT_WIPE_MS - (Date.now() - createdAt) : 0
+    if (wait > 0) {
+      onWait()
+      await new Promise((r) => setTimeout(r, wait))
+    }
+    const before = diff(await client.getSite(destSiteId))
+    if (!before.script && !before.push) return { deployScriptLost: false, deployScriptRestored: false, pushMismatch: false }
+    const payload: UpdateSiteGitPayload = {
+      ...(before.script ? { deploy_script: wantScript } : {}),
+      ...(before.push ? { push_to_deploy: site.pushEnabled } : {}),
+    }
+    try {
+      await client.updateSiteGit(destSiteId, payload)
+      logger?.log({ event: "git-restore", domain: site.domain, fields: Object.keys(payload) })
+    } catch (err) {
+      logger?.log({ event: "git-restore", domain: site.domain, fields: Object.keys(payload), error: (err as Error).message })
+    }
+    const after = diff(await client.getSite(destSiteId))
+    return { deployScriptLost: after.script, deployScriptRestored: before.script && !after.script, pushMismatch: after.push }
+  } catch {
+    return undefined // unknown — say nothing rather than guess
+  }
+}
 
 export function isNewServerInFlight(j: NewServerJob | null | undefined): boolean {
   return j != null && j.status !== "done" && j.status !== "failed"
@@ -3831,6 +3878,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // DB password can't be recovered to re-stamp wp-config, so a leftover from a
         // prior run must be removed first (create will surface a clear conflict).
         let destSiteId = site.destSiteId
+        let createdAt: number | undefined // when THIS run created the dest (see the git restore below)
         if (destSiteId == null) {
           let ev
           try {
@@ -3846,10 +3894,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                     database: { name: dbName, username: dbName, password: dbPw, table_prefix: site.tablePrefix || "wp_" },
                     // deploy_script is TOP-LEVEL; we send the source's own (canonical
                     // only as the fallback). CAVEAT, verified 2026-09-24: SpinupWP stores
-                    // it, echoes it back, then clears it a minute or two later — so the
-                    // dest's script has to be re-entered in the dashboard. Nothing here
-                    // depends on it: the pull runs composer (and a Radicle source's own
-                    // script) over SSH.
+                    // it, echoes it back, then clears it a minute or two later — so it's
+                    // set again with PUT /git once the site is done (see below). Nothing
+                    // here depends on it: the pull runs composer (and a Radicle source's
+                    // own script) over SSH.
                     deploy_script: site.deployScript?.trim() || "composer install -o --no-dev",
                     git: {
                       repo: site.gitRepo!,
@@ -3881,10 +3929,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                       database: { name: dbName, username: dbName, password: dbPw, table_prefix: site.tablePrefix || "wp_" },
                     }
             // Match the source's page cache — a deploy script that purges it
-            // (`wp spinupwp cache purge-site`) fails on a site where it's off, and
-            // it can't be switched on through the API after the create.
+            // (`wp spinupwp cache purge-site`) fails on a site where it's off.
             if (site.pageCache != null) payload.page_cache = { enabled: site.pageCache }
             ev = await client.createSite(payload)
+            createdAt = Date.now()
             logger?.log({ event: "create-requested", domain: site.domain, eventId: ev?.event_id })
           } catch (err) {
             return fail("create", err instanceof ApiError ? err.message : (err as Error).message)
@@ -3963,24 +4011,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         set((s) => ({ ...s, detail: "crontab" }))
         const cron = await syncCrontab(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser }, onExec)
         logger?.log({ event: "crontab", domain: site.domain, ok: cron.ok, added: cron.added, error: cron.error })
-        // Did the dest keep the deploy script we sent on create? (It usually
-        // doesn't — see the create payload.) Re-read rather than assume, so this
-        // goes quiet on its own if SpinupWP fixes it.
-        // Same re-read for push-to-deploy (which does stick, as of 2026-09-24 —
-        // checked anyway, since the create is the only chance to set it).
-        let deployScriptLost = false
-        let pushMismatch = false
-        if (site.gitRepo && destSiteId != null) {
-          try {
-            const destSite = await client.getSite(destSiteId)
-            deployScriptLost = !!site.deployScript?.trim() && !destSite.git?.deploy_script?.trim()
-            pushMismatch = site.pushEnabled != null && destSite.git?.push_enabled !== site.pushEnabled
-          } catch {
-            /* unknown — say nothing rather than guess */
-          }
-        }
-        logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel, deployScriptLost, pushMismatch })
-        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel, cronAdded: cron.added, cronError: cron.ok ? undefined : cron.error, deployScriptLost, pushMismatch }))
+        // Did the dest keep the deploy script we sent on create? It usually doesn't
+        // (see the create payload), so re-read and, if it's gone, set it again with
+        // PUT /git — push-to-deploy too, should it read back different. Only what's
+        // still wrong after that is flagged for the user.
+        const git = site.gitRepo && destSiteId != null ? await restoreDestGit(client, destSiteId, site, createdAt, logger, () => set((s) => ({ ...s, detail: "restoring deploy script", stageStartedAt: Date.now() }))) : undefined
+        const deployScriptLost = git?.deployScriptLost ?? false
+        const pushMismatch = git?.pushMismatch ?? false
+        const deployScriptRestored = git?.deployScriptRestored ?? false
+        logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel, deployScriptLost, deployScriptRestored, pushMismatch })
+        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel, cronAdded: cron.added, cronError: cron.ok ? undefined : cron.error, deployScriptLost, deployScriptRestored, pushMismatch }))
       } catch (err) {
         fail(site.step, (err as Error).message)
       }

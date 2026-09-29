@@ -132,6 +132,17 @@ export function createMockClient(): SpinupWPClientLike {
       return { event_id }
     },
 
+    async updateSiteGit(siteId, payload) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site?.git) {
+        if (payload.repo != null) site.git.repo = payload.repo
+        if (payload.branch != null) site.git.branch = payload.branch
+        if (payload.deploy_script != null) site.git.deploy_script = payload.deploy_script
+        if (payload.push_to_deploy != null) site.git.push_enabled = payload.push_to_deploy
+      }
+      return { event_id: null }
+    },
+
     async enableHttps(siteId) {
       const site = sites.find((s) => s.id === siteId)
       if (site) site.https = { enabled: true }

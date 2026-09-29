@@ -154,10 +154,10 @@ private, remove all deploy keys except web1's `spinupwp-*` key, delete the dest 
   pointing at the dest DB).
 - **Revoke with `sed /marker/d`, never `grep -v`** (grep exits 1 when it removes the only
   line → would leave the key behind; source site users often have no other keys).
-- `POST /sites/{id}/git/deploy` does **not** run the deploy script (only git pull) →
+- `POST /sites/{id}/git/deploy` does **not** run the deploy script (only git pull; re-confirmed 2026-09-29 with a script configured) →
   Bedrock build uses SSH `composer install -o --no-dev`, not the API deploy.
 - `deploy_script` is **top-level** on `POST /sites`; git uses `push_to_deploy` /
-  `always_run_deploy_script`. No site/git update endpoint. Deleting a site **orphans its
+  `always_run_deploy_script`. SpinupWP clears a create-time `deploy_script` ~90 s later; the wizard sets it again with `PUT /sites/{id}/git` (added to the API 2026-09) — see `docs/2026-09-29_api-site-settings-findings.md`. Deleting a site **orphans its
   DB**. `site_user` ≥ 3 chars. (All in the API-findings doc.)
 
 ## Resuming headless dev/testing

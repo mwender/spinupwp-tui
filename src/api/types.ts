@@ -193,6 +193,15 @@ export interface CreateSitePayload {
   }
 }
 
+// PUT /sites/{id}/git — at least one field. Unlike POST /sites, deploy_script sits
+// alongside the git settings here, and the write key is push_to_deploy.
+export interface UpdateSiteGitPayload {
+  repo?: string
+  branch?: string
+  deploy_script?: string
+  push_to_deploy?: boolean
+}
+
 export interface Event {
   id: number
   initiated_by: string | null

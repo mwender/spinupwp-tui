@@ -15,6 +15,7 @@ import type {
   CreateSitePayload,
   AdditionalDomain,
   AddDomainPayload,
+  UpdateSiteGitPayload,
 } from "./types.ts"
 
 // The restartable services SpinupWP exposes (POST /servers/{id}/services/{svc}/restart).
@@ -84,6 +85,7 @@ export interface SpinupWPClientLike {
   listSites(serverId?: number): Promise<Site[]>
   getSite(id: number): Promise<Site>
   createSite(payload: CreateSitePayload): Promise<{ event_id: number }>
+  updateSiteGit(siteId: number, payload: UpdateSiteGitPayload): Promise<{ event_id: number | null } | undefined>
   enableHttps(siteId: number): Promise<{ event_id: number }>
   disableHttps(siteId: number): Promise<{ event_id: number } | undefined>
   purgePageCache(siteId: number): Promise<{ event_id: number }>
@@ -349,6 +351,14 @@ export class SpinupWPClient implements SpinupWPClientLike {
   // event_id to poll. Needs a Read/Write token.
   addSiteDomain(siteId: number, payload: AddDomainPayload): Promise<{ event_id: number }> {
     return this.mutate<{ event_id: number }>(`/sites/${siteId}/domains`, "POST", payload)
+  }
+
+  // Update a site's Git settings (at least one field). Changing only the deploy
+  // script or push-to-deploy needs no server work, so SpinupWP answers with a null
+  // event_id — the new values are in place when this resolves. Needs a Read/Write
+  // token.
+  updateSiteGit(siteId: number, payload: UpdateSiteGitPayload): Promise<{ event_id: number | null } | undefined> {
+    return this.mutate<{ event_id: number | null } | undefined>(`/sites/${siteId}/git`, "PUT", payload)
   }
 
   // Enable HTTPS on a site. `type: "webroot"` requests a Let's Encrypt cert (the

@@ -824,8 +824,11 @@ export function CloneWizard() {
         {site.pushMismatch ? (
           <text content={`⚠ Push-to-deploy is ${site.pushEnabled ? "off" : "on"} here but ${site.pushEnabled ? "on" : "off"} on the source — switch it in the new site's Git settings (g)`} fg={theme.warn} wrapMode="none" />
         ) : null}
+        {site.deployScriptRestored ? (
+          <text content="✓ Deploy script: SpinupWP dropped the one set on create, so it was set again from the source" fg={theme.good} wrapMode="none" />
+        ) : null}
         {site.deployScriptLost ? (
-          <text content="⚠ SpinupWP didn't keep this site's deploy script — press g to copy the source's and paste it into the new site's Git settings" fg={theme.warn} wrapMode="none" />
+          <text content="⚠ SpinupWP didn't keep this site's deploy script, even when set again — press g to copy the source's and paste it into the new site's Git settings" fg={theme.warn} wrapMode="none" />
         ) : null}
       </>
     )

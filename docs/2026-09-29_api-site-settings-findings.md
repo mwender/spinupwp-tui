@@ -30,10 +30,17 @@ The Site object's read shape now documents `nginx.{uploads_directory_protected, 
 - **Site user:** no auth method and no authorized key ids in the Site object. `PUT /site-user` with `ssh_key_ids` very likely **replaces** the authorized set, and we can't read the current set first. Test on a test box before any production use.
 - **Basic auth password** is never readable, so a clone can carry the username only.
 
+## Verified live (2026-09-29, test boxes)
+
+- **`PUT /sites/{id}/git` restores a wiped deploy script, and it sticks.** On a git-deployed clone on the test destination whose `deploy_script` read back `null`, a PUT with only `deploy_script` returned `{ "event_id": null }`, read back immediately, and was still there 3+ minutes later and after a `git/deploy`.
+- **`POST /sites/{id}/git/deploy` still does not run the deploy script,** even with one configured. The event finished in 3 s with output `Git pull from origin / Checkout changes / Already on 'main'`. Caveat: there were no new commits to pull, so this doesn't rule out the script running when a pull brings changes. It is the case that matters for the clone wizard (a fresh clone has nothing new), so the wizard keeps its own SSH build.
+- **Event `output` can contain raw control characters.** Parse it leniently (Python's `json` needs `strict=False`).
+- Side observation for settings parity: the same clone's `page_cache` read back `cookie_exclusions: null` and `ignored_query_params: null` while its source has full lists. Create-time `page_cache.enabled` doesn't carry the source's exclusion settings.
+
 ## What this changes in SpinupTUI
 
 1. **Clone wizard, deploy script.** SpinupWP stores the `deploy_script` sent on `POST /sites`, echoes it back, then wipes it ~90 s later (verified 2026-09-24 with three probe sites). Today the wizard detects this (`deployScriptLost`) and tells the user to re-enter it in the dashboard. Now it can re-apply it with `PUT /sites/{id}/git` after the clone settles, then re-read to confirm it stuck.
-2. **Clone wizard, `git/deploy` may now build for us.** `docs/2026-06-27_site-creation-api-findings.md` concluded that `git/deploy` never runs the deploy script, so the wizard runs `composer install` (and, for Radicle, the source's deploy script) itself. The API docs say `git/deploy` runs the script "if you have one configured." The old finding may have been the wipe, not the endpoint. **Open question to test** on the test boxes. If true, SpinupWP can do the build; `auth.json` still has to be carried first.
+2. **Clone wizard, `git/deploy` does not build for us.** The API docs say `git/deploy` runs the script "if you have one configured", which suggested the old finding (it never runs) was really the wipe. Tested 2026-09-29 with a script configured: it still only pulls (see above). The wizard keeps running `composer install` (and a Radicle source's own script) over SSH.
 3. **Clone wizard, full settings parity.** Beyond what's carried today (page cache on/off, push-to-deploy, additional domains, owner cron lines): page cache duration/exclusions, the nginx hardening toggles and multisite rewrite, basic auth (username; password prompted), path redirects, and backup settings plus schedule.
 4. **Page cache toggle on existing sites.** Originally requested for v0.11.0 and shipped as purge-only (`P`) because no toggle existed.
 5. **`public_folder` repair.** We detect the real webroot rather than trusting the setting (see CLAUDE.md). The setting can now be corrected to match reality via `PUT /nginx`.
@@ -61,8 +68,8 @@ The Site object's read shape now documents `nginx.{uploads_directory_protected, 
 
 In order, each step shippable on its own:
 
-1. **Clone wizard: restore the deploy script after create**, then re-read to confirm. Small; removes a known manual step.
-2. **Test `git/deploy` with a configured script** on the test boxes (see `docs/clone-wizard-testing.md`). Decide whether the wizard's own build step can defer to SpinupWP.
+1. **Clone wizard: restore the deploy script after create**, then re-read to confirm. *Built on branch `feat/clone-restore-deploy-script`; the API behavior is verified, a full wizard run is still to do.*
+2. ~~Test `git/deploy` with a configured script.~~ *Done 2026-09-29: it doesn't run the script; the wizard's SSH build stays.*
 3. **Clone wizard: full settings parity** (page cache settings, nginx toggles, basic auth, redirects, backups). Update the "what carries over" docs.
 4. **Page cache toggle** on existing sites (`P` gains enable/disable, or a settings panel absorbs it).
 5. **Fleet baseline / policy check**, the headline candidate for the next minor release.
