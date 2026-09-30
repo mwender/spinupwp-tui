@@ -169,15 +169,17 @@ export async function resolveSshTargetInfo(
   }
 }
 
-export async function resolveSshAccess(
-  domain: string,
-  client: SpinupWPClientLike,
-  cfg: AppConfig,
-  opts?: { server?: string | null },
-): Promise<SshAccessResult> {
-  const resolution = await resolveSshTargetInfo(domain, client, cfg, opts)
-  if (!resolution.ok) return resolution.result
-  const { primaryDomain, sshTarget: target, port, server: serverName } = resolution.info
+// One BatchMode `ssh … true` against an already-resolved target, classified.
+// Shared by `ssh` (one domain) and `siblings --probe` (every site on a server)
+// so both read a refused key, an unreachable box and anything else the same way.
+export type SshProbeStatus = "ok" | "permission_denied" | "connection_failed" | "ssh_error"
+
+const PROBE_TIMEOUT_MS = 15_000
+
+export async function probeSshTarget(
+  target: string,
+  port: number | null,
+): Promise<{ status: SshProbeStatus; message?: string }> {
   const portOpt = port ? ["-p", String(port)] : []
 
   let proc: ReturnType<typeof Bun.spawn>
@@ -188,46 +190,58 @@ export async function resolveSshAccess(
       stdin: "ignore",
     })
   } catch (err) {
-    return { ok: false, domain, reason: "ssh_error", message: `Failed to launch ssh: ${(err as Error).message}` }
+    return { status: "ssh_error", message: `Failed to launch ssh: ${(err as Error).message}` }
   }
 
+  let timedOut = false
   const timeout = setTimeout(() => {
+    timedOut = true
     try {
       proc.kill()
     } catch {
       /* already gone */
     }
-  }, 15000)
+  }, PROBE_TIMEOUT_MS)
 
   const exitCode = await proc.exited
   clearTimeout(timeout)
+  if (exitCode === 0) return { status: "ok" }
+
+  // Killed by our own timer: ssh never got to say why, so say it here rather
+  // than reporting the kill signal's exit code as an unexplained ssh error.
+  if (timedOut) {
+    return { status: "connection_failed", message: `ssh did not finish within ${PROBE_TIMEOUT_MS / 1000}s.` }
+  }
+
   const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text()
+  const tail = stderr.trim().split("\n").slice(-2).join(" ")
 
-  if (exitCode === 0) {
-    return { ok: true, domain, primaryDomain, sshTarget: target, port, server: serverName }
-  }
-
-  if (/permission denied/i.test(stderr)) {
-    return {
-      ok: false,
-      domain,
-      reason: "permission_denied",
-      message: stderr.trim().split("\n").slice(-2).join(" ") || "Permission denied.",
-      remedy: GRANT_KEY_REMEDY,
-    }
-  }
+  if (/permission denied/i.test(stderr)) return { status: "permission_denied", message: tail || "Permission denied." }
   if (/(connection timed out|operation timed out|connection refused|could not resolve)/i.test(stderr)) {
-    return {
-      ok: false,
-      domain,
-      reason: "connection_failed",
-      message: stderr.trim().split("\n").slice(-2).join(" ") || `ssh exited with code ${exitCode}`,
-    }
+    return { status: "connection_failed", message: tail || `ssh exited with code ${exitCode}` }
+  }
+  return { status: "ssh_error", message: tail || `ssh exited with code ${exitCode}` }
+}
+
+export async function resolveSshAccess(
+  domain: string,
+  client: SpinupWPClientLike,
+  cfg: AppConfig,
+  opts?: { server?: string | null },
+): Promise<SshAccessResult> {
+  const resolution = await resolveSshTargetInfo(domain, client, cfg, opts)
+  if (!resolution.ok) return resolution.result
+  const { primaryDomain, sshTarget: target, port, server: serverName } = resolution.info
+
+  const probe = await probeSshTarget(target, port)
+  if (probe.status === "ok") {
+    return { ok: true, domain, primaryDomain, sshTarget: target, port, server: serverName }
   }
   return {
     ok: false,
     domain,
-    reason: "ssh_error",
-    message: stderr.trim().split("\n").slice(-2).join(" ") || `ssh exited with code ${exitCode}`,
+    reason: probe.status,
+    message: probe.message ?? "ssh failed.",
+    ...(probe.status === "permission_denied" ? { remedy: GRANT_KEY_REMEDY } : {}),
   }
 }

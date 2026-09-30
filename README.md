@@ -85,12 +85,11 @@
   `--all` surfaces Uptime Kuma's down/up history as JSON; `spinuptui siblings
   <domain>` lists every site sharing that site's server, so a page on a server's
   vanity host leads straight to the co-tenants that could be causing it;
-  `spinuptui pull files
-  <domain> [path]` and `spinuptui pull db <domain> --yes` set up a local working
-  copy from production without opening the TUI at all — the same engines the
-  guided flow drives. Built so another agent/script can go from just a domain to
-  "what's wrong and how do I get in", or to a working local copy, with no manual
-  lookup. → [CLI subcommands](#cli-subcommands)
+  `spinuptui pull files <domain> [path]` and `spinuptui pull db <domain> --yes`
+  set up a local working copy from production without opening the TUI at all —
+  the same engines the guided flow drives. Built so another agent/script can go
+  from just a domain to "what's wrong and how do I get in", or to a working local
+  copy, with no manual lookup. → [CLI subcommands](#cli-subcommands)
 - **Completion toasts** — a non-focus-stealing toast when a background write
   (PHP upgrade, reboot, DNS resolve, …) finishes.
 - **Release notes** — an in-app "what's new" after every update, sourced
@@ -204,21 +203,22 @@ spinuptui ssh-exec <domain> [--server <name>] -- <command>  Resolve the
                      as one shell argument if it needs pipes or redirects.
 spinuptui siblings <domain> [--server <name>] [--probe]  Print every site
                      sharing a server with this one, as JSON, with the
-                     server's own details (IP, size, Ubuntu version). Each
-                     entry carries its site user and SSH target, whether it's
-                     WordPress, its PHP version, whether page cache is on,
-                     whether it's the server's vanity host (isVanity), whether
-                     SpinupTUI registered Uptime Kuma monitors for it
-                     (monitored), and whether it's the domain you asked about
-                     (isQuery). The vanity host sorts first, then the queried
-                     site, then the rest alphabetically. --probe additionally
-                     SSHes into each site user and reports ssh:"ok" |
-                     "permission_denied" | "connection_failed" | "ssh_error",
-                     which answers "whose logs can I actually read on this
-                     box" in one call. Written for whole-server symptoms: a
-                     vanity host's ?healthz trips on the load of whichever
-                     co-tenant is busy, and site isolation means the vanity
-                     user can't see it.
+                     server's own details (IP, SSH port, size, Ubuntu
+                     version). Each entry carries its site user and SSH
+                     target, whether it's WordPress, its PHP version, whether
+                     page cache is on, whether it's the server's vanity host
+                     (isVanity), whether SpinupTUI registered Uptime Kuma
+                     monitors for it (monitored), and whether it's the domain
+                     you asked about (isQuery). The vanity host sorts first,
+                     then the queried site, then the rest alphabetically.
+                     --probe additionally SSHes into each site user and
+                     reports ssh:"ok" | "permission_denied" |
+                     "connection_failed" | "ssh_error", which answers "whose
+                     logs can I actually read on this box" in one call.
+                     Written for whole-server symptoms: a vanity host's
+                     ?healthz trips on the load of whichever co-tenant is
+                     busy, and site isolation means the vanity user can't see
+                     it.
 spinuptui incidents <domain> | --all [--hours N]  Print Uptime Kuma down/up
                      incidents as JSON, scoped to sites SpinupTUI manages
                      monitoring for (config.json's kumaMonitors) — --all

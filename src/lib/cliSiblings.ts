@@ -12,16 +12,22 @@ import type { AppConfig } from "../config.ts"
 import type { Server, Site } from "../api/types.ts"
 import type { SpinupWPClientLike } from "../api/client.ts"
 import { ApiError } from "../api/client.ts"
-import { resolveSiteByDomain, type SshAccessReason, type SshAccessCandidate } from "./cliSsh.ts"
-import { resolveSiteSshTarget, SSH_OPTS } from "./probe.ts"
+import {
+  resolveSiteByDomain,
+  probeSshTarget,
+  type SshAccessReason,
+  type SshAccessCandidate,
+  type SshProbeStatus,
+} from "./cliSsh.ts"
+import { hasIncidentMonitors } from "./cliIncidents.ts"
+import { resolveSiteSshTarget } from "./probe.ts"
 import { isVanityPair } from "./vanitySite.ts"
-import { spawn } from "./spawn.ts"
 
 // Why a co-tenant's logs may be out of reach. `ok` means this device's key is
 // accepted for that site user; `permission_denied` is the one worth acting on
 // (grant the key with K in the Browser view) and the usual reason a neighbour's
 // access log can't be read.
-export type SiblingSshStatus = "ok" | "permission_denied" | "connection_failed" | "ssh_error"
+export type SiblingSshStatus = SshProbeStatus
 
 export interface SiblingSite {
   domain: string
@@ -48,6 +54,8 @@ export interface SiblingsServer {
   id: number
   name: string
   ip: string | null
+  // Needed alongside each site's sshTarget; null means the default, 22.
+  sshPort: number | null
   provider: string | null
   size: string | null
   ubuntuVersion: string | null
@@ -71,48 +79,24 @@ export type SiblingsResult =
       candidates?: SshAccessCandidate[]
     }
 
-const PROBE_TIMEOUT_MS = 15_000
+// Every probe hits the same sshd, so they're capped rather than all fired at
+// once: OpenSSH's default MaxStartups (10:30:100) starts dropping connections
+// that are still authenticating past 10, which would turn a big server's
+// result into random connection failures. A small burst of refused logins is
+// also gentler on any fail2ban-style guard watching that sshd.
+const PROBE_CONCURRENCY = 4
 
-// Same classification as resolveSshAccess's, against one already-resolved
-// target. Kept here rather than exported from cliSsh.ts because that module's
-// probe is domain-addressed and would re-resolve every sibling through the API.
-async function probeTarget(
-  target: string,
-  port: number | null,
-): Promise<{ ssh: SiblingSshStatus; sshMessage?: string }> {
-  const portOpt = port ? ["-p", String(port)] : []
-
-  let proc: ReturnType<typeof Bun.spawn>
-  try {
-    proc = spawn(["ssh", ...SSH_OPTS, ...portOpt, target, "true"], {
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    })
-  } catch (err) {
-    return { ssh: "ssh_error", sshMessage: `Failed to launch ssh: ${(err as Error).message}` }
-  }
-
-  const timeout = setTimeout(() => {
-    try {
-      proc.kill()
-    } catch {
-      /* already gone */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i]!)
     }
-  }, PROBE_TIMEOUT_MS)
-
-  const exitCode = await proc.exited
-  clearTimeout(timeout)
-  if (exitCode === 0) return { ssh: "ok" }
-
-  const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text()
-  const message = stderr.trim().split("\n").slice(-2).join(" ") || `ssh exited with code ${exitCode}`
-
-  if (/permission denied/i.test(stderr)) return { ssh: "permission_denied", sshMessage: message }
-  if (/(connection timed out|operation timed out|connection refused|could not resolve)/i.test(stderr)) {
-    return { ssh: "connection_failed", sshMessage: message }
   }
-  return { ssh: "ssh_error", sshMessage: message }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
 }
 
 function describe(site: Site, server: Server, cfg: AppConfig, queryId: number): SiblingSite {
@@ -124,7 +108,7 @@ function describe(site: Site, server: Server, cfg: AppConfig, queryId: number): 
     phpVersion: site.php_version,
     pageCache: site.page_cache ? site.page_cache.enabled : null,
     isVanity: isVanityPair(site.domain, server.name),
-    monitored: Boolean(cfg.kumaMonitors[site.domain]),
+    monitored: hasIncidentMonitors(cfg.kumaMonitors[site.domain]),
     isQuery: site.id === queryId,
   }
 }
@@ -166,13 +150,16 @@ export async function resolveSiblings(
   })
 
   const sites = sorted.map((s) => describe(s, server, cfg, site.id))
+  const port = server.ssh_port && server.ssh_port !== 22 ? server.ssh_port : null
 
+  // resolveSiteByDomain has already refused a server with no IP, so every
+  // sshTarget here is a real user@ip.
   if (opts?.probe) {
-    const port = server.ssh_port && server.ssh_port !== 22 ? server.ssh_port : null
-    const probes = await Promise.all(
-      sites.map((s) => (s.sshTarget ? probeTarget(s.sshTarget, port) : Promise.resolve({ ssh: "ssh_error" as const, sshMessage: "Server has no IP address on file." }))),
-    )
-    probes.forEach((p, i) => Object.assign(sites[i]!, p))
+    const probes = await mapLimit(sites, PROBE_CONCURRENCY, (s) => probeSshTarget(s.sshTarget, port))
+    probes.forEach((p, i) => {
+      sites[i]!.ssh = p.status
+      if (p.message) sites[i]!.sshMessage = p.message
+    })
   }
 
   return {
@@ -183,6 +170,7 @@ export async function resolveSiblings(
       id: server.id,
       name: server.name,
       ip: server.ip_address,
+      sshPort: port,
       provider: server.provider_name,
       size: server.size,
       ubuntuVersion: server.ubuntu_version,

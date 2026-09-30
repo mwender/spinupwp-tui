@@ -35,6 +35,13 @@ const KIND_FIELDS: Array<[keyof KumaMonitorRef, IncidentKind]> = [
   ["bypassId", "bypass"],
 ]
 
+// Does this ref name at least one monitor `resolveIncidents` would query? A ref
+// can outlive its monitors (removing one deletes its id, not the entry), so an
+// entry's mere presence isn't the answer.
+export function hasIncidentMonitors(ref: KumaMonitorRef | undefined): boolean {
+  return !!ref && KIND_FIELDS.some(([field]) => typeof ref[field] === "number")
+}
+
 interface Target {
   domain: string
   kind: IncidentKind
