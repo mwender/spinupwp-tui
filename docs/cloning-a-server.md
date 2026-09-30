@@ -35,10 +35,21 @@ over SSH). The steps:
    `public/`-style layouts (with `wp-config.php` one level above the webroot) are
    preserved, and mid-move layouts are normalized on the destination. **Additional
    domains carry over** automatically (with their redirect settings), so the clone
-   answers for every hostname the source did.
+   answers for every hostname the source did. So do the source's **SpinupWP
+   settings**: page cache duration and exclusions, the security toggles (PHP in
+   uploads, `xmlrpc.php`, multisite subdirectory rewrites), path redirects, the WP
+   cron interval, any cron jobs the site owner added, and a git site's deploy
+   script and push-to-deploy. Only what differs is written, so a retry changes
+   nothing. Two things don't carry: **basic auth** (SpinupWP never reveals the
+   password — verify flags it) and **backups** (SpinupWP stores them per domain,
+   so a clone backing up before DNS moves would write into production's folder —
+   switch them on for the new site after cutover).
 6. **Verify** — drill into any cloned site for a source-vs-clone comparison (wp-cli
    facts + an HTTP check that hits the **new** server while DNS still points at the old
-   one; files-only sites compare file count, size, and HTTP instead).
+   one; files-only sites compare file count, size, and HTTP instead). The pane also
+   lists the settings it matched and anything it couldn't; `w` opens the new site in
+   SpinupWP to finish those (and basic auth) by hand, and `g` opens its Git settings
+   if the deploy script still didn't stick.
 7. **DNS cutover** — the wizard **waits for your explicit go** (`c`) after the roster
    settles, then repoints `A` records across each site's domains (apex + additional)
    to the new server in one batched, partial-aware pass; `↑↓`/`space` include or

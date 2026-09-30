@@ -71,6 +71,7 @@ sub-stages, and they run in a specific order for a reason:
 | **db** | On the source: `wp db export` to a file (never straight to stdout — plugin output on stdout has corrupted dumps before), gzipped. On the destination: pulled over the same SSH hop and `wp db import`ed. | both |
 | **verify** | `wp core is-installed` on the destination, as a fast sanity check before the fuller source-vs-clone comparison in step 6. | both |
 | **revoke** | Always runs, even on failure: the ephemeral key is stripped from the source's `authorized_keys` by its comment marker (not a full-key match, which is brittle through shell quoting), and every temp file on the destination is removed. | both |
+| **carry-over** | After the pull: owner-added crontab lines are appended to the destination's crontab; SpinupWP settings the create can't set (page cache duration and exclusions, nginx security toggles, path redirects, the WP cron interval read from each crontab) are compared and only the differences written, each waiting on its SpinupWP event; and a git site's deploy script is set again with `PUT /git`, since SpinupWP clears the one sent on create about 90 s later — so a site that finishes early waits out that window first. All best-effort: a failure is reported in verify, never fails the clone. Basic auth (password unreadable) is flagged. Backups aren't carried: SpinupWP stores them per domain, so switching them on before DNS moves would write into production's folder — set them up on the new site after cutover. | both |
 
 ## Decisions worth knowing about
 

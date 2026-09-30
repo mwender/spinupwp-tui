@@ -11,6 +11,8 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-30
+
 ### Added
 - **Clones match the source's SpinupWP settings.** Creating a site through SpinupWP's API only switches page caching on or off, so a clone used to come out with SpinupWP's defaults for everything else. The wizard now matches the source's page cache duration and exclusions, the security toggles (PHP in uploads, `xmlrpc.php`, multisite subdirectory rewrites), its path redirects, and the WP cron interval (read from the site's crontab, since the API doesn't report it). Only what differs is changed, so a retry changes nothing, and nothing the clone already has is removed. The verify pane (`v`) lists what it matched, and anything that didn't take, with `w` to open the new site in SpinupWP.
 - **Clones point out basic auth.** SpinupWP never reveals a site's basic-auth password, so a password-protected source can't be copied as-is. The verify pane says so and `w` opens the new site to set it.
@@ -21,6 +23,9 @@ version; such changes are called out here.
 
 ### Fixed
 - **`spinuptui ssh` reports a hung connection as `connection_failed`.** When the connectivity probe ran past its 15-second limit, it came back as an unexplained `ssh_error` with the kill signal's exit code. It now says the connection didn't finish in time.
+
+### Notes
+- **Backups don't carry over to a clone yet.** SpinupWP stores backups per domain, so a clone backing up before DNS moves would write into the production site's folder. Switch backups on for the new site after cutover; having the wizard do it at the cutover step is planned.
 
 ## [1.0.0] - 2026-09-24
 
@@ -1464,7 +1469,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/mwender/spinupwp-tui/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mwender/spinupwp-tui/compare/v0.28.0...v1.0.0
 [0.28.0]: https://github.com/mwender/spinupwp-tui/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/mwender/spinupwp-tui/compare/v0.26.1...v0.27.0
