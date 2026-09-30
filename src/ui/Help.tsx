@@ -129,6 +129,24 @@ function SectionBlock({ section }: { section: Section }) {
   )
 }
 
+// Greedy word wrap for a shell command, so a line never breaks inside a flag.
+// Continuation lines are indented two columns by the caller, hence `width - 2`.
+function wrapAtSpaces(text: string, width: number): string[] {
+  const lines: string[] = []
+  let cur = ""
+  for (const word of text.split(" ")) {
+    const limit = lines.length === 0 ? width : width - 2
+    if (cur && cur.length + 1 + word.length > limit) {
+      lines.push(cur)
+      cur = word
+    } else {
+      cur = cur ? `${cur} ${word}` : word
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines
+}
+
 function ShortcutColumn({ sections, width }: { sections: Section[]; width: number }) {
   return (
     <box style={{ flexDirection: "column", width, flexShrink: 0 }}>
@@ -194,7 +212,11 @@ function AboutColumn({
       {installChannel() !== "git" ? (
         <>
           {line("Manual:")}
-          {line(updateCommand() ?? "", theme.text)}
+          {/* Broken at spaces by hand: the package command is wider than the
+              About column, and OpenTUI's own wrap splits "--no-cache" at its hyphen. */}
+          {wrapAtSpaces(updateCommand() ?? "", width).map((l, i) => (
+            <text key={i} content={i === 0 ? l : `  ${l}`} fg={theme.text} wrapMode="none" />
+          ))}
         </>
       ) : (
         <>

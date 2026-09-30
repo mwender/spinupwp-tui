@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **The update command now actually updates.** The About panel (`?`) now suggests `bun add -g spinuptui@latest --no-cache`. Without `--no-cache`, Bun can answer `@latest` from its cached copy of npm's package list, which right after a release can still name the previous version, so the command reported success and left you where you were.
+
 ## [1.1.0] - 2026-09-30
 
 ### Added

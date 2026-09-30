@@ -165,10 +165,14 @@ to the version in the header (and in the `?` About panel).
 
 - **Homebrew:** `brew upgrade spinuptui` (the About panel shows the same
   command).
-- **Package install:** `bun add -g spinuptui@latest` (the About panel shows
-  the same command). Don't use `bun update -g` — while spinuptui is pre-1.0,
-  it records a caret range (e.g. `^0.22.2`) that excludes every later minor
-  release, so `update -g` reports success but silently doesn't update.
+- **Package install:** `bun add -g spinuptui@latest --no-cache` (the About
+  panel shows the same command). `--no-cache` matters: without it Bun can
+  answer `@latest` from its cached copy of the registry, which right after a
+  release may still name the previous version — the command reports success
+  and installs nothing new. Don't use `bun update -g` either — while spinuptui
+  was pre-1.0, it recorded a caret range (e.g. `^0.22.2`) that excludes every
+  later minor release, so `update -g` reports success but silently doesn't
+  update.
 - **Source checkout:** press **`u`** in the About panel to update in place
   (`git pull --ff-only`; refuses if you have uncommitted changes, and never
   merges/rebases). It can't hot-reload the already-running process, so it tells
