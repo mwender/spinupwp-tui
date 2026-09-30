@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **`spinuptui siblings <domain>` — who else is on this server.** Prints every site sharing a server with the one you name, as JSON, along with the server's own IP, size and Ubuntu version. Each site says whether it's the server's vanity host, whether it's WordPress, what PHP it runs, whether page cache is on, and whether SpinupTUI set Uptime Kuma monitors up for it. This is for the case where a symptom belongs to the whole box rather than to one site: a vanity host's `?healthz` trips on whatever load the busiest co-tenant is making, and site isolation means the vanity site's own user can't see any of it — so the first question is always "who else lives here". `--probe` also SSHes into each site user and reports which ones this device's key is accepted for, which is the same question as "whose logs can I read". A site that comes back `permission_denied` is one key grant (`K` in the Browser view) away from being readable.
+
 ### Changed
 - **Clones put the deploy script back themselves.** SpinupWP clears a deploy script set when a site is created, and until now you had to paste it back into the new site's Git settings. SpinupWP's API can now update a site's Git settings, so the clone wizard sets the source's script again once the site is done, and fixes push-to-deploy the same way if it came out different. The verify pane (`v`) says when it did. The `g` copy-and-open fallback only appears if the script still doesn't stick. A clone that finishes within about two minutes of creating the site waits out the rest first, since an earlier write would be cleared along with the original.
 

@@ -20,6 +20,7 @@ import { isDevMode } from "./dev/devMode.ts"
 import { SpinupWPClient } from "./api/client.ts"
 import { resolveSshAccess } from "./lib/cliSsh.ts"
 import { resolveIncidents } from "./lib/cliIncidents.ts"
+import { resolveSiblings } from "./lib/cliSiblings.ts"
 import { execSshCommand } from "./lib/sshExec.ts"
 import { runPullFiles, runPullDb } from "./lib/cliPull.ts"
 
@@ -72,6 +73,11 @@ Usage:
   spinuptui ssh-exec <domain> [--server <name>] -- <command>  Run a read-only
                        command over SSH (JSON); denies anything that looks
                        like a remote write
+  spinuptui siblings <domain> [--server <name>] [--probe]  List every site
+                       sharing a server with this one (JSON), flagging the
+                       server's vanity host and which sites Kuma watches.
+                       --probe also SSHes into each to report which ones this
+                       device's key can actually read.
   spinuptui incidents <domain> | --all [--hours N]  Print Uptime Kuma
                        down/up incidents for a site or the whole fleet (JSON)
   spinuptui pull files <domain> [path] [--url <local url>] [--server <name>]
@@ -159,6 +165,28 @@ if (command === "ssh-exec") {
   const cfg = loadConfig()
   const client = new SpinupWPClient(cfg)
   const result = await execSshCommand(domain, remoteCmd, client, cfg, { server })
+  console.log(JSON.stringify(result))
+  process.exit(result.ok ? 0 : 1)
+}
+
+if (command === "siblings") {
+  const parsed = parseFlags(args.slice(1))
+  const domain = parsed.positionals[0]
+  const server = parsed.flags.get("--server") ?? null
+  const probe = parsed.flags.has("--probe")
+  if (!domain || badFlagValue(parsed.flags, "--server")) {
+    console.error(
+      JSON.stringify({
+        ok: false,
+        reason: "usage",
+        message: "Usage: spinuptui siblings <domain> [--server <name>] [--probe]",
+      }),
+    )
+    process.exit(1)
+  }
+  const cfg = loadConfig()
+  const client = new SpinupWPClient(cfg)
+  const result = await resolveSiblings(domain, client, cfg, { server, probe })
   console.log(JSON.stringify(result))
   process.exit(result.ok ? 0 : 1)
 }
