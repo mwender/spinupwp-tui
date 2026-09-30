@@ -143,6 +143,51 @@ export function createMockClient(): SpinupWPClientLike {
       return { event_id: null }
     },
 
+    async enablePageCache(siteId, payload = {}) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.page_cache = { ...site.page_cache, ...payload, enabled: true }
+      return { event_id: pushEvent("site.page_cache.enabled", site?.server_id ?? null, `Page cache enabled for ${site?.domain ?? siteId}`) }
+    },
+
+    async updatePageCache(siteId, payload) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.page_cache = { enabled: site.page_cache?.enabled ?? false, ...site.page_cache, ...payload }
+      return { event_id: pushEvent("site.page_cache.updated", site?.server_id ?? null, `Page cache updated for ${site?.domain ?? siteId}`) }
+    },
+
+    async disablePageCache(siteId) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.page_cache = { enabled: false }
+      return { event_id: pushEvent("site.page_cache.disabled", site?.server_id ?? null, `Page cache disabled for ${site?.domain ?? siteId}`) }
+    },
+
+    async updateNginx(siteId, payload) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.nginx = { ...site.nginx, ...payload }
+      return { event_ids: [pushEvent("site.nginx.updated", site?.server_id ?? null, `Nginx settings updated for ${site?.domain ?? siteId}`)] }
+    },
+
+    async listPathRedirects() {
+      return []
+    },
+
+    async addPathRedirect(siteId, payload) {
+      const site = sites.find((s) => s.id === siteId)
+      return { event_id: pushEvent("site.redirect.added", site?.server_id ?? null, `Redirect ${payload.from} added to ${site?.domain ?? siteId}`) }
+    },
+
+    async enableWpCron(siteId) {
+      return { event_id: pushEvent("site.cron.enabled", null, `WP cron enabled for site ${siteId}`) }
+    },
+
+    async updateWpCron(siteId) {
+      return { event_id: pushEvent("site.cron.updated", null, `WP cron updated for site ${siteId}`) }
+    },
+
+    async disableWpCron(siteId) {
+      return { event_id: pushEvent("site.cron.disabled", null, `WP cron disabled for site ${siteId}`) }
+    },
+
     async enableHttps(siteId) {
       const site = sites.find((s) => s.id === siteId)
       if (site) site.https = { enabled: true }

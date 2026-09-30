@@ -16,7 +16,7 @@ import { Panel, Spinner } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { openUrl, copyToClipboard } from "../../lib/open.ts"
 import { consoleForHost } from "../../lib/providers.ts"
-import { serverWebUrl, siteGitUrl } from "../../lib/spinupweb.ts"
+import { serverWebUrl, siteGitUrl, siteWebUrl } from "../../lib/spinupweb.ts"
 import { useStore, cloneNeedsGitAccess, type CloneStep, type CloneSiteStep, type CloneSiteState, type RepoKeyState } from "../store.tsx"
 import type { VerifyCheck } from "../../lib/serverClone.ts"
 
@@ -36,6 +36,12 @@ const STEP_GITACCESS = { step: "gitaccess" as CloneStep, label: "Git access" }
 const STEP_CLONE = { step: "clone" as CloneStep, label: "Clone sites" }
 const STEP_CUTOVER = { step: "cutover" as CloneStep, label: "DNS cutover" }
 // The Git-access step only appears when a Bedrock site is selected (deploy-key onboarding).
+// A clone setting the user has to finish in SpinupWP: basic auth (its password
+// can't be read), or a setting whose carry-over failed.
+function needsSettingsHand(s: CloneSiteState): boolean {
+  return !!s.basicAuthMissing || !!s.settingsFailed?.length
+}
+
 function stepsFor(needsGit: boolean): { step: CloneStep; label: string }[] {
   return needsGit
     ? [STEP_PLAN, STEP_SERVER, STEP_TRUST, STEP_GITACCESS, STEP_CLONE, STEP_CUTOVER]
@@ -312,6 +318,9 @@ export function CloneWizard() {
           if (drilled.deployScriptLost && drilled.deployScript) copyToClipboard(drilled.deployScript)
           return openUrl(siteGitUrl(drilled.destSiteId, accountSlug))
         }
+        // w — a setting needs doing by hand (basic auth, or one that didn't carry):
+        // open the new site in SpinupWP.
+        if (name === "w" && drilled && needsSettingsHand(drilled) && drilled.destSiteId != null) return openUrl(siteWebUrl(drilled.destSiteId, accountSlug))
         return
       }
       const n = sel.length
@@ -733,7 +742,7 @@ export function CloneWizard() {
           {selected.map((s, i) => {
             const active = !["queued", "done", "error"].includes(s.step)
             const cur = i === idx
-            const vmark = (s.verify ? (s.verify.ok ? " ✓verified" : " ✕mismatch") : s.verifying ? " verifying…" : "") + (s.deployScriptLost || s.pushMismatch || s.cronError ? " · ⚠ see verify" : "")
+            const vmark = (s.verify ? (s.verify.ok ? " ✓verified" : " ✕mismatch") : s.verifying ? " verifying…" : "") + (s.deployScriptLost || s.pushMismatch || s.cronError || needsSettingsHand(s) ? " · ⚠ see verify" : "")
             return (
               <box key={s.sourceSiteId} style={{ flexDirection: "row", height: 1, backgroundColor: cur ? theme.bgAlt : undefined }}>
                 {active ? <Spinner color={theme.brand} /> : <text content={s.step === "done" ? "✓" : s.step === "error" ? "✕" : "○"} fg={s.step === "done" ? theme.good : s.step === "error" ? theme.bad : theme.textFaint} style={{ flexShrink: 0 }} />}
@@ -801,7 +810,7 @@ export function CloneWizard() {
               <box style={{ flexGrow: 1 }} />
               <text content={v.ok ? "✓ Clone matches the source." : "✕ Differences found — review the ✕ rows above."} fg={v.ok ? theme.good : theme.bad} wrapMode="none" />
               {cloneNotes(site)}
-              <text content={`v re-run${site.deployScriptLost ? " · g copy deploy script + open Git settings" : site.pushMismatch ? " · g open Git settings" : ""} · ← back to roster`} fg={theme.textFaint} wrapMode="none" />
+              <text content={`v re-run${site.deployScriptLost ? " · g copy deploy script + open Git settings" : site.pushMismatch ? " · g open Git settings" : ""}${needsSettingsHand(site) ? " · w open in SpinupWP" : ""} · ← back to roster`} fg={theme.textFaint} wrapMode="none" />
             </>
           ) : (
             <text content="Press v to compare this clone against its source." fg={theme.textDim} wrapMode="none" />
@@ -821,6 +830,13 @@ export function CloneWizard() {
     return (
       <>
         {cron ? <text content={cron.text} fg={cron.fg} wrapMode="none" /> : null}
+        {site.settingsCarried?.length ? <text content={`✓ Settings matched to the source: ${site.settingsCarried.join(" · ")}`} fg={theme.good} wrapMode="none" /> : null}
+        {site.settingsFailed?.map((f) => (
+          <text key={f.what} content={`✕ Couldn't match ${f.what}: ${f.error} — press w to set it in SpinupWP`} fg={theme.bad} wrapMode="none" />
+        ))}
+        {site.basicAuthMissing ? (
+          <text content="⚠ The source is password-protected (basic auth) and the clone isn't — SpinupWP won't reveal the password; press w to set it" fg={theme.warn} wrapMode="none" />
+        ) : null}
         {site.pushMismatch ? (
           <text content={`⚠ Push-to-deploy is ${site.pushEnabled ? "off" : "on"} here but ${site.pushEnabled ? "on" : "off"} on the source — switch it in the new site's Git settings (g)`} fg={theme.warn} wrapMode="none" />
         ) : null}
@@ -887,7 +903,7 @@ export function CloneWizard() {
       if (verifyOpen != null) {
         const drilled = job!.sites.find((s) => s.sourceSiteId === verifyOpen)
         if (drilled?.step === "error") return [{ key: "r", label: "retry site" }, { key: "←", label: "back" }, { key: "esc", label: "close" }]
-        return [{ key: "v", label: "re-run" }, ...(drilled?.deployScriptLost || drilled?.pushMismatch ? [{ key: "g", label: "Git settings" }] : []), { key: "←", label: "back" }, { key: "esc", label: "close" }]
+        return [{ key: "v", label: "re-run" }, ...(drilled?.deployScriptLost || drilled?.pushMismatch ? [{ key: "g", label: "Git settings" }] : []), ...(drilled && needsSettingsHand(drilled) ? [{ key: "w", label: "SpinupWP" }] : []), { key: "←", label: "back" }, { key: "esc", label: "close" }]
       }
       const done = selected.filter((s) => s.step === "done").length
       const errored = selected.filter((s) => s.step === "error").length

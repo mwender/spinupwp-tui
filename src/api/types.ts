@@ -66,6 +66,24 @@ export interface AdditionalDomain {
   created_at: string
 }
 
+// Page cache as the Site object reports it. The exclusion lists come back as ONE
+// pipe-joined regex ("/wp-admin/|/wp-json/|…") but are WRITTEN newline-separated —
+// see splitCacheList in lib/cloneSettings.ts. Unset lists read back null.
+export interface PageCacheSettings {
+  enabled: boolean
+  duration?: number | null
+  duration_unit?: string | null
+  path_exclusions?: string | null
+  cookie_exclusions?: string | null
+  ignored_query_params?: string | null
+}
+
+export interface NginxSettings {
+  uploads_directory_protected?: boolean
+  xmlrpc_protected?: boolean
+  subdirectory_rewrite_in_place?: boolean
+}
+
 export interface Site {
   id: number
   server_id: number
@@ -75,9 +93,9 @@ export interface Site {
   php_version: string | null
   public_folder: string | null
   is_wordpress: boolean
-  page_cache?: { enabled: boolean }
+  page_cache?: PageCacheSettings
   https?: { enabled: boolean }
-  nginx?: Record<string, unknown>
+  nginx?: NginxSettings
   database?: {
     id: number | null
     user_id: number | null
@@ -201,6 +219,28 @@ export interface UpdateSiteGitPayload {
   deploy_script?: string
   push_to_deploy?: boolean
 }
+
+// POST/PUT /sites/{id}/page-cache. Lists are newline-separated on write. PUT keeps
+// any omitted field.
+export interface PageCachePayload {
+  duration?: number
+  duration_unit?: string
+  path_exclusions?: string
+  cookie_exclusions?: string
+  ignored_query_params?: string
+}
+
+// A site's path redirect (GET /sites/{id}/path-redirects). type: "permanent" = 301,
+// "redirect" = 302. Delete is keyed by from + to — there's no id.
+export interface PathRedirect {
+  from: string
+  to: string
+  type: "permanent" | "redirect"
+  created_at?: string
+}
+
+// The server-level WP cron intervals SpinupWP accepts, in minutes.
+export const WP_CRON_INTERVALS = [1, 2, 5, 10, 15, 30, 60] as const
 
 export interface Event {
   id: number

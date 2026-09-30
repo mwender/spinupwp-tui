@@ -47,6 +47,7 @@ import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
 import { estimateSourceSiteSizes, runStandardWpPull, runBedrockPull, runFilesOnlyPull, verifyClone, verifyFilesClone, preflightBedrockSource, syncCrontab, type SudoCtx, type CloneStage, type CloneExecRecord, type VerifyResult as CloneVerifyResult } from "../lib/serverClone.ts"
 import { CloneLogger } from "../lib/cloneLog.ts"
+import { carrySiteSettings, type SettingsCarryResult } from "../lib/cloneSettings.ts"
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
 import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
@@ -298,6 +299,9 @@ export interface CloneSiteState {
   cutover?: CloneCutoverState // slice 6: DNS repoint state for this site's domain
   cronAdded?: string[] // owner crontab lines carried to the dest (empty = none to carry)
   cronError?: string // crontab carry-over failed (the clone itself still succeeded)
+  settingsCarried?: string[] // SpinupWP settings written to match the source (see carrySiteSettings)
+  settingsFailed?: { what: string; error: string }[] // …and the ones that didn't take
+  basicAuthMissing?: boolean // the source is password-protected; the clone can't be (password unreadable)
   // The source had a deploy script but the dest still reads back none after we set
   // it again (SpinupWP drops a script set on create). The verify pane offers it for
   // copy with a link to the dest's Git settings.
@@ -4010,7 +4014,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // reported on the site, never fails a clone whose files and DB are in place.
         set((s) => ({ ...s, detail: "crontab" }))
         const cron = await syncCrontab(source, dest, { domain: site.domain, sourceSiteUser: site.siteUser, destSiteUser: site.siteUser }, onExec)
-        logger?.log({ event: "crontab", domain: site.domain, ok: cron.ok, added: cron.added, error: cron.error })
+        logger?.log({ event: "crontab", domain: site.domain, ok: cron.ok, added: cron.added, error: cron.error, sourceWpCron: cron.sourceWpCron, destWpCron: cron.destWpCron })
+        // SpinupWP settings the create can't carry: page cache details, the nginx
+        // security toggles, redirects, WP cron interval. Best-effort like the crontab.
+        let settings: SettingsCarryResult | undefined
+        if (destSiteId != null) {
+          set((s) => ({ ...s, step: "config", detail: "settings" }))
+          settings = await carrySiteSettings(client, site.sourceSiteId, destSiteId, { source: cron.sourceWpCron, dest: cron.destWpCron }, logger ? (e) => logger.log({ domain: site.domain, ...e }) : undefined)
+        }
         // Did the dest keep the deploy script we sent on create? It usually doesn't
         // (see the create payload), so re-read and, if it's gone, set it again with
         // PUT /git — push-to-deploy too, should it read back different. Only what's
@@ -4019,8 +4030,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const deployScriptLost = git?.deployScriptLost ?? false
         const pushMismatch = git?.pushMismatch ?? false
         const deployScriptRestored = git?.deployScriptRestored ?? false
-        logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel, deployScriptLost, deployScriptRestored, pushMismatch })
-        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel, cronAdded: cron.added, cronError: cron.ok ? undefined : cron.error, deployScriptLost, deployScriptRestored, pushMismatch }))
+        logger?.log({ event: "site-done", domain: site.domain, sourceWebrootRel, destWebrootRel, deployScriptLost, deployScriptRestored, pushMismatch, settingsCarried: settings?.carried, settingsFailed: settings?.failed, basicAuthMissing: settings?.basicAuthMissing })
+        set((s) => ({ ...s, step: "done", detail: undefined, error: undefined, failedStep: undefined, sourceWebrootRel, destWebrootRel, cronAdded: cron.added, cronError: cron.ok ? undefined : cron.error, deployScriptLost, deployScriptRestored, pushMismatch, settingsCarried: settings?.carried, settingsFailed: settings?.failed, basicAuthMissing: settings?.basicAuthMissing }))
       } catch (err) {
         fail(site.step, (err as Error).message)
       }
