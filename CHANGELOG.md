@@ -11,6 +11,8 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-01
+
 ### Changed
 - **`spinuptui ssh-exec` allows `wp user list`, `wp user get` and `wp user list-caps`.** The read-only guard used to refuse everything under `wp user`, reads included, which got in the way of checking when an account was registered. Creating, deleting and changing users is still denied.
 
@@ -1477,7 +1479,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/mwender/spinupwp-tui/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mwender/spinupwp-tui/compare/v0.28.0...v1.0.0
 [0.28.0]: https://github.com/mwender/spinupwp-tui/compare/v0.27.0...v0.28.0
