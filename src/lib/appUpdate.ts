@@ -162,7 +162,14 @@ export function updateCommand(): string | null {
 // hits the same wall until the following minor bump. Verified live against a
 // real stale install (0.22.2 -> 0.24.0): `update -g` exited 0 without updating,
 // `add -g spinuptui@latest` updated correctly.
-export const PACKAGE_UPDATE_CMD = "bun add -g spinuptui@latest"
+//
+// `--no-cache` because Bun answers `@latest` from its own cached copy of the
+// registry metadata when it has one. Right after a release that copy can still
+// name the previous version, so the add "succeeds" without contacting npm and
+// installs nothing new — seen live on 1.1.0's release day: two runs installed
+// 1.0.0 while the registry already served 1.1.0; the same command with
+// `--no-cache` installed 1.1.0 at once.
+export const PACKAGE_UPDATE_CMD = "bun add -g spinuptui@latest --no-cache"
 
 // The real checkout directory, resolved through Bun's module system rather
 // than process.cwd() — `spinuptui` is typically a global symlink invoked from

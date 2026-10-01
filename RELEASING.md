@@ -98,7 +98,7 @@ Run these in order. Replace `X.Y.Z` with the new version.
    ## Notes
    - …
 
-   **Update:** \`brew upgrade spinuptui\` (Homebrew), \`bun add -g spinuptui@latest\` (npm install) or \`git pull\` in your checkout (a linked global \`spinuptui\` picks it up immediately).
+   **Update:** \`brew upgrade spinuptui\` (Homebrew), \`bun add -g spinuptui@latest --no-cache\` (npm install) or \`git pull\` in your checkout (a linked global \`spinuptui\` picks it up immediately).
 
    **Full changelog:** https://github.com/mwender/spinupwp-tui/compare/vPREV...vX.Y.Z"
    ```
