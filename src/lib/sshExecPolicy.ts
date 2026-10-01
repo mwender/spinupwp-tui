@@ -118,7 +118,9 @@ function unsafeWpCli(cmd: string): string | null {
     const tokens = segment.trim().split(/\s+/).filter(Boolean)
     let i = 0
     for (; i < tokens.length && tokens[i]!.replace(/^['"]/, "").startsWith("-"); i++) {
-      if (hasOpenQuote(tokens[i]!)) return "wp option value has quoting this guard can't read safely"
+      // A quote that is only trailing is an enclosing `bash -c '…'` closing after a
+      // final flag (`bash -c 'wp --info'`), not an opened value.
+      if (hasOpenQuote(tokens[i]!) && /['"]/.test(tokens[i]!.replace(/['"]+$/, ""))) return "wp option value has quoting this guard can't read safely"
     }
     const words: string[] = []
     for (; i < tokens.length && words.length < 3; i++) {
