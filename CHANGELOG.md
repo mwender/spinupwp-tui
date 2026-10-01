@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **`spinuptui ssh-exec` no longer refuses a quoted `wp` command that ends in a flag.** `bash -c 'wp --info'` was denied because the closing quote landed on the flag and looked like an unfinished value.
+
 ## [1.1.1] - 2026-10-01
 
 ### Changed
