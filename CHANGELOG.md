@@ -11,6 +11,8 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-15
+
 ### Fixed
 - **`spinuptui ssh-exec` no longer refuses a quoted `wp` command that ends in a flag.** `bash -c 'wp --info'` was denied because the closing quote landed on the flag and looked like an unfinished value.
 - **Uptime Kuma connection errors now show the actual reason.** A long instance URL pushed the cause (TLS, DNS, proxy…) past the edge of the connect form, leaving just `Couldn't reach Uptime Kuma at https://…:`. The connect form's and the Alerts panel's error lines now wrap.
@@ -1483,7 +1485,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/mwender/spinupwp-tui/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/mwender/spinupwp-tui/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mwender/spinupwp-tui/compare/v0.28.0...v1.0.0
