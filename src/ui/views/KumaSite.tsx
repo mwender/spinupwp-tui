@@ -653,7 +653,7 @@ export function KumaSite() {
               <text content="  Logging in…" fg={theme.textDim} wrapMode="none" />
             </box>
           ) : error ? (
-            <text content={`✕ ${error}`} fg={theme.bad} wrapMode="none" />
+            <text content={`✕ ${error}`} fg={theme.bad} />
           ) : (
             <text content="⏎ next field / connect · Esc back" fg={theme.textFaint} wrapMode="none" />
           )}
@@ -870,7 +870,7 @@ export function KumaSite() {
     if (alerts.kind === "error") {
       return (
         <>
-          <text content={`✕ ${alerts.error}`} fg={theme.bad} wrapMode="none" />
+          <text content={`✕ ${alerts.error}`} fg={theme.bad} />
           <box style={{ height: 1 }} />
           <text content="esc back" fg={theme.textFaint} wrapMode="none" />
         </>
@@ -911,7 +911,7 @@ export function KumaSite() {
             <text content="  Rewiring…" fg={theme.textDim} wrapMode="none" />
           </box>
         ) : alerts.flash ? (
-          <text content={alerts.flash} fg={alerts.flash.startsWith("✓") ? theme.good : theme.bad} wrapMode="none" />
+          <text content={alerts.flash} fg={alerts.flash.startsWith("✓") ? theme.good : theme.bad} />
         ) : (
           <text content="↑↓ select · ⏎ toggle on/off · esc done" fg={theme.textFaint} wrapMode="none" />
         )}

@@ -13,6 +13,7 @@ version; such changes are called out here.
 
 ### Fixed
 - **`spinuptui ssh-exec` no longer refuses a quoted `wp` command that ends in a flag.** `bash -c 'wp --info'` was denied because the closing quote landed on the flag and looked like an unfinished value.
+- **Uptime Kuma connection errors now show the actual reason.** A long instance URL pushed the cause (TLS, DNS, proxy…) past the edge of the connect form, leaving just `Couldn't reach Uptime Kuma at https://…:`. The connect form's and the Alerts panel's error lines now wrap.
 
 ## [1.1.1] - 2026-10-01
 
