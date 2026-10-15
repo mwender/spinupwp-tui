@@ -71,9 +71,9 @@ The Site object's read shape now documents `nginx.{uploads_directory_protected, 
 
 In order, each step shippable on its own:
 
-1. **Clone wizard: restore the deploy script after create**, then re-read to confirm. *Built on branch `feat/clone-restore-deploy-script`; the API behavior is verified, a full wizard run is still to do.*
+1. **Clone wizard: restore the deploy script after create**, then re-read to confirm. *Shipped in v1.1.0 (#69), verified by a full wizard run on the test boxes.*
 2. ~~Test `git/deploy` with a configured script.~~ *Done 2026-09-29: it doesn't run the script; the wizard's SSH build stays.*
-3. *Built on `feat/clone-settings-parity`, live-tested 2026-09-29: page cache (duration + exclusions), nginx toggles, redirects, WP cron interval (from the crontab); basic auth flagged. Backups moved to their own step, applied at DNS cutover (user decision: they're stored per domain, so a clone backing up before cutover would overwrite production's files).* **Clone wizard: full settings parity** (page cache settings, nginx toggles, basic auth, redirects, backups). Update the "what carries over" docs.
+3. **Clone wizard: full settings parity** (page cache settings, nginx toggles, basic auth, redirects, backups). Update the "what carries over" docs. *Shipped in v1.1.0 (#70): page cache (duration + exclusions), nginx toggles, redirects, WP cron interval (from the crontab); basic auth flagged; the "what carries over" docs are updated. Backups moved to their own step, applied at DNS cutover and not yet built (user decision: they're stored per domain, so a clone backing up before cutover would overwrite production's files).*
 4. **Page cache toggle** on existing sites (`P` gains enable/disable, or a settings panel absorbs it).
 5. **Fleet baseline / policy check**, the headline candidate for the next minor release.
 6. The rest of the ideas above, as prioritized at the time.
