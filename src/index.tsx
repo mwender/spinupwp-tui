@@ -23,6 +23,7 @@ import { resolveIncidents } from "./lib/cliIncidents.ts"
 import { resolveSiblings } from "./lib/cliSiblings.ts"
 import { execSshCommand } from "./lib/sshExec.ts"
 import { runPullFiles, runPullDb } from "./lib/cliPull.ts"
+import { runBeacon, runModules } from "./lib/cliBeacon.ts"
 
 const args = process.argv.slice(2)
 const positionals = args.filter((a) => !a.startsWith("-"))
@@ -89,6 +90,15 @@ Usage:
                        Import production's database into the linked local copy,
                        rewriting URLs. OVERWRITES your local database: needs
                        both --yes and "localSync": true in the config.
+  spinuptui beacon send [--to <channel>] [--silent] [<message> | -]
+                       Page yourself through Beacon (Telegram). Reads the
+                       message from stdin when it's \`-\` or absent. Exit 0 sent,
+                       1 not configured / usage, 2 delivery failed.
+  spinuptui beacon add telegram <name> --env-file <path> [--default]
+                       Add a channel from a file holding TELEGRAM_BOT_TOKEN and
+                       TELEGRAM_CHAT_ID; sends a test message before saving.
+  spinuptui beacon test | status | remove <name>
+  spinuptui modules    List SpinupTUI's modules and their status (--json)
   spinuptui --version  Print the version
   spinuptui --help     Show this help
 
@@ -270,6 +280,14 @@ if (command === "pull") {
     if (result.remedy) console.error(result.remedy)
   }
   process.exit(result.ok ? 0 : 1)
+}
+
+if (command === "beacon") {
+  process.exit(await runBeacon(args.slice(args.indexOf("beacon") + 1)))
+}
+
+if (command === "modules") {
+  process.exit(await runModules(args.slice(1)))
 }
 
 // `spinuptui login` forces the onboarding wizard even when a token already exists,

@@ -76,6 +76,9 @@
   register/recalibrate/remove it — plus a cache/outage doctor and alert
   wiring. → [docs/site-monitoring.md](docs/site-monitoring.md) ·
   [docs/uptime-kuma.md](docs/uptime-kuma.md)
+- **Beacon: one pager for your scripts** — `spinuptui beacon send` pages you on
+  Telegram from any cron job, watcher or agent, with retries, long messages split
+  instead of dropped, and a send log. → [docs/beacon.md](docs/beacon.md)
 - **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
   resolves a domain to a live SSH target with a live connectivity probe;
   `spinuptui ssh-exec <domain> -- <command>` runs a command over SSH, but only

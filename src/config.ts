@@ -103,6 +103,27 @@ export interface AppConfig {
   // running version with no notes shown — nothing meaningful to announce). A
   // mismatch against the running version is what triggers the overlay.
   lastSeenVersion: string | null
+  // Beacon's notification channels (see lib/beacon.ts and
+  // docs/2026-10-16_beacon-and-module-contract-spec.md). Machine-level like the
+  // Kuma login: one operator's pager serves every account. Holds bot tokens, so
+  // it relies on the file's 600 mode. The env channel (SPINUPTUI_BEACON_*) is
+  // resolved in lib/beacon.ts, not here, so this is only what's stored.
+  beacon: BeaconStored | null
+}
+
+export interface BeaconTelegramChannel {
+  type: "telegram"
+  botToken: string
+  chatId: string
+}
+
+// A union so later transports (Slack, ntfy, a client-facing Basecamp channel)
+// are additive.
+export type BeaconChannel = BeaconTelegramChannel
+
+export interface BeaconStored {
+  defaultChannel?: string
+  channels?: Record<string, BeaconChannel>
 }
 
 export interface ServerProviderRef {
@@ -202,6 +223,7 @@ export interface StoredConfig {
   uptimeKuma?: UptimeKumaConn
   kumaMonitors?: Record<string, KumaMonitorRef>
   lastSeenVersion?: string
+  beacon?: BeaconStored
 }
 
 // ---- Accounts (profiles) -------------------------------------------------------
@@ -487,6 +509,7 @@ export function loadConfig(): AppConfig {
     })(),
     kumaMonitors: stored.kumaMonitors ?? {},
     lastSeenVersion: stored.lastSeenVersion?.trim() || null,
+    beacon: stored.beacon ?? null,
   }
 }
 
