@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.2.0-alpha.1] - 2026-10-17
+
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.1.2. The stable 1.2.0 will roll these notes up with the next modules.
+
 ### Added
 - **Beacon: `spinuptui beacon send` pages you on Telegram.** One command any script, cron job or agent can use instead of its own `curl` to the Telegram API. Messages go out as plain text with link previews off; anything over Telegram's 4096-character limit is split into numbered parts instead of being rejected; sends are retried (honoring Telegram's rate-limit hints) and logged. Exit codes tell a caller what happened: `0` delivered, `1` not configured (nothing attempted), `2` delivery failed. No Telegram bot yet? `spinuptui beacon setup` walks you through making one with @BotFather, checks the token, and finds your chat by itself once you message the bot. No digging for a chat ID. It saves nothing until a test message has arrived. Scripts can use `spinuptui beacon add telegram <name> --env-file <path>` instead. `beacon test`, `beacon status` and `beacon remove` round it out. See [docs/beacon.md](docs/beacon.md).
 - **A Modules tab (`6`).** Everything SpinupTUI can keep doing after you close it, with its status on this machine and set up from the same place: select Beacon and press `⏎` for the guided Telegram setup, or `t` for a test page. Modules still on the way (Scheduler, Sentinel, Samurai) are listed as coming soon.
@@ -1493,7 +1497,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0-alpha.1...HEAD
+[1.2.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0-alpha.1
 [1.1.2]: https://github.com/mwender/spinupwp-tui/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/mwender/spinupwp-tui/compare/v1.0.0...v1.1.0

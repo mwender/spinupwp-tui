@@ -76,7 +76,7 @@
   register/recalibrate/remove it — plus a cache/outage doctor and alert
   wiring. → [docs/site-monitoring.md](docs/site-monitoring.md) ·
   [docs/uptime-kuma.md](docs/uptime-kuma.md)
-- **Modules** (`6`) — the parts of SpinupTUI that keep working after you close it,
+- **Modules** (`6`, pre-release: `bun add -g spinuptui@next --no-cache`) — the parts of SpinupTUI that keep working after you close it,
   each set up from the same screen. First up, **Beacon**: `spinuptui beacon send`
   pages you on Telegram from any cron job, watcher or agent, with retries, long
   messages split instead of dropped, and a send log. A guided setup creates the
@@ -338,7 +338,7 @@ These can be set in `config.json` or via an environment variable:
 
 | Key | Action |
 | --- | --- |
-| `1`…`5` | Switch tabs: Dashboard · Servers · Stacks · Search · Events |
+| `1`…`6` | Switch tabs: Dashboard · Servers · Stacks · Search · Events · Modules |
 | `↑`/`↓` or `j`/`k` | Move selection |
 | `Enter` / `→` | Drill in (server → its sites) |
 | `←` / `Esc` | Go back / collapse |
@@ -374,6 +374,8 @@ These can be set in `config.json` or via an environment variable:
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `A` | Accounts — switch, add, rename, or remove SpinupWP accounts (from anywhere) |
+| `⏎` / `s` | Set up the selected module — Beacon opens its guided Telegram setup (Modules tab) |
+| `t` | Send a test page through Beacon (Modules tab, once Beacon is set up) |
 | `r` | Refresh data from the API |
 | `i` | Explain the current screen (what each pane and key does) |
 | `?` | Toggle the help overlay |

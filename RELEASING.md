@@ -127,6 +127,17 @@ Run these in order. Replace `X.Y.Z` with the new version.
    - Check it from a neutral directory (`cd /` first — Homebrew's build sandbox can't read a cwd inside Dropbox and fails with a misleading "Failed to fix install linkage"): `brew update && brew upgrade spinuptui && brew test spinuptui`.
    - The formula runs `bun install --production --frozen-lockfile`, so the npm tarball **must include `bun.lock`** (it's in `package.json` `files`); `npm pack --dry-run` should list it.
 
+## Pre-releases (alphas)
+
+Work that should be used before it's announced (the modules, until Sentinel ships) goes out as `X.Y.Z-alpha.N` on npm's **`next`** dist-tag. `@latest`, the in-app update hint (GitHub's "latest release" skips pre-releases) and Homebrew all stay on stable. The steps are the normal ones, with these differences:
+
+- **Version** `X.Y.Z-alpha.N` in `package.json`; bump `N` for each alpha.
+- **Changelog:** roll `[Unreleased]` into `## [X.Y.Z-alpha.N] - YYYY-MM-DD` with a one-line note that it's a pre-release on `next`. When stable `X.Y.Z` ships, merge the alpha sections into one `[X.Y.Z]` section.
+- **GitHub release:** add `--prerelease` to `gh release create`. The **Update** line is `bun add -g spinuptui@next --no-cache`.
+- **npm:** `npm publish --tag next`. **Never omit `--tag next`:** without it npm points `latest` at the alpha, and every `@latest` install and update gets it. Check with `npm dist-tag ls spinuptui`: `latest` should still be the stable version. If it isn't, fix it with `npm dist-tag add spinuptui@<stable> latest`.
+- **Homebrew:** skip. The tap tracks stable only.
+- **Fixes for stable users meanwhile:** `main` carries unreleased alpha work, so cut a patch from a branch off the last stable tag (`git switch -c release/1.1.x v1.1.2`), release from there, and merge the fix forward.
+
 ## Quick checklist
 
 - [ ] Work merged to `main`, `bun run typecheck` green
