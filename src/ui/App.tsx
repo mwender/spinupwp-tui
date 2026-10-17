@@ -40,6 +40,8 @@ import { ProviderConnect } from "./views/ProviderConnect.tsx"
 import { DnsRecords } from "./views/DnsRecords.tsx"
 import { KumaSite } from "./views/KumaSite.tsx"
 import { Accounts } from "./views/Accounts.tsx"
+import { Modules } from "./views/Modules.tsx"
+import { BeaconSetup } from "./views/BeaconSetup.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -87,7 +89,8 @@ export function App() {
     store.dnsInventoryServer !== null ||
     store.connectZoneTarget !== null ||
     store.dnsRecordsTarget !== null ||
-    store.kumaSite !== null
+    store.kumaSite !== null ||
+    store.beaconSetupOpen
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
   }, [overlayActive, store])
@@ -200,6 +203,9 @@ export function App() {
     // The site-monitoring (Uptime Kuma) overlay owns the keyboard while open.
     if (store.kumaSite) return
 
+    // Beacon's guided setup (Modules tab) owns the keyboard while open.
+    if (store.beaconSetupOpen) return
+
     // A (Shift+a): the Accounts overlay — the header advertises it from every tab.
     if (key.shift && key.name === "a") return setShowAccounts(true)
 
@@ -216,6 +222,8 @@ export function App() {
         return store.setRoute("search")
       case "5":
         return store.setRoute("events")
+      case "6":
+        return store.setRoute("modules")
       case "r":
         return void store.refresh()
       case "?":
@@ -255,6 +263,7 @@ export function App() {
         {store.route === "stacks" && <Stacks rows={contentRows} />}
         {store.route === "search" && <Search rows={contentRows} />}
         {store.route === "events" && <Events rows={contentRows} />}
+        {store.route === "modules" && <Modules rows={contentRows} />}
       </box>
       {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
       {showExplain && <ExplainOverlay route={store.route} />}
@@ -283,6 +292,7 @@ export function App() {
       {store.connectZoneTarget && <ProviderConnect />}
       {store.dnsRecordsTarget && <DnsRecords />}
       {store.kumaSite && <KumaSite />}
+      {store.beaconSetupOpen && <BeaconSetup />}
       {showAccounts && <Accounts onClose={() => setShowAccounts(false)} />}
       <ToastStack />
     </box>

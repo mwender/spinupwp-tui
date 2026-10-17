@@ -131,14 +131,21 @@ export interface TelegramCallResult {
   result?: unknown
 }
 
-type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+export type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 
-async function telegramCall(token: string, method: string, params: Record<string, string>, fetchImpl: Fetch): Promise<TelegramCallResult> {
+export async function telegramCall(
+  token: string,
+  method: string,
+  params: Record<string, string>,
+  fetchImpl: Fetch = fetch,
+  opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<TelegramCallResult> {
   try {
+    const timeout = AbortSignal.timeout(opts.timeoutMs ?? TIMEOUT_MS)
     const res = await fetchImpl(`${TELEGRAM_API}/bot${token}/${method}`, {
       method: "POST",
       body: new URLSearchParams(params),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout,
     })
     const body = (await res.json().catch(() => null)) as { ok?: boolean; description?: string; parameters?: { retry_after?: number }; result?: unknown } | null
     if (res.ok && body?.ok) return { ok: true, status: res.status, result: body.result }
@@ -151,6 +158,7 @@ async function telegramCall(token: string, method: string, params: Record<string
   } catch (err) {
     // Never echo the URL: it carries the token.
     const e = err as Error
+    if (opts.signal?.aborted) return { ok: false, status: 0, error: "cancelled" }
     return { ok: false, status: 0, error: e.name === "TimeoutError" ? "timed out" : e.message.replaceAll(token, "…") }
   }
 }

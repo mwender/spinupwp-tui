@@ -6,22 +6,38 @@ Today Beacon has one kind of channel, Telegram, for the person who runs the flee
 
 ## Set up a channel
 
-You need a Telegram bot token (from [@BotFather](https://t.me/BotFather)) and the chat id it should post to. Put both in a `KEY=VALUE` file:
+The easiest way is the guided setup. Open the **Modules** tab (`6`), select Beacon and press `⏎`, or run it in a terminal:
+
+```sh
+spinuptui beacon setup
+```
+
+Either one walks you through three steps:
+
+1. **Create a bot.** Telegram issues bots only through a chat with [@BotFather](https://t.me/BotFather): send it `/newbot`, pick a name and a username ending in "bot", and copy the token it replies with. This is the one step SpinupTUI can't do for you. If you already have a bot, reuse it.
+2. **Paste the token.** It's hidden as you type, and checked with Telegram straight away.
+3. **Message your bot.** Send it anything from the chat you want paged, and Beacon picks up the chat by itself. No hunting for a chat ID. To page a group instead, add the bot to the group and send `/start` there.
+
+Beacon then sends a "Beacon connected" message to that chat, and saves the channel only once it has arrived. Credentials that can't deliver are never stored. Messages that were already waiting for the bot when setup started are ignored, so an old conversation can't be picked by mistake. Running setup again reconfigures the same channel, so it's also how you move the pager to a different chat.
+
+The credentials are saved in SpinupTUI's `config.json`, which only you can read (like the rest of its credentials). They're never accepted as command-line arguments, where other users of the machine could see them in the process list.
+
+### Without a terminal: `beacon add`
+
+For scripts and provisioning, put the token and chat ID in a `KEY=VALUE` file:
 
 ```sh
 TELEGRAM_BOT_TOKEN=123456789:AA…
 TELEGRAM_CHAT_ID=-100…
 ```
 
-Then add the channel:
+Then:
 
 ```sh
 spinuptui beacon add telegram pager --env-file ~/path/to/telegram.env
 ```
 
-Beacon checks the token with Telegram and sends a "Beacon connected" message before it saves anything, so credentials that can't deliver are never stored. The credentials are saved in SpinupTUI's `config.json` (readable only by you, like the rest of its credentials), so the env file isn't needed afterwards. Secrets are never accepted as command-line arguments, where other users of the machine could see them in the process list.
-
-The first channel you add is the default. Add `--default` to make a later one the default, or `--no-test` to skip the test message (the token is still checked).
+It checks the token and sends the test message before saving, just like setup. The first channel you add becomes the default. Add `--default` to make a later one the default, or `--no-test` to skip the test message (the token is still checked).
 
 Alternatively, set `SPINUPTUI_BEACON_TELEGRAM_TOKEN` and `SPINUPTUI_BEACON_TELEGRAM_CHAT_ID` in the environment. That defines a read-only channel named `env`, which is the default unless you've chosen another.
 
@@ -52,13 +68,13 @@ Scripts can branch on these:
 
 ### Calling Beacon from existing scripts
 
-`spinuptui` versions older than Beacon don't know the `beacon` subcommand and will try to open the dashboard instead of failing. A script that might run against an older install should check the version first:
+`spinuptui` versions older than Beacon don't know the `beacon` subcommand and will try to open the dashboard instead of failing. A script that might run against an older install should check the version first. Compare only the `X.Y.Z` part: `sort -V` orders `1.2.0` before `1.2.0-alpha.1`, the reverse of SemVer, and every 1.2.0 build (pre-release or not) has Beacon.
 
 ```sh
 notify() {
-  if command -v spinuptui >/dev/null 2>&1 &&
-     printf '%s\n%s\n' "1.2.0" "$(spinuptui --version 2>/dev/null)" | sort -V -C; then
-    spinuptui beacon send --  "$1"
+  v=$(spinuptui --version 2>/dev/null | cut -d- -f1)
+  if [ -n "$v" ] && printf '%s\n%s\n' "1.2.0" "$v" | sort -V -C; then
+    spinuptui beacon send -- "$1"
     case $? in 0|2) return ;; esac   # 2 = tried and failed: don't double-send
   fi
   legacy_send "$1"                    # not installed, too old, or not configured
@@ -69,6 +85,7 @@ notify() {
 
 ```sh
 spinuptui beacon status    # channels (masked), the default, and the last send
+spinuptui modules          # every module and its status (or the Modules tab, 6)
 spinuptui beacon test      # send a test message naming this machine
 spinuptui beacon remove pager
 ```

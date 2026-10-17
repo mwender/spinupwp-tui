@@ -9,18 +9,20 @@
 
 import { readFileSync } from "node:fs"
 import { loadConfig, saveConfig, type BeaconStored } from "../config.ts"
+import { beaconFromConfig, beaconSend, maskChatId, maskToken, parseEnvFile, pickChannel, telegramGetMe, testMessage } from "./beacon.ts"
 import {
-  beaconFromConfig,
-  beaconSend,
-  maskChatId,
-  maskToken,
-  parseEnvFile,
-  pickChannel,
-  telegramGetMe,
-  testMessage,
-} from "./beacon.ts"
+  BOTFATHER_STEPS,
+  botLink,
+  channelExists,
+  discoverChat,
+  saveBeaconChannel,
+  sendConnectedMessage,
+  setupChannelName,
+  verifyBotToken,
+} from "./beaconSetup.ts"
+import { confirm, PromptCancelled, readLine } from "./prompt.ts"
 import { beaconModule } from "../modules/beacon.ts"
-import { allModuleStatuses } from "../modules/index.ts"
+import { allModuleStatuses, UPCOMING_MODULES } from "../modules/index.ts"
 import type { ModuleStatus } from "../modules/contract.ts"
 
 const VALUE_FLAGS = new Set(["--to", "--env-file"])
@@ -54,6 +56,7 @@ function fail(json: boolean, reason: string, message: string, remedy?: string): 
 }
 
 const USAGE = `Usage:
+  spinuptui beacon setup [<name>]   (guided, in a terminal)
   spinuptui beacon send [--to <channel>] [--silent] [--json] [<message> | -]
   spinuptui beacon add telegram <name> [--env-file <path>] [--default] [--no-test]
   spinuptui beacon remove <name>
@@ -72,6 +75,7 @@ export async function runBeacon(argv: string[]): Promise<number> {
   const sub = positionals[0]
   for (const f of VALUE_FLAGS) if (badValue(flags, f)) return fail(json, "usage", `${f} needs a value.\n${USAGE}`)
 
+  if (sub === "setup") return setup(positionals.slice(1))
   if (sub === "send") return send(positionals.slice(1), flags, rest, json)
   if (sub === "test") return test(flags, json)
   if (sub === "add") return add(positionals.slice(1), flags, json)
@@ -153,11 +157,7 @@ async function add(pos: string[], flags: Map<string, string>, json: boolean): Pr
   }
   const channel = { type: "telegram" as const, botToken, chatId }
   if (!flags.has("--no-test")) {
-    const r = await beaconSend(
-      { channels: [{ name, channel, env: false }], defaultChannel: name },
-      `Beacon connected: channel "${name}" will page this chat.`,
-      { log: false },
-    )
+    const r = await sendConnectedMessage(name, channel)
     if (!r.ok) {
       if (json) console.log(JSON.stringify({ ...r, message: `Not saved. ${r.message}` }))
       else console.error(`Not saved. ${r.message}`)
@@ -165,21 +165,83 @@ async function add(pos: string[], flags: Map<string, string>, json: boolean): Pr
     }
   }
 
-  const stored: BeaconStored = loadConfig().beacon ?? {}
-  const channels = { ...(stored.channels ?? {}), [name]: channel }
-  const makeDefault = flags.has("--default") || !stored.defaultChannel
-  await saveConfig({ beacon: { ...stored, channels, ...(makeDefault ? { defaultChannel: name } : {}) } })
+  const previousDefault = loadConfig().beacon?.defaultChannel
+  const { isDefault } = await saveBeaconChannel(name, channel, flags.has("--default"))
   const summary = {
     ok: true,
     channel: name,
     bot: me.username ? `@${me.username}` : maskToken(botToken),
     chat: maskChatId(chatId),
-    default: makeDefault ? name : stored.defaultChannel,
+    default: isDefault ? name : previousDefault,
     tested: !flags.has("--no-test"),
   }
   if (json) console.log(JSON.stringify(summary))
-  else console.log(`Saved channel "${name}" (${summary.bot} → chat ${summary.chat})${makeDefault ? ", now the default" : ""}.`)
+  else console.log(`Saved channel "${name}" (${summary.bot} → chat ${summary.chat})${isDefault ? ", now the default" : ""}.`)
   return 0
+}
+
+// The guided path for someone without a bot yet. Interactive only: scripts and
+// provisioning use `add --env-file`.
+async function setup(pos: string[]): Promise<number> {
+  if (!process.stdin.isTTY || !process.stderr.isTTY) {
+    return fail(false, "needs_terminal", "`beacon setup` is interactive and needs a terminal.", "For scripts, use `spinuptui beacon add telegram <name> --env-file <path>`.")
+  }
+  const name = pos[0] ?? setupChannelName()
+  if (!NAME_RE.test(name) || name === "env") return fail(false, "usage", `"${name}" can't be a channel name (lowercase letters, digits and dashes; "env" is reserved).`)
+  const say = (line = "") => process.stderr.write(line + "\n")
+  try {
+    say("Beacon setup: page yourself on Telegram.")
+    say()
+    if (channelExists(name) && !(await confirm(`A channel named "${name}" already exists. Replace it?`, false))) return 1
+
+    say("1. Create a bot (skip if you already have one):")
+    for (const step of BOTFATHER_STEPS) say(`   · ${step}`)
+    say()
+    let token = ""
+    let username = ""
+    for (let attempt = 0; ; attempt++) {
+      token = (await readLine("2. Paste the bot token (hidden): ", { hidden: true })).trim()
+      const me = await verifyBotToken(token)
+      if (me.ok) {
+        username = me.username ?? ""
+        say(`   ✓ Bot ${username ? `@${username}` : "found"}`)
+        break
+      }
+      say(`   ✗ ${me.error}`)
+      if (attempt >= 2) return 2
+    }
+    say()
+    for (;;) {
+      say(`3. In Telegram, send any message to ${username ? `@${username} (${botLink(username)})` : "your bot"}.`)
+      say("   To page a group instead, add the bot to the group and send /start there.")
+      say("   Waiting up to 5 minutes… (Ctrl-C to cancel)")
+      const found = await discoverChat(token)
+      if (!found.ok) {
+        say(`   ✗ ${found.message}`)
+        if (found.reason === "timeout" && (await confirm("   Keep waiting?", true))) continue
+        return found.reason === "cancelled" ? 1 : 2
+      }
+      say(`   ✓ Found: ${found.chat.label} (${found.chat.kind} chat)`)
+      if (!(await confirm("   Page this chat?", true))) continue
+      const channel = { type: "telegram" as const, botToken: token, chatId: found.chat.chatId }
+      const sent = await sendConnectedMessage(name, channel)
+      if (!sent.ok) {
+        say(`   ✗ Couldn't send the test message: ${sent.message}. Nothing was saved.`)
+        return 2
+      }
+      const { isDefault } = await saveBeaconChannel(name, channel, false)
+      say()
+      say(`✓ Saved channel "${name}"${isDefault ? " (the default)" : ""}. A test message is on its way to that chat.`)
+      say(`  Try it: spinuptui beacon send "hello from $(hostname)"`)
+      return 0
+    }
+  } catch (err) {
+    if (err instanceof PromptCancelled) {
+      say("Cancelled; nothing was saved.")
+      return 1
+    }
+    throw err
+  }
 }
 
 async function remove(pos: string[], json: boolean): Promise<number> {
@@ -218,7 +280,11 @@ async function status(json: boolean): Promise<number> {
 export async function runModules(argv: string[]): Promise<number> {
   const json = argv.includes("--json")
   const statuses = await allModuleStatuses()
-  if (json) console.log(JSON.stringify({ ok: true, modules: statuses }))
-  else for (const s of statuses) printStatus(s)
+  const upcoming = UPCOMING_MODULES.map(({ id, name, summary }) => ({ id, name, about: summary }))
+  if (json) console.log(JSON.stringify({ ok: true, modules: statuses, upcoming }))
+  else {
+    for (const s of statuses) printStatus(s)
+    console.log(`Coming soon: ${upcoming.map((u) => u.name).join(", ")}`)
+  }
   return 0
 }

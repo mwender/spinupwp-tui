@@ -8,6 +8,8 @@ Promoted from `docs/2026-10-15_ideas.md` (ideas 1, 4 and 5) on 2026-10-16. This 
 
 - The module contract: what every module declares, where its config and state live, and how its status is reported.
 - Beacon's operator channel, Telegram only: config, secrets, `spinuptui beacon send` and the commands around it.
+- Onboarding for someone who has never made a Telegram bot: a guided setup, in the CLI and the TUI.
+- The Modules screen (tab `6`): Beacon live, the other three shown as "coming soon".
 - The cutover plan for the existing Telegram senders, written so live alerting never goes quiet.
 
 **Not in this round** (designed enough below that nothing built now blocks them):
@@ -15,7 +17,7 @@ Promoted from `docs/2026-10-15_ideas.md` (ideas 1, 4 and 5) on 2026-10-16. This 
 - The client channel (Basecamp). Its shape is sketched under "Later", but it is not built until a module needs to post to a client, which is Sentinel.
 - Two-way Beacon (inline approval buttons and the inbound listener). That arrives with Samurai.
 - More operator transports (Slack, ntfy, Pushover, email, webhook). The channel type is a union so each is an additive change.
-- The Modules screen in the TUI and `station setup`. They are views over the contract and come after the four modules exist.
+- `station setup`. It is a view over the contract and comes after the four modules exist.
 
 ## The module contract
 
@@ -57,7 +59,13 @@ interface ScheduledJobDecl {
 - **Status is a function, not a file.** `status()` computes health on demand from config and state, so it can't go stale. It must be cheap and must not send anything.
 - **Every module has a CLI first.** The TUI is a front end over the same functions. Headless commands print one JSON result on stdout and progress on stderr, and use the existing `{ ok: false, reason, message, remedy? }` failure shape.
 
-`spinuptui modules [--json]` lists every module with its status. It is the first consumer of the contract and the seed of the Modules screen.
+`spinuptui modules [--json]` lists every module with its status, plus the ones not shipped yet (`upcoming`). The Modules screen is the same data in the TUI.
+
+### The Modules screen
+
+Tab `6`. A list on the left with one row per module (● set up, ○ not set up, ● amber needs attention, · coming soon) and a detail pane on the right: the outcome summary, what it builds on, its status checks, and what to do next. `⏎` sets up the selected module, so the place you learn what a module does is the place you turn it on. Beacon adds `t` for a test page.
+
+Unshipped modules appear greyed out as "coming soon". They come from a separate `UPCOMING_MODULES` list holding only an id, name, summary and dependencies, and an entry moves into `MODULES` when it ships. The ideas doc warned that listing unbuilt products reads as vaporware, but that was about the public landing page. Inside the app, next to one live module, they read as a roadmap.
 
 ## Beacon
 
@@ -86,6 +94,7 @@ Beacon's config is the `beacon` key in `config.json`:
 ### Commands
 
 ```
+spinuptui beacon setup [<name>]
 spinuptui beacon send [--to <channel>] [--silent] [--json] [<message> | -]
 spinuptui beacon add telegram <name> [--env-file <path>] [--default] [--no-test]
 spinuptui beacon remove <name>
@@ -102,11 +111,26 @@ spinuptui modules [--json]
 - **Exit codes callers can branch on:** `0` delivered; `1` usage error or Beacon not configured (nothing was attempted); `2` delivery failed after retries (Beacon was configured and tried). The distinction is load-bearing for the cutover below.
 - `--json` prints `{ ok, channel, parts, … }` on stdout. Without it, success is silent and failure is one line on stderr, which is what a shell caller wants.
 
+**`setup`.** The guided path for someone without a bot (next section). Interactive only; it refuses to run without a terminal and points at `add`.
+
 **`add telegram`.** Reads `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` from `--env-file` (the format existing senders already use) or the same names from the environment. Before saving, it checks the token with Telegram's `getMe` and sends a "Beacon connected" test message. Credentials that can't deliver are never stored. `--no-test` skips the test message but not the token check.
 
 **`test`.** Sends a test message that names the machine and the time, so you can tell which station sent it.
 
 **`status`.** The module contract's status, printed. It reports the channels (masked), which channel is the default, and the outcome of the last send from the log. It doesn't send anything.
+
+### Onboarding: a first bot in about two minutes
+
+`beacon add` assumes you already have a bot token and a chat ID. A newcomer has neither, and the chat ID is where people get stuck: it's a number Telegram never shows in its apps. The guided setup (`spinuptui beacon setup`, or `⏎` on Beacon in the Modules screen) takes care of it. Both run the same engine (`src/lib/beaconSetup.ts`):
+
+1. **Create a bot.** This can't be automated: Telegram issues bots only through a chat with @BotFather. Setup shows the three steps (`/newbot`, a name, a username ending in "bot") and asks for the token.
+2. **Check the token.** A shape check catches a mis-paste instantly, then `getMe` confirms it and gives the bot's @username for the next step's link.
+3. **Find the chat.** Setup asks the user to message the bot (or add it to a group and send `/start`), then long-polls `getUpdates` until a message, channel post or group membership arrives, for up to five minutes. Updates already waiting when setup starts are skipped, so an old conversation can't be picked by mistake. A `409` (the bot has a webhook, or something else is polling it) gets a plain explanation, since Telegram's text for it is cryptic.
+4. **Confirm, test, save.** The user confirms the chat, Beacon sends "Beacon connected", and only then is the channel saved.
+
+The token is entered hidden: masked in the TUI by the existing `SecretInput`, and in raw mode with dots in the CLI. It never touches argv. Re-running setup reconfigures the default channel rather than adding a second one, which also makes it the way to move the pager to a different chat.
+
+Reading updates acknowledges them on Telegram's side. That's harmless for a bot used only for paging. A bot that also serves something else is the conflict case above, and the advice is a dedicated alert bot.
 
 ### Later: the client channel and two-way Beacon
 
@@ -127,7 +151,7 @@ Today several scripts outside this repo each carry their own Telegram call again
 
 Every switched sender uses the same three-way branch:
 
-1. **Gate on the version.** Run `spinuptui --version` and check it's at least the Beacon release. If it isn't, or `spinuptui` isn't on the PATH, use the old direct send. Cache the answer for the run, not across runs, so an upgrade is picked up on the next tick.
+1. **Gate on the version.** Run `spinuptui --version` and check its `X.Y.Z` part is at least `1.2.0`. Strip any pre-release suffix first: `sort -V` orders `1.2.0` before `1.2.0-alpha.1`, the reverse of SemVer, so comparing full strings would refuse the stable release. If it isn't, or `spinuptui` isn't on the PATH, use the old direct send. Cache the answer for the run, not across runs, so an upgrade is picked up on the next tick.
 2. **Send through Beacon.** Exit `0` means done.
 3. **Fall back only when Beacon didn't try.** Exit `1` (not configured, usage error) means nothing was sent, so the old direct send runs. Exit `2` means Beacon tried and Telegram refused or was unreachable. Retrying the same API from the old path would only duplicate a partial multi-part send, so the caller logs it and moves on, as it does today.
 
@@ -135,7 +159,7 @@ The old direct-send code stays in each caller as the fallback until the soak bel
 
 ### Order of operations
 
-1. **Release Beacon** (a minor version: new subcommands, no breaking change) and install it globally on the station.
+1. **Publish Beacon as a pre-release** (`1.2.0-alpha.N` on npm's `next` tag; see "Release plan") and install it globally on the station with `@next`.
 2. **Configure it from the existing env file**: `spinuptui beacon add telegram pager --env-file <the existing file> --default`. The test message arriving is the first proof.
 3. **Switch the shared notification library first.** One function covers four callers, including the daily digest, so the next morning's digest is a natural end-to-end check. It also immediately fixes the library's two latent bugs: HTTP errors counted as success, and long digests dropped silently.
 4. **Then the job runner**, whose own delivery log makes the switch easy to verify.
@@ -144,6 +168,15 @@ The old direct-send code stays in each caller as the fallback until the soak bel
 7. **Remove the fallbacks** caller by caller, and only then retire the env file. Beacon's credentials then live only in `config.json`. Before that step, the machine's secrets-sync tooling has to cover `config.json`'s Beacon key, or a rebuilt station loses its pager.
 
 Rollback at any point is reverting one caller's change. The env file and the old code path are still there until step 7.
+
+## Release plan
+
+Decided 2026-10-16: Beacon on its own is a useful tool, but the public story lands with Sentinel. So the modules ship through a **pre-release channel** first:
+
+- **`1.2.0-alpha.N` on npm's `next` dist-tag**, published as GitHub pre-releases. `bun add -g spinuptui@next` opts in; `@latest`, the in-app update hint and the Homebrew tap all stay on stable. Scheduler and Sentinel arrive as further alphas.
+- **Stable 1.2.0 ships once Sentinel is in**, alongside the landing page.
+- **The update check understands pre-releases.** Someone on `1.2.0-alpha.3` is told when stable `1.2.0` ships, because a release outranks its own pre-releases. GitHub's "latest release" endpoint skips pre-releases, so alpha users aren't told about newer alphas. That's acceptable for a channel people opted into by hand.
+- **The cost:** until stable 1.2.0, `main` carries unreleased module work. A fix for 1.1.x users is cut from a short-lived branch off the last stable tag, and merged forward.
 
 ## Open questions
 

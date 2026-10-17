@@ -27,7 +27,7 @@ const GUIDES: Record<Route, Guide> = {
       ["Recent activity", "The latest deploys and operations"],
     ],
     actions: [
-      ["1–5", "Switch tabs"],
+      ["1–6", "Switch tabs"],
       ["r", "Refresh from the API"],
     ],
   },
@@ -91,8 +91,21 @@ const GUIDES: Record<Route, Guide> = {
     title: "Events",
     summary: "A live feed of deploys, reboots, and operations across your account.",
     actions: [
-      ["1–5", "Switch tabs"],
+      ["1–6", "Switch tabs"],
       ["r", "Refresh"],
+    ],
+  },
+  modules: {
+    title: "Modules",
+    summary: "Modules are the parts of SpinupTUI that keep working after you close it: paging you, running follow-ups, watching the fleet. Each card says what it does and whether it's set up on this machine.",
+    panes: [
+      ["Modules", "Every module, with its status here: ● set up · ○ not set up · coming soon"],
+      ["Detail", "What the selected module does, its health checks, and what to do next"],
+    ],
+    actions: [
+      ["⏎ / s", "Set up the selected module (Beacon: connect a Telegram bot)"],
+      ["t", "Send a test page through Beacon"],
+      ["1–6", "Switch tabs"],
     ],
   },
 }

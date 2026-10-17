@@ -90,6 +90,8 @@ Usage:
                        Import production's database into the linked local copy,
                        rewriting URLs. OVERWRITES your local database: needs
                        both --yes and "localSync": true in the config.
+  spinuptui beacon setup  Guided Telegram setup: make a bot, find your chat,
+                       send a test (interactive; also in the app's Modules tab, 6)
   spinuptui beacon send [--to <channel>] [--silent] [<message> | -]
                        Page yourself through Beacon (Telegram). Reads the
                        message from stdin when it's \`-\` or absent. Exit 0 sent,

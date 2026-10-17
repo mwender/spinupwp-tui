@@ -56,3 +56,6 @@ export interface ModuleDefinition {
 export function moduleStateDir(id: ModuleId): string {
   return join(configDir(), "modules", id)
 }
+
+// A module that hasn't shipped yet: just enough to draw its card.
+export type UpcomingModule = Pick<ModuleDefinition, "id" | "name" | "summary" | "dependsOn">

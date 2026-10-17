@@ -12,8 +12,12 @@ version; such changes are called out here.
 ## [Unreleased]
 
 ### Added
-- **Beacon: `spinuptui beacon send` pages you on Telegram.** One command any script, cron job or agent can use instead of its own `curl` to the Telegram API. Messages go out as plain text with link previews off; anything over Telegram's 4096-character limit is split into numbered parts instead of being rejected; sends are retried (honoring Telegram's rate-limit hints) and logged. Exit codes tell a caller what happened: `0` delivered, `1` not configured (nothing attempted), `2` delivery failed. Set it up with `spinuptui beacon add telegram <name> --env-file <path>`, which checks the bot token and sends a test message before saving anything. `beacon test`, `beacon status` and `beacon remove` round it out. See [docs/beacon.md](docs/beacon.md).
+- **Beacon: `spinuptui beacon send` pages you on Telegram.** One command any script, cron job or agent can use instead of its own `curl` to the Telegram API. Messages go out as plain text with link previews off; anything over Telegram's 4096-character limit is split into numbered parts instead of being rejected; sends are retried (honoring Telegram's rate-limit hints) and logged. Exit codes tell a caller what happened: `0` delivered, `1` not configured (nothing attempted), `2` delivery failed. No Telegram bot yet? `spinuptui beacon setup` walks you through making one with @BotFather, checks the token, and finds your chat by itself once you message the bot. No digging for a chat ID. It saves nothing until a test message has arrived. Scripts can use `spinuptui beacon add telegram <name> --env-file <path>` instead. `beacon test`, `beacon status` and `beacon remove` round it out. See [docs/beacon.md](docs/beacon.md).
+- **A Modules tab (`6`).** Everything SpinupTUI can keep doing after you close it, with its status on this machine and set up from the same place: select Beacon and press `⏎` for the guided Telegram setup, or `t` for a test page. Modules still on the way (Scheduler, Sentinel, Samurai) are listed as coming soon.
 - **`spinuptui modules`** lists SpinupTUI's modules (the features that keep working after the TUI is closed) and their status. Beacon is the first; the module contract is in [docs/2026-10-16_beacon-and-module-contract-spec.md](docs/2026-10-16_beacon-and-module-contract-spec.md).
+
+### Fixed
+- **The update hint understands pre-releases.** Someone running a pre-release (say `1.2.0-alpha.1`) is now told when the matching stable release ships; before, the two counted as the same version.
 
 ## [1.1.2] - 2026-10-15
 
