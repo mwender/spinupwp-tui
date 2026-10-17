@@ -15,7 +15,7 @@ type Section = { title: string; keys: [string, string][] }
 const GLOBAL: Section = {
   title: "Global",
   keys: [
-    ["1 … 5", "Switch tabs"],
+    ["1 … 6", "Switch tabs"],
     ["r", "Refresh from the API"],
     ["/", "Global search"],
     ["A", "Switch SpinupWP accounts"],

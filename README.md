@@ -76,6 +76,11 @@
   register/recalibrate/remove it — plus a cache/outage doctor and alert
   wiring. → [docs/site-monitoring.md](docs/site-monitoring.md) ·
   [docs/uptime-kuma.md](docs/uptime-kuma.md)
+- **Modules** (`6`) — the parts of SpinupTUI that keep working after you close it,
+  each set up from the same screen. First up, **Beacon**: `spinuptui beacon send`
+  pages you on Telegram from any cron job, watcher or agent, with retries, long
+  messages split instead of dropped, and a send log. A guided setup creates the
+  bot connection for you. → [docs/beacon.md](docs/beacon.md)
 - **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
   resolves a domain to a live SSH target with a live connectivity probe;
   `spinuptui ssh-exec <domain> -- <command>` runs a command over SSH, but only

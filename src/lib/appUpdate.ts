@@ -35,21 +35,47 @@ function cachePath(): string {
   return join(configDir(), "update-check.json")
 }
 
-// Parse "v1.2.3" / "1.2.3" → [1,2,3]; null when it doesn't look like a version.
-function parseVersion(s: string): [number, number, number] | null {
-  const m = s.trim().replace(/^v/i, "").match(/^(\d+)\.(\d+)\.(\d+)/)
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+// Parse "v1.2.3" / "1.2.3" / "1.2.3-alpha.1" → numbers + pre-release tag; null
+// when it doesn't look like a version.
+function parseVersion(s: string): { nums: [number, number, number]; pre: string | null } | null {
+  const m = s.trim().replace(/^v/i, "").match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/)
+  return m ? { nums: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ?? null } : null
+}
+
+// SemVer pre-release precedence: dot-separated identifiers compared left to
+// right, numeric ones numerically and below alphanumeric ones; a shorter set of
+// otherwise-equal identifiers sorts first.
+function comparePre(a: string, b: string): number {
+  const x = a.split(".")
+  const y = b.split(".")
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if (x[i] === undefined) return -1
+    if (y[i] === undefined) return 1
+    const nx = /^\d+$/.test(x[i]!)
+    const ny = /^\d+$/.test(y[i]!)
+    if (nx && ny) {
+      const d = Number(x[i]) - Number(y[i])
+      if (d) return d
+    } else if (nx !== ny) return nx ? -1 : 1
+    else if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1
+  }
+  return 0
 }
 
 // Strictly-newer comparison (latest > current). Unparseable → false (never nag).
-function isNewer(latest: string, current: string): boolean {
+// A release outranks its own pre-releases, so someone on 1.2.0-alpha.1 is told
+// when 1.2.0 ships.
+export function isNewer(latest: string, current: string): boolean {
   const a = parseVersion(latest)
   const b = parseVersion(current)
   if (!a || !b) return false
   for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] > b[i]
+    if (a.nums[i] !== b.nums[i]) return a.nums[i]! > b.nums[i]!
   }
-  return false
+  if (a.pre === b.pre) return false
+  if (a.pre === null) return true
+  if (b.pre === null) return false
+  return comparePre(a.pre, b.pre) > 0
 }
 
 function readCache(): CacheFile | null {

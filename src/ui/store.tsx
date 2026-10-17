@@ -60,7 +60,7 @@ import { planDbSync, runDbSync, isDbSyncInFlight, type DbSyncProgress, type Sync
 import { planLocalSetup, runLocalSetup, isLocalSetupInFlight, type LocalSetupProgress, type LocalSetupPlanResult } from "../lib/localSetup.ts"
 import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
 
-export type Route = "dashboard" | "servers" | "stacks" | "search" | "events"
+export type Route = "dashboard" | "servers" | "stacks" | "search" | "events" | "modules"
 
 // Progress of a PHP-version upgrade, tracked in the store so it survives the
 // modal being closed. `status` mirrors the SpinupWP event status
@@ -742,6 +742,9 @@ interface StoreValue extends DataState {
   // Whether the local-copy discovery overlay is open.
   discoverOpen: boolean
   setDiscoverOpen: (v: boolean) => void
+  // Beacon's guided setup overlay, opened from the Modules tab.
+  beaconSetupOpen: boolean
+  setBeaconSetupOpen: (v: boolean) => void
   // Whether the "needs a local copy" (forgotten) report overlay is open, and an
   // optional stack filter (set from the selected Stacks group when opened).
   forgottenOpen: boolean
@@ -1110,6 +1113,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [mediaFallbackSite, setMediaFallbackSite] = useState<Site | null>(null)
   const [localRoots, setLocalRoots] = useState<string[]>(() => [...cfgRef.current.localRoots])
   const [discoverOpen, setDiscoverOpen] = useState(false)
+  const [beaconSetupOpen, setBeaconSetupOpen] = useState(false)
   const [forgottenOpen, setForgottenOpen] = useState(false)
   const [forgottenStack, setForgottenStack] = useState<Stack | null>(null)
   const [linkReturnToForgotten, setLinkReturnToForgotten] = useState(false)
@@ -4528,6 +4532,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     addLocalRoot,
     discoverOpen,
     setDiscoverOpen,
+    beaconSetupOpen,
+    setBeaconSetupOpen,
     forgottenOpen,
     setForgottenOpen,
     forgottenStack,
