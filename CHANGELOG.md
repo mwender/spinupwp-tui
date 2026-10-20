@@ -11,6 +11,13 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Scheduler: follow-ups that run themselves.** Queue a job for later (`spinuptui scheduler add verify-410s --kind spinuptui --when "2026-10-21 08:00" --expires 2026-10-28 --created-by "…" -- incidents example.com`) and this machine runs it at that time, writes a report, and sends you the result through Beacon. Jobs can be a SpinupTUI command, a shell script, or a prompt for an agent CLI (Claude Code or Codex, read-only by default). They can be one-offs or recurring (`every 30m`, `weekdays 08:00`, `mon,thu 08:00`), and every job carries an expiry date so a forgotten one stops on its own. Keep jobs in Scheduler's own folder, or point it at a git repository (`scheduler source add`): it pulls before each run and commits and pushes the reports, so you can queue a job from any machine with a commit. `scheduler list`, `show`, `run`, `cancel` and `validate` round it out. See [docs/scheduler.md](docs/scheduler.md).
+- **`spinuptui scheduler install --plan|--apply`** sets up the one LaunchAgent everything runs on: a tick at login and every five minutes, with the PATH a bare launchd environment lacks written into it. `--apply` doesn't report success until a tick has actually run under launchd. `uninstall` removes it and keeps your jobs and reports. Scheduler shows up live on the Modules tab (`6`), where `⏎` shows the same plan and installs it on confirm, and in `spinuptui modules`, which reports how long ago the last tick ran. Modules will declare their own recurring work for Scheduler to run, so a station needs only this one unit. The design is in [docs/2026-10-20_scheduler-spec.md](docs/2026-10-20_scheduler-spec.md).
+
+### Changed
+- **Headless commands start about three times faster.** `beacon send`, `incidents`, `ssh-exec`, `scheduler` and the rest no longer load the dashboard's renderer before looking at their arguments, which matters for something started every five minutes.
+
 ## [1.3.0-alpha.1] - 2026-10-21
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.2.0. It continues `1.2.0-alpha.1` under a new number, because stable 1.2.0 shipped without the modules: it has Beacon and the Modules tab (see [1.2.0-alpha.1]) plus everything in [1.2.0]. The stable 1.3.0 will roll these notes up with the next modules.

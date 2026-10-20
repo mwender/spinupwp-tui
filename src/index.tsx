@@ -1,22 +1,15 @@
 #!/usr/bin/env bun
-// Entry point. Handles a few non-interactive CLI subcommands, then boots the
-// OpenTUI renderer and mounts either the first-run onboarding wizard (no token
-// yet) or the main app wrapped in the data store.
+// Entry point. Handles the non-interactive CLI subcommands, then hands off to
+// the dashboard (ui/main.tsx).
 
 // First, before any config read or spawn: keep a site checkout's .env from
 // leaking into child processes (see the module).
 import "./lib/cwdDotenv.ts"
-import { useCallback, useMemo, useState } from "react"
-import { createCliRenderer } from "@opentui/core"
-import { createRoot } from "@opentui/react"
+// Nothing UI-related is imported statically: headless commands (the Scheduler
+// tick every 5 minutes, beacon send, incidents…) never load the renderer or
+// React. The dashboard is a dynamic import at the bottom.
 import pkg from "../package.json" with { type: "json" }
-import { hasToken, configPath, loadConfig, pinActiveProfile, setActiveProfile, listProfiles } from "./config.ts"
-import { StoreProvider } from "./ui/store.tsx"
-import { App } from "./ui/App.tsx"
-import { AccountsContext, type AccountsApi } from "./ui/accounts.tsx"
-import { resetWpCoreJobs } from "./ui/wpCoreJobs.tsx"
-import { Onboarding } from "./ui/Onboarding.tsx"
-import { isDevMode } from "./dev/devMode.ts"
+import { configPath, loadConfig, listProfiles } from "./config.ts"
 import { SpinupWPClient } from "./api/client.ts"
 import { resolveSshAccess } from "./lib/cliSsh.ts"
 import { resolveIncidents } from "./lib/cliIncidents.ts"
@@ -25,6 +18,7 @@ import { execSshCommand } from "./lib/sshExec.ts"
 import { runPullFiles, runPullDb } from "./lib/cliPull.ts"
 import { runBeacon, runModules } from "./lib/cliBeacon.ts"
 import { runOffline, runOnline } from "./lib/cliOffline.ts"
+import { runScheduler } from "./lib/cliScheduler.ts"
 
 const args = process.argv.slice(2)
 const positionals = args.filter((a) => !a.startsWith("-"))
@@ -113,6 +107,11 @@ Usage:
                        Add a channel from a file holding TELEGRAM_BOT_TOKEN and
                        TELEGRAM_CHAT_ID; sends a test message before saving.
   spinuptui beacon test | status | remove <name>
+  spinuptui scheduler add <id> --kind spinuptui|script|agent --when <time> | --every <schedule>
+                       --expires <date> --created-by <who> -- <body>
+                       Queue a follow-up for this station to run later and report
+                       on through Beacon (\`spinuptui scheduler\` for the rest)
+  spinuptui scheduler list | status | install --plan|--apply
   spinuptui modules    List SpinupTUI's modules and their status (--json)
   spinuptui --version  Print the version
   spinuptui --help     Show this help
@@ -313,31 +312,11 @@ if (command === "modules") {
   process.exit(await runModules(args.slice(1)))
 }
 
-// `spinuptui login` forces the onboarding wizard even when a token already exists,
-// so the token can be (re)saved to the config file for global use.
-const forceLogin = command === "login"
-
-function Root() {
-  const [configured, setConfigured] = useState(isDevMode() ? true : forceLogin ? false : hasToken())
-  // The store is keyed by account: switching remounts it (see ui/accounts.tsx).
-  const [account, setAccount] = useState(() => pinActiveProfile())
-  const switchAccount = useCallback(async (id: string) => {
-    await setActiveProfile(id)
-    resetWpCoreJobs()
-    setAccount(id)
-  }, [])
-  const accounts = useMemo<AccountsApi>(() => ({ switchAccount }), [switchAccount])
-  if (!configured) {
-    return <Onboarding onComplete={() => setConfigured(true)} />
-  }
-  return (
-    <AccountsContext.Provider value={accounts}>
-      <StoreProvider key={account}>
-        <App />
-      </StoreProvider>
-    </AccountsContext.Provider>
-  )
+if (command === "scheduler") {
+  process.exit(await runScheduler(args.slice(args.indexOf("scheduler") + 1)))
 }
 
-const renderer = await createCliRenderer()
-createRoot(renderer).render(<Root />)
+// `spinuptui login` forces the onboarding wizard even when a token already exists,
+// so the token can be (re)saved to the config file for global use.
+const { startDashboard } = await import("./ui/main.tsx")
+await startDashboard({ forceLogin: command === "login" })

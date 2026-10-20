@@ -43,6 +43,7 @@ import { KumaSite } from "./views/KumaSite.tsx"
 import { Accounts } from "./views/Accounts.tsx"
 import { Modules } from "./views/Modules.tsx"
 import { BeaconSetup } from "./views/BeaconSetup.tsx"
+import { SchedulerInstall } from "./views/SchedulerInstall.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -92,7 +93,8 @@ export function App() {
     store.connectZoneTarget !== null ||
     store.dnsRecordsTarget !== null ||
     store.kumaSite !== null ||
-    store.beaconSetupOpen
+    store.beaconSetupOpen ||
+    store.schedulerInstallOpen
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
   }, [overlayActive, store])
@@ -210,6 +212,7 @@ export function App() {
 
     // Beacon's guided setup (Modules tab) owns the keyboard while open.
     if (store.beaconSetupOpen) return
+    if (store.schedulerInstallOpen) return
 
     // A (Shift+a): the Accounts overlay — the header advertises it from every tab.
     if (key.shift && key.name === "a") return setShowAccounts(true)
@@ -299,6 +302,7 @@ export function App() {
       {store.dnsRecordsTarget && <DnsRecords />}
       {store.kumaSite && <KumaSite />}
       {store.beaconSetupOpen && <BeaconSetup />}
+      {store.schedulerInstallOpen && <SchedulerInstall />}
       {showAccounts && <Accounts onClose={() => setShowAccounts(false)} />}
       <ToastStack />
     </box>

@@ -109,6 +109,9 @@ export interface AppConfig {
   // it relies on the file's 600 mode. The env channel (SPINUPTUI_BEACON_*) is
   // resolved in lib/beacon.ts, not here, so this is only what's stored.
   beacon: BeaconStored | null
+  // Scheduler's sources and installed dispatcher (lib/scheduler*.ts,
+  // docs/2026-10-20_scheduler-spec.md). Machine-level: a station runs one clock.
+  scheduler: SchedulerStored | null
 }
 
 export interface BeaconTelegramChannel {
@@ -124,6 +127,15 @@ export type BeaconChannel = BeaconTelegramChannel
 export interface BeaconStored {
   defaultChannel?: string
   channels?: Record<string, BeaconChannel>
+}
+
+export interface SchedulerStored {
+  // Named job sources beyond the built-in `local` one: directories holding
+  // jobs/ and runs/, pulled and pushed when they are git repositories.
+  sources?: Record<string, { path: string }>
+  defaultSource?: string
+  // Written by `scheduler install --apply`, cleared by uninstall.
+  dispatcher?: { label: string; unitPath: string; bin: string; installedAt: string }
 }
 
 export interface ServerProviderRef {
@@ -224,6 +236,7 @@ export interface StoredConfig {
   kumaMonitors?: Record<string, KumaMonitorRef>
   lastSeenVersion?: string
   beacon?: BeaconStored
+  scheduler?: SchedulerStored
 }
 
 // ---- Accounts (profiles) -------------------------------------------------------
@@ -510,6 +523,7 @@ export function loadConfig(): AppConfig {
     kumaMonitors: stored.kumaMonitors ?? {},
     lastSeenVersion: stored.lastSeenVersion?.trim() || null,
     beacon: stored.beacon ?? null,
+    scheduler: stored.scheduler ?? null,
   }
 }
 

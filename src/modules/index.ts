@@ -3,18 +3,13 @@
 
 import type { ModuleDefinition, UpcomingModule } from "./contract.ts"
 import { beaconModule } from "./beacon.ts"
+import { schedulerModule } from "./scheduler.ts"
 
-export const MODULES: ModuleDefinition[] = [beaconModule]
+export const MODULES: ModuleDefinition[] = [beaconModule, schedulerModule]
 
 // Outcome copy only — the same lines feed the landing page. An entry moves to
 // MODULES (and out of here) when the module ships.
 export const UPCOMING_MODULES: UpcomingModule[] = [
-  {
-    id: "scheduler",
-    name: "Scheduler",
-    summary: "Follow-ups that run themselves: the fix you shipped today gets checked tomorrow without you remembering.",
-    dependsOn: ["beacon"],
-  },
   {
     id: "sentinel",
     name: "Sentinel",
