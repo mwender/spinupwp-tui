@@ -5,7 +5,7 @@ import { join } from "node:path"
 import type { AppConfig } from "../config.ts"
 import type { Event, Server, Site } from "../api/types.ts"
 import type { SpinupWPClientLike } from "../api/client.ts"
-import { bringServerOnline, loadOfflineState, matchServer, takeServerOffline, waitForEvents } from "./offline.ts"
+import { bringServerOnline, loadOfflineState, matchServer, takeServerOffline, takeSiteOffline, waitForEvents } from "./offline.ts"
 
 const server = { id: 1, name: "web1.example.com", ip_address: "203.0.113.10" } as Server
 const cfg = { profileId: "default", uptimeKuma: null, kumaMonitors: {} } as unknown as AppConfig
@@ -97,6 +97,61 @@ describe("takeServerOffline / bringServerOnline", () => {
     const res = await bringServerOnline(client, cfg, 1, opts())
     expect(res.nothingRecorded).toBe(true)
     expect(calls).toEqual([])
+  })
+})
+
+describe("single sites", () => {
+  test("takes one site offline and leaves its neighbours up", async () => {
+    const sites = [site(1, "a.com"), site(2, "b.com")]
+    const { client, calls } = fakeClient(sites)
+    const o = opts()
+    const res = await takeSiteOffline(client, cfg, server, 2, o)
+    expect(res.disabled).toEqual(["b.com"])
+    expect(calls).toEqual(["disable:2"])
+    expect(sites[0]!.disabled_at).toBeNull()
+    expect(loadOfflineState(o.dir).servers["1"]!.sites.map((s) => s.id)).toEqual([2])
+  })
+
+  test("a single site joins the server's record, and the server restore covers it", async () => {
+    const sites = [site(1, "a.com"), site(2, "b.com")]
+    const { client } = fakeClient(sites)
+    const o = opts()
+    await takeSiteOffline(client, cfg, server, 1, o)
+    await takeSiteOffline(client, cfg, server, 2, o)
+    expect(loadOfflineState(o.dir).servers["1"]!.sites.map((s) => s.id)).toEqual([1, 2])
+    const res = await bringServerOnline(client, cfg, 1, o)
+    expect(res.enabled.sort()).toEqual(["a.com", "b.com"])
+  })
+
+  test("bringing back one site keeps the rest of the server's record", async () => {
+    const sites = [site(1, "a.com"), site(2, "b.com")]
+    const { client, calls } = fakeClient(sites)
+    const o = opts()
+    await takeServerOffline(client, cfg, server, o)
+    const res = await bringServerOnline(client, cfg, 1, { ...o, siteIds: [2] })
+    expect(res.enabled).toEqual(["b.com"])
+    expect(calls).toEqual(["disable:1", "disable:2", "enable:2"])
+    expect(loadOfflineState(o.dir).servers["1"]!.sites.map((s) => s.id)).toEqual([1])
+  })
+
+  test("asking for a site that wasn't taken offline here touches nothing", async () => {
+    const sites = [site(1, "a.com"), site(2, "b.com", true)]
+    const { client, calls } = fakeClient(sites)
+    const o = opts()
+    await takeSiteOffline(client, cfg, server, 1, o)
+    const res = await bringServerOnline(client, cfg, 1, { ...o, siteIds: [2] })
+    expect(res.notRecorded).toEqual([2])
+    expect(res.enabled).toEqual([])
+    expect(calls).toEqual(["disable:1"])
+  })
+
+  test("an already-offline site is reported, not recorded", async () => {
+    const { client, calls } = fakeClient([site(1, "a.com", true)])
+    const o = opts()
+    const res = await takeSiteOffline(client, cfg, server, 1, o)
+    expect(res.alreadyOffline).toEqual(["a.com"])
+    expect(calls).toEqual([])
+    expect(loadOfflineState(o.dir).servers["1"]).toBeUndefined()
   })
 })
 

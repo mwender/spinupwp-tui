@@ -75,7 +75,7 @@ function nonWpSub(kind: ProbeKind | null, vanity: boolean): NonWpSub {
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
   const wpCoreJobs = useWpCoreJobs()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, setBulkWpGroup, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite, setKumaSite } =
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, setBulkWpGroup, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite, setKumaSite } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
@@ -253,6 +253,10 @@ export function Stacks({ rows }: { rows: number }) {
       case "P":
         // Purge page cache + object cache on the selected site (sites pane only).
         if (focus === "sites" && groupSites[siteIndex]) setPurgeCacheSite(groupSites[siteIndex])
+        return
+      case "O":
+        // Take the selected site offline / bring it back (sites pane only).
+        if (focus === "sites" && groupSites[siteIndex]) setSiteOfflineSite(groupSites[siteIndex])
         return
       case "M":
         // Site monitoring (Uptime Kuma) — capital to match Search, where

@@ -3,7 +3,9 @@
 //
 //   spinuptui offline                          what's offline right now
 //   spinuptui offline <server>… | --all --yes  take every site on them offline
+//   spinuptui offline --site <domain> --yes    just that site
 //   spinuptui online  <server>… | --all --yes  bring back what `offline` took down
+//   spinuptui online  --site <domain> --yes    just that site
 //
 // Without --yes both commands print the plan and change nothing. Progress goes
 // to stderr; stdout carries the summary (or one JSON object with --json).
@@ -12,11 +14,13 @@ import type { AppConfig } from "../config.ts"
 import { loadConfig } from "../config.ts"
 import type { Server, Site } from "../api/types.ts"
 import { SpinupWPClient, ApiError } from "../api/client.ts"
+import { resolveSiteByDomain } from "./cliSsh.ts"
 import {
   loadOfflineState,
   matchServer,
   takeServerOffline,
   bringServerOnline,
+  takeSiteOffline,
   type OfflineServerResult,
   type OnlineServerResult,
 } from "./offline.ts"
@@ -44,15 +48,47 @@ interface Parsed {
   all: boolean
   yes: boolean
   json: boolean
+  // --site <domain>, with --server <name> when the domain is on two servers.
+  site: string | null
+  server: string | null
 }
 
+const VALUE_FLAGS = new Set(["--site", "--server"])
+
 function parse(args: string[]): Parsed {
+  const names: string[] = []
+  const values = new Map<string, string>()
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!
+    if (VALUE_FLAGS.has(a)) values.set(a, args[++i] ?? "")
+    else if (!a.startsWith("-")) names.push(a)
+  }
   return {
-    names: args.filter((a) => !a.startsWith("-")),
+    names,
     all: args.includes("--all"),
     yes: args.includes("--yes"),
     json: args.includes("--json"),
+    site: values.has("--site") ? values.get("--site")! : null,
+    server: values.get("--server") ?? null,
   }
+}
+
+// --site combines with nothing else that picks a target.
+function siteUsageError(p: Parsed): string | null {
+  if (p.site === null) return p.server !== null ? "--server only narrows --site; name servers directly otherwise." : null
+  if (!p.site || p.site.startsWith("-")) return "--site needs a domain, e.g. --site example.com"
+  if (p.names.length || p.all) return "--site takes one site; don't also name servers or pass --all."
+  return null
+}
+
+// Find the site behind a domain (primary or additional), and its server.
+async function resolveSite(client: SpinupWPClient, cfg: AppConfig, p: Parsed): Promise<{ ok: true; site: Site; server: Server } | { ok: false; code: number }> {
+  const r = await resolveSiteByDomain(p.site!, client, cfg, { server: p.server })
+  if (r.ok) return { ok: true, site: r.site, server: r.server }
+  const lines = [r.result.message, ...(r.result.candidates ?? []).map((c) => `  · ${c.server} (site ${c.siteId})`)]
+  if (r.result.reason === "multiple_matches") lines.push("Pick one with --server <name>.")
+  else if (r.result.remedy) lines.push(r.result.remedy)
+  return { ok: false, code: fail(p.json, r.result.reason, lines.join("\n"), { candidates: r.result.candidates }) }
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
@@ -132,6 +168,9 @@ export async function runOffline(args: string[]): Promise<number> {
   const p = parse(args)
   const cfg = loadConfig()
   const client = new SpinupWPClient(cfg)
+  const siteErr = siteUsageError(p)
+  if (siteErr) return fail(p.json, "usage", siteErr)
+  if (p.site !== null) return siteOffline(client, cfg, p)
   if (!p.names.length && !p.all) return status(client, cfg, p.json)
   if (p.names.length && p.all) return fail(p.json, "usage", "Name servers or pass --all, not both.")
 
@@ -200,13 +239,70 @@ export async function runOffline(args: string[]): Promise<number> {
   return failedAny ? 1 : 0
 }
 
+async function siteOffline(client: SpinupWPClient, cfg: AppConfig, p: Parsed): Promise<number> {
+  const r = await resolveSite(client, cfg, p)
+  if (!r.ok) return r.code
+  const { site, server } = r
+  let neighbours: Site[]
+  try {
+    neighbours = (await client.listSites(server.id)).filter((s) => s.id !== site.id && !s.disabled_at)
+  } catch (e) {
+    return apiFailure(p.json, e)
+  }
+  const exposure = neighbours.length
+    ? `${plural(neighbours.length, "other site")} on ${server.name} stay${neighbours.length === 1 ? "s" : ""} up, so that server's PHP is still reachable through ${neighbours.length === 1 ? "it" : "them"}. To protect the server, take it offline: spinuptui offline ${server.name} --yes`
+    : `It's the only site still up on ${server.name}, so this takes the whole server's sites offline.`
+
+  if (site.disabled_at) {
+    if (p.json) console.log(JSON.stringify({ ok: true, dryRun: !p.yes, server: server.name, alreadyOffline: [site.domain] }))
+    else console.log(`${site.domain} is already offline.`)
+    return 0
+  }
+  if (!p.yes) {
+    if (p.json) {
+      console.log(JSON.stringify({ ok: true, dryRun: true, server: server.name, willDisable: [site.domain], otherSitesStillUp: neighbours.map((s) => s.domain) }))
+      return 0
+    }
+    console.log(`Would take ${site.domain} offline (on ${server.name}, ${cfg.profileLabel}).`)
+    console.log(exposure)
+    console.log("\nOffline means nginx stops answering for its domains: visitors can't connect, and no request reaches PHP through this site.")
+    console.log("Files, database and certificate are untouched. Nothing has changed yet; add --yes to do it.")
+    return 0
+  }
+
+  let res: OfflineServerResult
+  try {
+    res = await takeSiteOffline(client, cfg, server, site.id, { onProgress: (l) => err(`→ ${l}`) })
+  } catch (e) {
+    return apiFailure(p.json, e)
+  }
+  const failed = res.failed.length > 0
+  if (p.json) {
+    console.log(JSON.stringify({ ok: !failed, servers: [res] }))
+    return failed ? 1 : 0
+  }
+  console.log("")
+  if (failed) for (const f of res.failed) console.log(`✕ ${f.domain}: ${f.error}`)
+  else console.log(`✓ ${site.domain} is offline.`)
+  if (res.kuma === "shielded") console.log("    Uptime Kuma: its monitors are in a maintenance window until it comes back.")
+  if (res.kuma === "failed") console.log(`    Uptime Kuma: couldn't open a maintenance window (${res.kumaError}); expect down alerts.`)
+  if (!failed) {
+    if (neighbours.length) console.log(exposure)
+    console.log(`\nBring it back with: spinuptui online --site ${site.domain} --yes`)
+  }
+  return failed ? 1 : 0
+}
+
 // ---- online ---------------------------------------------------------------
 
 export async function runOnline(args: string[]): Promise<number> {
   const p = parse(args)
   const cfg = loadConfig()
   const client = new SpinupWPClient(cfg)
-  if (!p.names.length && !p.all) return fail(p.json, "usage", "Usage: spinuptui online <server>… | --all [--yes]")
+  const siteErr = siteUsageError(p)
+  if (siteErr) return fail(p.json, "usage", siteErr)
+  if (p.site !== null) return siteOnline(client, cfg, p)
+  if (!p.names.length && !p.all) return fail(p.json, "usage", "Usage: spinuptui online <server>… | --all | --site <domain> [--yes]")
   if (p.names.length && p.all) return fail(p.json, "usage", "Name servers or pass --all, not both.")
 
   const state = loadOfflineState()
@@ -280,4 +376,43 @@ export async function runOnline(args: string[]): Promise<number> {
     if (r.kumaWindowClosed) console.log("    Uptime Kuma: maintenance window closed; monitoring resumed.")
   }
   return failedAny ? 1 : 0
+}
+
+async function siteOnline(client: SpinupWPClient, cfg: AppConfig, p: Parsed): Promise<number> {
+  const r = await resolveSite(client, cfg, p)
+  if (!r.ok) return r.code
+  const { site, server } = r
+  const record = loadOfflineState().servers[String(server.id)]
+  if (!record?.sites.some((s) => s.id === site.id)) {
+    return fail(
+      p.json,
+      "nothing_recorded",
+      site.disabled_at
+        ? `${site.domain} is offline, but not because of SpinupTUI, so it's left alone. Re-enable it in SpinupWP itself.`
+        : `${site.domain} is already online.`,
+    )
+  }
+  if (!p.yes) {
+    if (p.json) console.log(JSON.stringify({ ok: true, dryRun: true, server: server.name, willEnable: [site.domain] }))
+    else console.log(`Would bring ${site.domain} back online (on ${server.name}, offline since ${record.takenAt}). Nothing has changed yet; add --yes to do it.`)
+    return 0
+  }
+  let res: OnlineServerResult
+  try {
+    res = await bringServerOnline(client, cfg, server.id, { siteIds: [site.id], onProgress: (l) => err(`→ ${l}`) })
+  } catch (e) {
+    return apiFailure(p.json, e)
+  }
+  const failed = res.failed.length > 0
+  if (p.json) {
+    console.log(JSON.stringify({ ok: !failed, servers: [res] }))
+    return failed ? 1 : 0
+  }
+  console.log("")
+  if (failed) for (const f of res.failed) console.log(`✕ ${f.domain}: ${f.error} Re-run to retry.`)
+  else if (res.alreadyOnline.length) console.log(`✓ ${site.domain} was already back online.`)
+  else if (res.gone.length) console.log(`${site.domain} no longer exists in SpinupWP; forgotten.`)
+  else console.log(`✓ ${site.domain} is back online.`)
+  if (res.kumaWindowClosed) console.log("    Uptime Kuma: maintenance window closed; monitoring resumed.")
+  return failed ? 1 : 0
 }

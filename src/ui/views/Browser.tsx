@@ -24,7 +24,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks, setDbBackupSite, setMediaFallbackSite, setEnableLocalSyncSite } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks, setDbBackupSite, setMediaFallbackSite, setEnableLocalSyncSite } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -127,6 +127,11 @@ export function Browser({ rows }: { rows: number }) {
       case "P":
         // Purge page cache + object cache on the selected site.
         if (focus === "sites" && sites[siteIndex]) setPurgeCacheSite(sites[siteIndex])
+        return
+      case "O":
+        // Take the selected site offline, or bring it back. The whole server's
+        // version is in the server actions menu (a).
+        if (focus === "sites" && sites[siteIndex]) setSiteOfflineSite(sites[siteIndex])
         return
       case "M":
         // Uptime Kuma monitoring for the selected site (connect on first use).
@@ -390,6 +395,7 @@ export function Browser({ rows }: { rows: number }) {
                       linked/key/HTTPS/cache/backup/updates badges moved to the Details
                       pane (already shown there for the selected site) to give the
                       domain name room on narrower terminals. */}
+                  {s.disabled_at && <text content="⏻ off " fg={selected ? theme.text : theme.bad} style={{ flexShrink: 0 }} />}
                   <WpCoreRowMark siteId={s.id} selected={selected} compact />
                   <text content={stackTag(stack).padEnd(7) + " "} fg={stackColor(stack, selected)} wrapMode="none" style={{ flexShrink: 0 }} />
                   <PhpVersionCell version={s.php_version} upgrade={phpUpgrades.get(s.id)} selected={selected} />

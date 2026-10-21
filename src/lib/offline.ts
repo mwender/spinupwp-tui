@@ -6,8 +6,10 @@
 // on a test box with direct-IP and --resolve requests too). Files, database,
 // certificate, the PHP-FPM pool and the site's cron are all left in place.
 //
-// PHP is shared by every site on a server, so the unit here is the server:
-// one still-enabled site keeps the vulnerable binary reachable. What this module
+// PHP is shared by every site on a server, so the usual unit is the server:
+// one still-enabled site keeps the vulnerable binary reachable. Single sites
+// can go offline too (one exposed site, or one client's site for reasons of its
+// own); they're recorded under their server the same way. What this module
 // disabled is recorded per server in `offline.json` (per account), and bringing
 // a server back only re-enables those sites. A site someone had disabled for
 // another reason stays disabled.
@@ -213,17 +215,45 @@ export interface OfflineOptions {
 const errMsg = (err: unknown) => (err instanceof ApiError ? err.message : (err as Error).message)
 
 export async function takeServerOffline(client: SpinupWPClientLike, cfg: AppConfig, server: Server, opts: OfflineOptions = {}): Promise<OfflineServerResult> {
-  const dir = opts.dir ?? profileDataDir(cfg.profileId)
-  const say = opts.onProgress ?? (() => {})
-  const result: OfflineServerResult = { serverId: server.id, serverName: server.name, disabled: [], alreadyOffline: [], failed: [], kuma: "skipped" }
-
   const sites = await client.listSites(server.id)
-  const targets = sites.filter((s) => !s.disabled_at)
+  const result = emptyOfflineResult(server)
   result.alreadyOffline = sites.filter((s) => s.disabled_at).map((s) => s.domain)
+  const targets = sites.filter((s) => !s.disabled_at)
   if (!targets.length) {
-    say(`${server.name}: every site is already offline`)
+    opts.onProgress?.(`${server.name}: every site is already offline`)
     return result
   }
+  return disableSites(client, cfg, server, targets, result, opts)
+}
+
+// One site. The rest of the server stays up, and so does its PHP: this
+// protects that site, not the server.
+export async function takeSiteOffline(client: SpinupWPClientLike, cfg: AppConfig, server: Server, siteId: number, opts: OfflineOptions = {}): Promise<OfflineServerResult> {
+  const site = (await client.listSites(server.id)).find((s) => s.id === siteId)
+  const result = emptyOfflineResult(server)
+  if (!site) throw new Error(`Site ${siteId} is no longer on ${server.name}.`)
+  if (site.disabled_at) {
+    result.alreadyOffline = [site.domain]
+    opts.onProgress?.(`${site.domain}: already offline`)
+    return result
+  }
+  return disableSites(client, cfg, server, [site], result, opts)
+}
+
+function emptyOfflineResult(server: Server): OfflineServerResult {
+  return { serverId: server.id, serverName: server.name, disabled: [], alreadyOffline: [], failed: [], kuma: "skipped" }
+}
+
+async function disableSites(
+  client: SpinupWPClientLike,
+  cfg: AppConfig,
+  server: Server,
+  targets: Site[],
+  result: OfflineServerResult,
+  opts: OfflineOptions,
+): Promise<OfflineServerResult> {
+  const dir = opts.dir ?? profileDataDir(cfg.profileId)
+  const say = opts.onProgress ?? (() => {})
 
   const existing = loadOfflineState(dir).servers[String(server.id)]
   if (opts.kuma !== false) {
@@ -293,10 +323,19 @@ export interface OnlineServerResult {
   failed: { domain: string; error: string }[]
   // Nothing recorded for this server: this module didn't take it offline.
   nothingRecorded: boolean
+  // Asked for by id but not taken offline by this module (siteIds only).
+  notRecorded: number[]
   kumaWindowClosed: boolean
 }
 
-export async function bringServerOnline(client: SpinupWPClientLike, cfg: AppConfig, serverId: number, opts: OfflineOptions = {}): Promise<OnlineServerResult> {
+// Bring back what this module took offline on a server: all of it, or only
+// `siteIds` from it.
+export async function bringServerOnline(
+  client: SpinupWPClientLike,
+  cfg: AppConfig,
+  serverId: number,
+  opts: OfflineOptions & { siteIds?: number[] } = {},
+): Promise<OnlineServerResult> {
   const dir = opts.dir ?? profileDataDir(cfg.profileId)
   const say = opts.onProgress ?? (() => {})
   const record = loadOfflineState(dir).servers[String(serverId)]
@@ -308,14 +347,16 @@ export async function bringServerOnline(client: SpinupWPClientLike, cfg: AppConf
     gone: [],
     failed: [],
     nothingRecorded: !record,
+    notRecorded: opts.siteIds?.filter((id) => !record?.sites.some((s) => s.id === id)) ?? [],
     kumaWindowClosed: false,
   }
   if (!record) return result
+  const wanted = opts.siteIds ? record.sites.filter((s) => opts.siteIds!.includes(s.id)) : record.sites
 
   const live = new Map((await client.listSites(serverId)).map((s) => [s.id, s]))
   const done = new Set<number>()
   const events = new Map<number, OfflineSite>()
-  for (const rec of record.sites) {
+  for (const rec of wanted) {
     const site = live.get(rec.id)
     if (!site) {
       result.gone.push(rec.domain)
@@ -355,19 +396,27 @@ export async function bringServerOnline(client: SpinupWPClientLike, cfg: AppConf
   })
 
   // Keep whatever didn't come back, so a re-run finishes the job. The Kuma
-  // window closes only once every site is serving again.
-  let remaining = 0
+  // window shrinks to the sites still offline, and closes once there are none
+  // (or none of them has monitors).
+  let left: OfflineSite[] = []
   await updateRecord(dir, serverId, (r) => {
     if (!r) return undefined
-    const left = r.sites.filter((s) => !done.has(s.id))
-    remaining = left.length
+    left = r.sites.filter((s) => !done.has(s.id))
     return left.length ? { ...r, sites: left } : undefined
   })
-  if (remaining === 0 && record.kumaMaintenanceId != null && cfg.uptimeKuma && opts.kuma !== false) {
+  if (done.size && record.kumaMaintenanceId != null && cfg.uptimeKuma && opts.kuma !== false) {
     const id = record.kumaMaintenanceId
-    result.kumaWindowClosed = await withKuma(cfg.uptimeKuma, (kuma) => kuma.deleteMaintenance(id))
-      .then(() => true)
-      .catch(() => false)
+    const stillShielded = [...new Set(left.flatMap((s) => monitorIdsFor(cfg.kumaMonitors[s.domain])))]
+    if (stillShielded.length) {
+      await withKuma(cfg.uptimeKuma, (kuma) => kuma.setMaintenanceMonitors(id, stillShielded)).catch(() => {
+        // The restored sites stay quiet in Kuma until the rest come back.
+      })
+    } else {
+      result.kumaWindowClosed = await withKuma(cfg.uptimeKuma, (kuma) => kuma.deleteMaintenance(id))
+        .then(() => true)
+        .catch(() => false)
+      if (left.length) await updateRecord(dir, serverId, (r) => (r ? { ...r, kumaMaintenanceId: undefined } : r))
+    }
   }
   return result
 }

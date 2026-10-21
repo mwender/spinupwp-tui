@@ -97,7 +97,10 @@ Usage:
                        answering, so no request reaches PHP. Files, databases
                        and certificates are untouched. Without --yes, prints
                        the plan and changes nothing.
-  spinuptui online <server>… | --all --yes
+  spinuptui offline --site <domain> [--server <name>] --yes
+                       Just that site. Its server's other sites (and PHP) stay
+                       up, so this protects the site, not the server.
+  spinuptui online <server>… | --all | --site <domain> --yes
                        Bring back exactly the sites \`offline\` took down.
                        Servers are matched by exact name, IP or id.
   spinuptui beacon setup  Guided Telegram setup: make a bot, find your chat,

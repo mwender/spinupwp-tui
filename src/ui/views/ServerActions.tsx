@@ -9,9 +9,7 @@
 // it — labeled as OS context, not as SpinupWP's internal logic.
 //
 // The last row takes every site on the server offline (or brings back the ones
-// that took down) — see lib/offline.ts. That one runs here rather than in the
-// store: its record lives on disk, so closing the overlay mid-run loses only
-// the progress lines, never the ability to undo it.
+// that took down) — see lib/offline.ts and ../offlineRun.tsx.
 
 import { useEffect, useState } from "react"
 import { useKeyboard } from "@opentui/react"
@@ -29,21 +27,9 @@ import type { ServerOpKind } from "../store.tsx"
 import { loadConfig } from "../../config.ts"
 import { isDevMode } from "../../dev/devMode.ts"
 import { loadOfflineState, takeServerOffline, bringServerOnline } from "../../lib/offline.ts"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
-
-// Dev Mode's fake servers must never land in the real account's offline record.
-const offlineDir = () => (isDevMode() ? join(tmpdir(), "spinuptui-dev-offline") : undefined)
+import { offlineDir, useOfflineRun, OfflineProgress } from "../offlineRun.tsx"
 
 type Phase = "pick" | "confirm" | "tracking" | "done" | "error" | "offline"
-
-interface OfflineRun {
-  mode: "offline" | "online"
-  lines: string[]
-  finished: boolean
-  summary?: string
-  failed?: boolean
-}
 
 interface Action {
   kind: ServerOpKind
@@ -91,7 +77,7 @@ export function ServerActions() {
   // Cursor starts on Reboot when one is pending, else on the first restart.
   const [index, setIndex] = useState(() => (server?.reboot_required ? 0 : 1))
   const [target, setTarget] = useState<Action | null>(null)
-  const [run, setRun] = useState<OfflineRun | null>(null)
+  const { run, start } = useOfflineRun(refresh)
 
   // The offline row sits after the service actions. It offers to bring sites
   // back when SpinupTUI took this server offline, and to take it offline
@@ -127,35 +113,23 @@ export function ServerActions() {
 
   const startOffline = () => {
     if (!server) return
-    const mode = offlineMode
-    const push = (line: string) => setRun((r) => (r ? { ...r, lines: [...r.lines, line] } : r))
-    setRun({ mode, lines: [], finished: false })
     setPhase("offline")
     const cfg = loadConfig()
-    const o = { onProgress: push, kuma: !isDevMode(), dir: offlineDir() }
-    void (async () => {
-      try {
-        let summary: string
-        let failed: boolean
-        if (mode === "offline") {
-          const r = await takeServerOffline(store.client, cfg, server, o)
-          failed = r.failed.length > 0
-          summary = `${r.disabled.length} taken offline${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.kuma === "shielded" ? " · Kuma monitors in maintenance" : ""}`
-        } else {
-          const r = await bringServerOnline(store.client, cfg, server.id, o)
-          failed = r.failed.length > 0
-          summary = `${r.enabled.length} back online${r.alreadyOnline.length ? `, ${r.alreadyOnline.length} already were` : ""}${r.failed.length ? `, ${r.failed.length} failed — run it again` : ""}`
+    start(offlineMode, server.name, async (onProgress) => {
+      const o = { onProgress, kuma: !isDevMode(), dir: offlineDir() }
+      if (offlineMode === "offline") {
+        const r = await takeServerOffline(store.client, cfg, server, o)
+        return {
+          failed: r.failed.length > 0,
+          summary: `${r.disabled.length} taken offline${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.kuma === "shielded" ? " · Kuma monitors in maintenance" : ""}`,
         }
-        setRun((r) => (r ? { ...r, finished: true, summary, failed } : r))
-        if (failed) toast.error(`${server.name}: ${summary}`)
-        else toast.success(`${server.name}: ${summary}`)
-      } catch (err) {
-        const summary = (err as Error).message
-        setRun((r) => (r ? { ...r, finished: true, summary, failed: true } : r))
-        toast.error(`${server.name}: ${summary}`)
       }
-      await refresh()
-    })()
+      const r = await bringServerOnline(store.client, cfg, server.id, o)
+      return {
+        failed: r.failed.length > 0,
+        summary: `${r.enabled.length} back online${r.alreadyOnline.length ? `, ${r.alreadyOnline.length} already were` : ""}${r.failed.length ? `, ${r.failed.length} failed — run it again` : ""}`,
+      }
+    })
   }
 
   const close = () => {
@@ -361,33 +335,7 @@ export function ServerActions() {
       )
     }
 
-    if (dp === "offline" && run) {
-      const shown = run.lines.slice(-10)
-      return (
-        <Panel title={run.mode === "offline" ? " Taking sites offline " : " Bringing sites back online "} active>
-          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
-            {shown.map((l, i) => (
-              <text key={i} content={l} fg={l.includes("✕") ? theme.bad : l.includes("✓") ? theme.good : theme.textDim} wrapMode="none" />
-            ))}
-            <box style={{ height: 1 }} />
-            {run.finished ? (
-              <text content={`${run.failed ? "✕" : "✓"} ${run.summary}`} fg={run.failed ? theme.bad : theme.good} />
-            ) : (
-              <box style={{ flexDirection: "row" }}>
-                <Spinner />
-                <text content="  Working — SpinupWP runs a server's sites one at a time." fg={theme.textDim} wrapMode="none" />
-              </box>
-            )}
-            <box style={{ height: 1 }} />
-            <text
-              content={run.finished ? "Esc to close" : "Esc to close — it keeps running, and each change is recorded."}
-              fg={theme.textFaint}
-              wrapMode="none"
-            />
-          </box>
-        </Panel>
-      )
-    }
+    if (dp === "offline" && run) return <OfflineProgress run={run} plural />
 
     if (dp === "confirm") {
       const isReboot = target?.kind === "reboot"
