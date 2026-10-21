@@ -468,6 +468,6 @@ export function siteGroups(isWordpress: boolean, isVanity: boolean): ActionGroup
     { title: "Remote", items: remote },
     { title: "Local", items: local },
     ...(isVanity ? [{ title: "Vanity", items: [["R", "Refresh"]] as [string, string][] }] : []),
-    { title: "Server", items: [["a", "Reboot / restart"], ["h", "Health"]] },
+    { title: "Server", items: [["a", "Restart / offline"], ["h", "Health"]] },
   ]
 }

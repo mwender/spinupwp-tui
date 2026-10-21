@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Take a server's sites offline, and bring them back.** For a vulnerability you can't patch yet: `spinuptui offline <server>… --yes` (or **Take all sites offline** in the `a` menu) disables every site on the server through SpinupWP, so nginx stops answering for them and no request reaches PHP. Files, databases and certificates are untouched. `spinuptui online <server>… --yes` re-enables exactly the sites it took down, never one disabled for another reason, and a re-run finishes anything that failed. Without `--yes` both print the plan. Uptime Kuma monitors for those sites sit in a maintenance window until they're back, and offline servers are flagged `⏻ off` in the Servers list and on the Overview. See [docs/taking-sites-offline.md](docs/taking-sites-offline.md).
+
 ## [1.2.0-alpha.1] - 2026-10-17
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.1.2. The stable 1.2.0 will roll these notes up with the next modules.

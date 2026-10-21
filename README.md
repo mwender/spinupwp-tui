@@ -60,6 +60,7 @@
 - **Purge cache** (`P`) — clear page + object cache together.
 - **Server actions** (`a`) — reboot or restart a service, with the real reason a
   reboot is pending. → [docs/server-actions.md](docs/server-actions.md)
+- **Take a server's sites offline** (`a`, or `spinuptui offline <server> --yes`) — for a vulnerability you can't patch yet: nginx stops answering for every site on the server, so no request reaches PHP. Bringing them back re-enables exactly those sites, and Uptime Kuma stays quiet meanwhile. → [docs/taking-sites-offline.md](docs/taking-sites-offline.md)
 - **Create & connect a server** (`c` / `V`) — provision a server, then wire it up
   end-to-end (DNS, a vanity site, HTTPS, SSH-key handoff).
   → [docs/creating-connecting-servers.md](docs/creating-connecting-servers.md)

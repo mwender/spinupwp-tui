@@ -324,6 +324,7 @@ export function Browser({ rows }: { rows: number }) {
             emptyText="No servers yet — press c to create one"
             renderRow={(s, selected) => {
               const count = sitesForServer(s.id).length
+              const offline = sitesForServer(s.id).filter((x) => x.disabled_at).length
               const op = serverOps.get(s.id)
               return (
                 <>
@@ -340,6 +341,7 @@ export function Browser({ rows }: { rows: number }) {
                   ) : (
                     s.reboot_required && <text content=" ↻ rbt" fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />
                   )}
+                  {offline > 0 && <text content={offline === count ? " ⏻ off" : ` ⏻ ${offline} off`} fg={selected ? theme.text : theme.bad} style={{ flexShrink: 0 }} />}
                   {s.upgrade_required && <text content=" ⬆ upg" fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />}
                   {isServerOsEol(s) && <text content=" ⚠ os" fg={selected ? theme.text : theme.bad} style={{ flexShrink: 0 }} />}
                   {isSudoConnected(s.id) && <text content=" ● sudo" fg={selected ? theme.text : theme.good} style={{ flexShrink: 0 }} />}
