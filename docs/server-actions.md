@@ -2,7 +2,9 @@
 
 Press `a` on a selected server (in the **Servers** tab, or a result in **Search**)
 to open the server-actions overlay: **reboot** the server, or **restart** a single
-service (Nginx / PHP-FPM / MySQL / Redis). Pick → confirm → the app calls
+service (Nginx / PHP-FPM / MySQL / Redis). The last row takes every site on the
+server offline, or brings them back; see [taking-sites-offline.md](taking-sites-offline.md).
+Pick → confirm → the app calls
 `POST /servers/{id}/reboot` or `/services/{svc}/restart` and tracks the event to
 completion — same background behavior as PHP upgrades (close the overlay and the
 server's row keeps a spinner).

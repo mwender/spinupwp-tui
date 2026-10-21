@@ -36,7 +36,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, sitesForServer, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite, setGrantKeySite, runProbe, setEnableLocalSyncSite, setVanityServer, vanityJob } = store
+  const { servers, sites, serverById, sitesForServer, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite, setGrantKeySite, runProbe, setEnableLocalSyncSite, setVanityServer, vanityJob } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -152,6 +152,9 @@ export function Search({ rows }: { rows: number }) {
         return
       case "P":
         if (current?.kind === "site") setPurgeCacheSite(current.site)
+        return
+      case "O":
+        if (current?.kind === "site") setSiteOfflineSite(current.site)
         return
       case "t":
         if (current?.kind === "site") flashMsg(openLocalTerminal(current.site.id))
