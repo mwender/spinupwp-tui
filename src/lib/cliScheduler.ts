@@ -24,7 +24,7 @@ import {
   validateJob,
   type Source,
 } from "./schedulerJobs.ts"
-import { applyInstall, applyUninstall, planInstall, planUninstall } from "./schedulerInstall.ts"
+import { applyInstall, applyUninstall, binHasScheduler, NO_SCHEDULER, planInstall, planUninstall } from "./schedulerInstall.ts"
 import { git, gitPull, tick } from "./schedulerTick.ts"
 
 const VALUE_FLAGS = new Set([
@@ -423,6 +423,8 @@ async function install(p: Parsed, json: boolean): Promise<number> {
   if (apply === p.flags.has("--plan")) return fail(json, "usage", "Pass --plan to see what would be installed, or --apply to install it.")
   const plan = planInstall({ bin: p.flags.get("--bin") ?? null })
   if (!plan.ok) return fail(json, plan.reason, plan.message, plan.remedy)
+  // Refuse at --plan too, so a plan that can't work is never shown as one.
+  if (!(await binHasScheduler(plan))) return fail(json, NO_SCHEDULER.reason, NO_SCHEDULER.message, NO_SCHEDULER.remedy)
   if (!apply) {
     if (json) console.log(JSON.stringify(plan))
     else {

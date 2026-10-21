@@ -208,6 +208,36 @@ export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
   }
 }
 
+// Does the binary the unit will run have Scheduler at all? Asked through
+// --help, a capability check rather than a version comparison: every release
+// answers --help without starting the dashboard, while one without Scheduler
+// treats `scheduler tick` as an unknown subcommand and would launch the TUI
+// under launchd every 5 minutes.
+export async function binHasScheduler(plan: Pick<InstallPlan, "programArguments" | "env">): Promise<boolean> {
+  try {
+    const p = spawn([...plan.programArguments.slice(0, -2), "--help"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      env: { ...process.env, PATH: plan.env.PATH ?? "" },
+    })
+    const timer = setTimeout(() => p.kill(), 30_000)
+    const out = await new Response(p.stdout).text()
+    await p.exited
+    clearTimeout(timer)
+    return out.includes("spinuptui scheduler")
+  } catch {
+    return false
+  }
+}
+
+export const NO_SCHEDULER = {
+  ok: false as const,
+  reason: "spinuptui_too_old",
+  message: "The `spinuptui` the dispatcher would run doesn't have Scheduler yet, so it would open the dashboard every 5 minutes instead of ticking.",
+  remedy: "Install a release that has it first: bun add -g spinuptui@next --no-cache",
+}
+
 async function launchctl(...args: string[]): Promise<{ code: number; out: string }> {
   const p = spawn(["launchctl", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" })
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
@@ -222,6 +252,8 @@ export async function applyInstall(plan: InstallPlan, onStage: (s: string) => vo
   if (plan.platform !== "darwin") {
     return { ok: false, reason: "unsupported_platform", message: "Installing on Linux isn't supported yet; `--plan` shows the units to write by hand." }
   }
+  onStage("checking that this spinuptui has Scheduler")
+  if (!(await binHasScheduler(plan))) return NO_SCHEDULER
   const domain = `gui/${process.getuid?.() ?? 501}`
   mkdirSync(dirname(plan.unitPath), { recursive: true })
   mkdirSync(schedulerStateDir(), { recursive: true })

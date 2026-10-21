@@ -11,13 +11,26 @@ import { truncate } from "../../lib/format.ts"
 import { Panel, Spinner, Centered } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
-import { applyInstall, planInstall, type ApplyResult, type PlanResult } from "../../lib/schedulerInstall.ts"
+import { applyInstall, binHasScheduler, NO_SCHEDULER, planInstall, type ApplyResult, type PlanResult } from "../../lib/schedulerInstall.ts"
 
 type Phase = "confirm" | "applying" | "done" | "error"
 
 export function SchedulerInstall() {
   const { setSchedulerInstallOpen } = useStore()
-  const [plan] = useState<PlanResult>(() => planInstall())
+  const [plan, setPlan] = useState<PlanResult>(() => planInstall())
+  // Same refusal as `install --plan`: don't offer a plan whose binary has no
+  // Scheduler (it would launch the dashboard under launchd).
+  useEffect(() => {
+    if (!plan.ok) return
+    void binHasScheduler(plan).then((has) => {
+      if (!has) {
+        setPlan(NO_SCHEDULER)
+        setPhase("error")
+      }
+    })
+    // Checked once, for the plan computed on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [phase, setPhase] = useState<Phase>(plan.ok ? "confirm" : "error")
   const [stage, setStage] = useState("")
   const [result, setResult] = useState<ApplyResult | null>(null)

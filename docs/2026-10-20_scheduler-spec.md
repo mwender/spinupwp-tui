@@ -1,6 +1,6 @@
 # Scheduler — spec
 
-Promoted from `docs/2026-10-15_ideas.md` (idea 1's Scheduler section and idea 4's "one clock") on 2026-10-20. Second module against the contract in `docs/2026-10-16_beacon-and-module-contract-spec.md`. Ships as `1.2.0-alpha.2` on npm's `next` tag.
+Promoted from `docs/2026-10-15_ideas.md` (idea 1's Scheduler section and idea 4's "one clock") on 2026-10-20. Second module against the contract in `docs/2026-10-16_beacon-and-module-contract-spec.md`. Ships as `1.3.0-alpha.2` on npm's `next` tag (renumbered 2026-10-21: stable 1.2.0 shipped early without the modules, so their stable release is 1.3.0).
 
 ## What it is for
 
@@ -199,7 +199,7 @@ Scheduler moves from `UPCOMING_MODULES` to `MODULES`. Its detail pane shows the 
 
 **Order of operations:**
 
-1. Publish `1.2.0-alpha.2` and install it globally with `@next`. Check `spinuptui scheduler status` from a shell.
+1. Publish `1.3.0-alpha.2` and install it globally with `@next`. Check `spinuptui scheduler status` from a shell. Pull the old runner's repository, so the copy Scheduler shares state with is current.
 2. `spinuptui scheduler source add <name> <the runner's repo> --default`. Then `scheduler list --source <name>` must show every existing job with the same next run the old runner's `list` shows. That's the proof the rules match.
 3. `spinuptui scheduler install --apply`. Its proving tick runs against the shared state, so it runs nothing that isn't due.
 4. Boot out the old runner's unit. Its plist file stays in place for rollback.
