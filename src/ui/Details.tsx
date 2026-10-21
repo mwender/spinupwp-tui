@@ -110,7 +110,7 @@ export const SERVER_CONTROL: ActionGroup[] = [
   {
     title: "Manage",
     items: [
-      ["a", "Reboot / restart"],
+      ["a", "Restart / offline"],
       ["h", "Health"],
       ["N", "DNS"],
     ],

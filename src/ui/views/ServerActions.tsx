@@ -1,4 +1,5 @@
-// Server actions overlay — reboot the server or restart a single service.
+// Server actions overlay — reboot the server, restart a single service, or take
+// its sites offline.
 //
 // Opened with `a` on a selected server (Servers tab / Search). Like the PHP
 // upgrade overlay: pick an action → confirm → POST → poll the event. The actual
@@ -6,6 +7,9 @@
 // (Esc) leaves it running and the server's row keeps a spinner. When a reboot is
 // pending, we SSH-probe the *why* (Ubuntu's pending-restart packages) and show
 // it — labeled as OS context, not as SpinupWP's internal logic.
+//
+// The last row takes every site on the server offline (or brings back the ones
+// that took down) — see lib/offline.ts and ../offlineRun.tsx.
 
 import { useEffect, useState } from "react"
 import { useKeyboard } from "@opentui/react"
@@ -20,8 +24,12 @@ import { serverWebUrl } from "../../lib/spinupweb.ts"
 import { toast } from "../toast.ts"
 import type { RebootInfo } from "../../lib/ssh.ts"
 import type { ServerOpKind } from "../store.tsx"
+import { loadConfig } from "../../config.ts"
+import { isDevMode } from "../../dev/devMode.ts"
+import { loadOfflineState, takeServerOffline, bringServerOnline } from "../../lib/offline.ts"
+import { offlineDir, useOfflineRun, OfflineProgress } from "../offlineRun.tsx"
 
-type Phase = "pick" | "confirm" | "tracking" | "done" | "error"
+type Phase = "pick" | "confirm" | "tracking" | "done" | "error" | "offline"
 
 interface Action {
   kind: ServerOpKind
@@ -60,6 +68,7 @@ export function ServerActions() {
     rebootInfoErrors,
     loadRebootInfo,
     accountSlug,
+    refresh,
   } = store
 
   const rebootRequired = !!server?.reboot_required
@@ -68,6 +77,18 @@ export function ServerActions() {
   // Cursor starts on Reboot when one is pending, else on the first restart.
   const [index, setIndex] = useState(() => (server?.reboot_required ? 0 : 1))
   const [target, setTarget] = useState<Action | null>(null)
+  const { run, start } = useOfflineRun(refresh)
+
+  // The offline row sits after the service actions. It offers to bring sites
+  // back when SpinupTUI took this server offline, and to take it offline
+  // otherwise.
+  const OFFLINE_INDEX = ACTIONS.length
+  const offlineRecord = server ? loadOfflineState(offlineDir()).servers[String(server.id)] : undefined
+  const offlineMode: "offline" | "online" = offlineRecord ? "online" : "offline"
+  const liveCount = server ? sitesForServer(server.id).filter((s) => !s.disabled_at).length : 0
+  const offlineLabel = offlineRecord
+    ? `Bring ${offlineRecord.sites.length} site${offlineRecord.sites.length === 1 ? "" : "s"} back online`
+    : `Take all ${liveCount} site${liveCount === 1 ? "" : "s"} offline`
 
   const siteCount = server ? sitesForServer(server.id).length : 0
   const info = server ? rebootInfo.get(server.id) : undefined
@@ -90,6 +111,27 @@ export function ServerActions() {
           ? "error"
           : "tracking"
 
+  const startOffline = () => {
+    if (!server) return
+    setPhase("offline")
+    const cfg = loadConfig()
+    start(offlineMode, server.name, async (onProgress) => {
+      const o = { onProgress, kuma: !isDevMode(), dir: offlineDir() }
+      if (offlineMode === "offline") {
+        const r = await takeServerOffline(store.client, cfg, server, o)
+        return {
+          failed: r.failed.length > 0,
+          summary: `${r.disabled.length} taken offline${r.failed.length ? `, ${r.failed.length} failed` : ""}${r.kuma === "shielded" ? " · Kuma monitors in maintenance" : ""}`,
+        }
+      }
+      const r = await bringServerOnline(store.client, cfg, server.id, o)
+      return {
+        failed: r.failed.length > 0,
+        summary: `${r.enabled.length} back online${r.alreadyOnline.length ? `, ${r.alreadyOnline.length} already were` : ""}${r.failed.length ? `, ${r.failed.length} failed — run it again` : ""}`,
+      }
+    })
+  }
+
   const close = () => {
     if (server && progress?.status === "failed") clearServerOp(server.id)
     setServerActionsServer(null)
@@ -103,14 +145,18 @@ export function ServerActions() {
       switch (name) {
         case "up":
         case "k":
-          return setIndex((i) => moveSelection(i, -1, ACTIONS.length))
+          return setIndex((i) => moveSelection(i, -1, ACTIONS.length + 1))
         case "down":
         case "j":
-          return setIndex((i) => moveSelection(i, 1, ACTIONS.length))
+          return setIndex((i) => moveSelection(i, 1, ACTIONS.length + 1))
         case "return":
         case "right":
         case "l":
-          setTarget(ACTIONS[index])
+          if (index === OFFLINE_INDEX && offlineMode === "offline" && liveCount === 0) {
+            toast.error("Every site on this server is already offline.")
+            return
+          }
+          setTarget(index === OFFLINE_INDEX ? null : ACTIONS[index]!)
           setPhase("confirm")
           return
         case "w":
@@ -125,6 +171,7 @@ export function ServerActions() {
 
     if (dp === "confirm") {
       if (name === "y") {
+        if (!target) return startOffline()
         if (server && target) {
           startServerOp(server, target.kind, target.verb)
           setPhase("tracking")
@@ -222,7 +269,7 @@ export function ServerActions() {
                 <box style={{ height: 1 }} />
               </>
             )}
-            {ACTIONS.map((a, i) => {
+            {[...ACTIONS.map((a, i) => {
               const selected = i === index
               const recommended = a.kind === "reboot" && rebootRequired
               const fg = selected ? theme.text : recommended ? theme.warn : theme.textDim
@@ -236,11 +283,59 @@ export function ServerActions() {
                   {recommended && <text content="(recommended)" fg={selected ? theme.text : theme.warn} style={{ flexShrink: 0 }} />}
                 </box>
               )
-            })}
+            }),
+            <box key="offline" style={{ flexDirection: "row", height: 1, backgroundColor: index === OFFLINE_INDEX ? theme.selectedBg : undefined }}>
+              <text
+                content={(index === OFFLINE_INDEX ? "❯ " : "  ") + "⏻ " + offlineLabel}
+                fg={index === OFFLINE_INDEX ? theme.text : offlineRecord ? theme.warn : theme.textDim}
+                style={{ flexGrow: 1 }}
+                wrapMode="none"
+              />
+            </box>]}
           </box>
         </Panel>
       )
     }
+
+    if (dp === "confirm" && !target) {
+      const domains = offlineRecord
+        ? offlineRecord.sites.map((s) => s.domain)
+        : sitesForServer(server!.id).filter((s) => !s.disabled_at).map((s) => s.domain)
+      const skipped = offlineRecord ? 0 : siteCount - liveCount
+      return (
+        <Panel title=" Confirm " active>
+          <box style={{ flexDirection: "column", width: 66, paddingTop: 1, paddingBottom: 1 }}>
+            <box style={{ flexDirection: "row" }}>
+              <text content={offlineRecord ? "Bring sites back online on " : "Take every site offline on "} fg={theme.text} wrapMode="none" />
+              <text content={truncate(server!.name, 30)} fg={theme.accent} wrapMode="none" />
+              <text content="?" fg={theme.text} />
+            </box>
+            <box style={{ height: 1 }} />
+            {offlineRecord ? (
+              <text content="Re-enables only the sites taken offline here; anything disabled another way stays as it is." fg={theme.textDim} />
+            ) : (
+              <>
+                <text content="nginx stops answering for these domains: visitors can't connect and no request reaches PHP." fg={theme.warn} />
+                <text content="Files, databases and certificates are untouched; bring them back from this menu." fg={theme.textDim} />
+              </>
+            )}
+            <box style={{ height: 1 }} />
+            {domains.slice(0, 8).map((d) => (
+              <text key={d} content={`  • ${d}`} fg={theme.textFaint} wrapMode="none" />
+            ))}
+            {domains.length > 8 && <text content={`  • …${domains.length - 8} more`} fg={theme.textFaint} wrapMode="none" />}
+            {skipped > 0 && <text content={`  ${skipped} already offline — left alone`} fg={theme.textFaint} wrapMode="none" />}
+            {store.kumaConfigured && (
+              <text content={offlineRecord ? "Their Uptime Kuma maintenance window closes once all are back." : "Uptime Kuma monitors enter a maintenance window — no alert flood."} fg={theme.textFaint} wrapMode="none" />
+            )}
+            <box style={{ height: 1 }} />
+            <text content="Press y to confirm · ← to go back · Esc to cancel" fg={theme.textFaint} wrapMode="none" />
+          </box>
+        </Panel>
+      )
+    }
+
+    if (dp === "offline" && run) return <OfflineProgress run={run} plural />
 
     if (dp === "confirm") {
       const isReboot = target?.kind === "reboot"

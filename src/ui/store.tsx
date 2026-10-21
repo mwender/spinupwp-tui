@@ -569,6 +569,9 @@ interface StoreValue extends DataState {
   // poll it to completion in the background.
   startHttpsToggle: (site: Site) => void
   clearHttpsToggle: (siteId: number) => void
+  // The site whose take-offline overlay (O) is open, or null.
+  siteOfflineSite: Site | null
+  setSiteOfflineSite: (s: Site | null) => void
   // The site whose purge-cache overlay is open, or null.
   purgeCacheSite: Site | null
   setPurgeCacheSite: (s: Site | null) => void
@@ -1043,6 +1046,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [httpsToggleSite, setHttpsToggleSite] = useState<Site | null>(null)
   const [httpsToggles, setHttpsToggles] = useState<Map<number, HttpsToggleProgress>>(new Map())
   const [purgeCacheSite, setPurgeCacheSite] = useState<Site | null>(null)
+  const [siteOfflineSite, setSiteOfflineSite] = useState<Site | null>(null)
   const [purgeCacheProgress, setPurgeCacheProgress] = useState<Map<number, PurgeCacheProgress>>(new Map())
   const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
   const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
@@ -4418,6 +4422,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     clearHttpsToggle,
     purgeCacheSite,
     setPurgeCacheSite,
+    siteOfflineSite,
+    setSiteOfflineSite,
     purgeCacheProgress,
     startPurgeCache,
     clearPurgeCache,

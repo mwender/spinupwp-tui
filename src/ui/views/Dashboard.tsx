@@ -61,10 +61,12 @@ export function Dashboard({ rows }: { rows: number }) {
     for (const s of servers) {
       if (s.reboot_required) items.push({ text: `${s.name} — reboot required`, color: theme.warn })
       if (s.upgrade_required) items.push({ text: `${s.name} — SpinupWP upgrade required`, color: theme.warn })
+      const off = sites.filter((x) => x.server_id === s.id && x.disabled_at).length
+      if (off) items.push({ text: `${s.name} — ${off} site${off === 1 ? "" : "s"} offline`, color: theme.bad })
       if (isServerOsEol(s)) items.push({ text: `${s.name} — Ubuntu ${s.ubuntu_version} is EOL, clone to a newer server`, color: theme.bad })
     }
     return items
-  }, [servers, isServerOsEol])
+  }, [servers, sites, isServerOsEol])
 
   const diskPct = agg.total > 0 ? (agg.used / agg.total) * 100 : 0
   const listRows = Math.max(3, rows - 9) // minus the stat-card band (5), status bar, and panel chrome

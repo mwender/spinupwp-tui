@@ -45,6 +45,16 @@ export function createMockClient(): SpinupWPClientLike {
   let nextEventId = nextIdAfter(events, 9100)
   const eventPolls = new Map<number, number>()
 
+  function advance(e: Event): void {
+    if (e.status !== "running") return
+    const polls = (eventPolls.get(e.id) ?? 0) + 1
+    eventPolls.set(e.id, polls)
+    if (polls >= EVENT_POLLS_BEFORE_DONE) {
+      e.status = "deployed"
+      e.finished_at = new Date().toISOString()
+    }
+  }
+
   function pushEvent(name: string, serverId: number | null, output: string): number {
     const id = nextEventId++
     const now = new Date().toISOString()
@@ -230,20 +240,19 @@ export function createMockClient(): SpinupWPClientLike {
       return { event_id }
     },
 
+    // Reading an event (singly or in the list) counts as a poll, so callers
+    // that batch-check via listEvents see events finish too.
     async listEvents(maxPages) {
       const limit = (maxPages ?? 3) * 100
-      return events.slice(0, limit).map((e) => ({ ...e }))
+      const page = events.slice(0, limit)
+      for (const e of page) advance(e)
+      return page.map((e) => ({ ...e }))
     },
 
     async getEvent(id) {
       const found = events.find((e) => e.id === id)
       if (!found) throw new Error(`dev mode: no such event ${id}`)
-      const polls = (eventPolls.get(id) ?? 0) + 1
-      eventPolls.set(id, polls)
-      if (polls >= EVENT_POLLS_BEFORE_DONE && found.status === "running") {
-        found.status = "deployed"
-        found.finished_at = new Date().toISOString()
-      }
+      advance(found)
       return { ...found }
     },
 
@@ -264,6 +273,20 @@ export function createMockClient(): SpinupWPClientLike {
     async restartService(serverId, service: ServerService) {
       const server = servers.find((s) => s.id === serverId)
       const event_id = pushEvent(`server.service.${service}.restarted`, serverId, `${service} restarted on ${server?.name ?? serverId}`)
+      return { event_id }
+    },
+
+    async disableSite(siteId) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.disabled_at = new Date().toISOString()
+      const event_id = pushEvent("site.disabled", site?.server_id ?? null, `Disabling ${site?.domain ?? siteId}`)
+      return { event_id }
+    },
+
+    async enableSite(siteId) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.disabled_at = null
+      const event_id = pushEvent("site.enabled", site?.server_id ?? null, `Enabling ${site?.domain ?? siteId}`)
       return { event_id }
     },
   }

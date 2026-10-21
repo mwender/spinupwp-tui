@@ -463,11 +463,12 @@ export function siteGroups(isWordpress: boolean, isVanity: boolean): ActionGroup
   remote.push(["H", "Toggle HTTPS"])
   remote.push(["P", "Purge cache"])
   remote.push(["M", "Monitoring"])
+  remote.push(["O", "Take offline"])
   return [
     { title: "Open", items: [["o", "In browser"], ["w", "In SpinupWP"]] },
     { title: "Remote", items: remote },
     { title: "Local", items: local },
     ...(isVanity ? [{ title: "Vanity", items: [["R", "Refresh"]] as [string, string][] }] : []),
-    { title: "Server", items: [["a", "Reboot / restart"], ["h", "Health"]] },
+    { title: "Server", items: [["a", "Restart / offline"], ["h", "Health"]] },
   ]
 }

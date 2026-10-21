@@ -24,6 +24,7 @@ import { resolveSiblings } from "./lib/cliSiblings.ts"
 import { execSshCommand } from "./lib/sshExec.ts"
 import { runPullFiles, runPullDb } from "./lib/cliPull.ts"
 import { runBeacon, runModules } from "./lib/cliBeacon.ts"
+import { runOffline, runOnline } from "./lib/cliOffline.ts"
 
 const args = process.argv.slice(2)
 const positionals = args.filter((a) => !a.startsWith("-"))
@@ -90,6 +91,18 @@ Usage:
                        Import production's database into the linked local copy,
                        rewriting URLs. OVERWRITES your local database: needs
                        both --yes and "localSync": true in the config.
+  spinuptui offline    List servers with sites offline (--json)
+  spinuptui offline <server>… | --all --yes
+                       Take every site on those servers offline: nginx stops
+                       answering, so no request reaches PHP. Files, databases
+                       and certificates are untouched. Without --yes, prints
+                       the plan and changes nothing.
+  spinuptui offline --site <domain> [--server <name>] --yes
+                       Just that site. Its server's other sites (and PHP) stay
+                       up, so this protects the site, not the server.
+  spinuptui online <server>… | --all | --site <domain> --yes
+                       Bring back exactly the sites \`offline\` took down.
+                       Servers are matched by exact name, IP or id.
   spinuptui beacon setup  Guided Telegram setup: make a bot, find your chat,
                        send a test (interactive; also in the app's Modules tab, 6)
   spinuptui beacon send [--to <channel>] [--silent] [<message> | -]
@@ -282,6 +295,14 @@ if (command === "pull") {
     if (result.remedy) console.error(result.remedy)
   }
   process.exit(result.ok ? 0 : 1)
+}
+
+if (command === "offline") {
+  process.exit(await runOffline(args.slice(args.indexOf("offline") + 1)))
+}
+
+if (command === "online") {
+  process.exit(await runOnline(args.slice(args.indexOf("online") + 1)))
 }
 
 if (command === "beacon") {

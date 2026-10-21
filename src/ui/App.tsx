@@ -19,6 +19,7 @@ import { SiteUpdate } from "./views/SiteUpdate.tsx"
 import { BulkWpUpdate } from "./views/BulkWpUpdate.tsx"
 import { HttpsToggle } from "./views/HttpsToggle.tsx"
 import { PurgeCache } from "./views/PurgeCache.tsx"
+import { SiteOffline } from "./views/SiteOffline.tsx"
 import { ReleaseNotes } from "./views/ReleaseNotes.tsx"
 import { GrantKey } from "./views/GrantKey.tsx"
 import { SudoConnect } from "./views/SudoConnect.tsx"
@@ -72,6 +73,7 @@ export function App() {
     store.bulkWpGroup !== null ||
     store.httpsToggleSite !== null ||
     store.purgeCacheSite !== null ||
+    store.siteOfflineSite !== null ||
     store.grantKeySite !== null ||
     store.sudoConnectServer !== null ||
     store.dbBackupSite !== null ||
@@ -148,6 +150,9 @@ export function App() {
 
     // The purge-cache overlay owns the keyboard while open.
     if (store.purgeCacheSite) return
+
+    // The take-site-offline overlay owns the keyboard while open.
+    if (store.siteOfflineSite) return
 
     // The grant-SSH-key overlay owns the keyboard while open.
     if (store.grantKeySite) return
@@ -274,6 +279,7 @@ export function App() {
       {store.bulkWpGroup && <BulkWpUpdate />}
       {store.httpsToggleSite && <HttpsToggle />}
       {store.purgeCacheSite && <PurgeCache />}
+      {store.siteOfflineSite && <SiteOffline />}
       {store.grantKeySite && <GrantKey />}
       {store.sudoConnectServer && <SudoConnect />}
       {store.dbBackupSite && <DbBackup />}
