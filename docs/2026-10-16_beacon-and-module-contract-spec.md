@@ -151,7 +151,7 @@ Today several scripts outside this repo each carry their own Telegram call again
 
 Every switched sender uses the same three-way branch:
 
-1. **Gate on the version.** Run `spinuptui --version` and check its `X.Y.Z` part is at least `1.2.0`. Strip any pre-release suffix first: `sort -V` orders `1.2.0` before `1.2.0-alpha.1`, the reverse of SemVer, so comparing full strings would refuse the stable release. If it isn't, or `spinuptui` isn't on the PATH, use the old direct send. Cache the answer for the run, not across runs, so an upgrade is picked up on the next tick.
+1. **Check that Beacon is there.** Run `spinuptui --help` and look for `beacon send`. If it isn't listed, or `spinuptui` isn't on the PATH, use the old direct send. Cache the answer for the run, not across runs, so an upgrade is picked up on the next tick. (Until 2026-10-21 this step compared the version against `1.2.0`. That broke when stable 1.2.0 shipped without Beacon; see "Release plan".)
 2. **Send through Beacon.** Exit `0` means done.
 3. **Fall back only when Beacon didn't try.** Exit `1` (not configured, usage error) means nothing was sent, so the old direct send runs. Exit `2` means Beacon tried and Telegram refused or was unreachable. Retrying the same API from the old path would only duplicate a partial multi-part send, so the caller logs it and moves on, as it does today.
 
@@ -177,6 +177,8 @@ Decided 2026-10-16: Beacon on its own is a useful tool, but the public story lan
 - **Stable 1.2.0 ships once Sentinel is in**, alongside the landing page.
 - **The update check understands pre-releases.** Someone on `1.2.0-alpha.3` is told when stable `1.2.0` ships, because a release outranks its own pre-releases. GitHub's "latest release" endpoint skips pre-releases, so alpha users aren't told about newer alphas. That's acceptable for a channel people opted into by hand.
 - **The cost:** until stable 1.2.0, `main` carries unreleased module work. A fix for 1.1.x users is cut from a short-lived branch off the last stable tag, and merged forward.
+
+**Renumbered 2026-10-21.** A critical PHP advisory needed a stable release before the modules were ready, so stable **1.2.0** shipped a different feature (taking sites offline) from a branch off `v1.1.2`, without Beacon or the Modules tab. The modules continue as **`1.3.0-alpha.N`**, and their stable release is **1.3.0**. `1.2.0-alpha.1` stays published but is superseded. Scripts that gated Beacon on `>= 1.2.0` now check `spinuptui --help` instead (step 1 of "The caller pattern").
 
 ## Open questions
 

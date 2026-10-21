@@ -11,12 +11,14 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-21
+
 ### Added
 - **Take a server's sites offline, and bring them back.** For a vulnerability you can't patch yet: `spinuptui offline <server>… --yes` (or **Take all sites offline** in the `a` menu) disables every site on the server through SpinupWP, so nginx stops answering for them and no request reaches PHP. Files, databases and certificates are untouched. `spinuptui online <server>… --yes` re-enables exactly the sites it took down, never one disabled for another reason, and a re-run finishes anything that failed. Without `--yes` both print the plan. One site at a time works too: `O` on a site, or `--site <domain>` on either command; the confirmation says how many other sites on its server stay up, since PHP is shared. Uptime Kuma monitors for those sites sit in a maintenance window until they're back, and offline servers are flagged `⏻ off` in the Servers list and on the Overview. See [docs/taking-sites-offline.md](docs/taking-sites-offline.md).
 
 ## [1.2.0-alpha.1] - 2026-10-17
 
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.1.2. The stable 1.2.0 will roll these notes up with the next modules.
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.1.2. The modules' stable release is 1.3.0, which will roll these notes up with the next modules; 1.2.0 shipped without them.
 
 ### Added
 - **Beacon: `spinuptui beacon send` pages you on Telegram.** One command any script, cron job or agent can use instead of its own `curl` to the Telegram API. Messages go out as plain text with link previews off; anything over Telegram's 4096-character limit is split into numbered parts instead of being rejected; sends are retried (honoring Telegram's rate-limit hints) and logged. Exit codes tell a caller what happened: `0` delivered, `1` not configured (nothing attempted), `2` delivery failed. No Telegram bot yet? `spinuptui beacon setup` walks you through making one with @BotFather, checks the token, and finds your chat by itself once you message the bot. No digging for a chat ID. It saves nothing until a test message has arrived. Scripts can use `spinuptui beacon add telegram <name> --env-file <path>` instead. `beacon test`, `beacon status` and `beacon remove` round it out. See [docs/beacon.md](docs/beacon.md).
@@ -1500,7 +1502,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0-alpha.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0
 [1.2.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0-alpha.1
 [1.1.2]: https://github.com/mwender/spinupwp-tui/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.0...v1.1.1
