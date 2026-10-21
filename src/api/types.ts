@@ -120,6 +120,9 @@ export interface Site {
   } | null
   basic_auth?: { enabled: boolean; username?: string | null } | null
   subdomain?: { enabled: boolean; url: string | null } | null
+  // Set while the site is disabled (POST /sites/{id}/disable): nginx stops
+  // serving every domain on it, so no request reaches PHP. Null when live.
+  disabled_at?: string | null
   created_at: string
   status: string
 }

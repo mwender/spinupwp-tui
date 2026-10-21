@@ -266,5 +266,19 @@ export function createMockClient(): SpinupWPClientLike {
       const event_id = pushEvent(`server.service.${service}.restarted`, serverId, `${service} restarted on ${server?.name ?? serverId}`)
       return { event_id }
     },
+
+    async disableSite(siteId) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.disabled_at = new Date().toISOString()
+      const event_id = pushEvent("site.disabled", site?.server_id ?? null, `Disabling ${site?.domain ?? siteId}`)
+      return { event_id }
+    },
+
+    async enableSite(siteId) {
+      const site = sites.find((s) => s.id === siteId)
+      if (site) site.disabled_at = null
+      const event_id = pushEvent("site.enabled", site?.server_id ?? null, `Enabling ${site?.domain ?? siteId}`)
+      return { event_id }
+    },
   }
 }

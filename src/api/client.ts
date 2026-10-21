@@ -109,6 +109,8 @@ export interface SpinupWPClientLike {
   upgradeSitePhp(siteId: number, phpVersion: string): Promise<{ event_id: number }>
   rebootServer(serverId: number): Promise<{ event_id: number }>
   restartService(serverId: number, service: ServerService): Promise<{ event_id: number }>
+  disableSite(siteId: number): Promise<{ event_id: number }>
+  enableSite(siteId: number): Promise<{ event_id: number }>
 }
 
 const MAX_PAGES = 100 // hard safety cap when auto-paginating
@@ -481,5 +483,18 @@ export class SpinupWPClient implements SpinupWPClientLike {
   // returns an event_id to poll via getEvent().
   restartService(serverId: number, service: ServerService): Promise<{ event_id: number }> {
     return this.mutate<{ event_id: number }>(`/servers/${serverId}/services/${service}/restart`, "POST")
+  }
+
+  // Take a site offline without touching its files, database or certificate.
+  // Verified on a test box: nginx drops the site's server block, so port 80
+  // returns an empty reply and 443 fails the TLS handshake — no request reaches
+  // PHP. The site's PHP-FPM pool and cron stay in place. Async → event_id.
+  disableSite(siteId: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/disable`, "POST")
+  }
+
+  // Undo disableSite: the site serves traffic again exactly as before.
+  enableSite(siteId: number): Promise<{ event_id: number }> {
+    return this.mutate<{ event_id: number }>(`/sites/${siteId}/enable`, "POST")
   }
 }
