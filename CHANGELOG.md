@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.3.0-alpha.1] - 2026-10-21
+
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.2.0. It continues `1.2.0-alpha.1` under a new number, because stable 1.2.0 shipped without the modules: it has Beacon and the Modules tab (see [1.2.0-alpha.1]) plus everything in [1.2.0]. The stable 1.3.0 will roll these notes up with the next modules.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added
@@ -1502,7 +1506,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.1...HEAD
+[1.3.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...v1.3.0-alpha.1
 [1.2.0]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0
 [1.2.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0-alpha.1
 [1.1.2]: https://github.com/mwender/spinupwp-tui/compare/v1.1.1...v1.1.2
