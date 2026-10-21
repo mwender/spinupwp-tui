@@ -11,6 +11,8 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-21
+
 ### Added
 - **Take a server's sites offline, and bring them back.** For a vulnerability you can't patch yet: `spinuptui offline <server>… --yes` (or **Take all sites offline** in the `a` menu) disables every site on the server through SpinupWP, so nginx stops answering for them and no request reaches PHP. Files, databases and certificates are untouched. `spinuptui online <server>… --yes` re-enables exactly the sites it took down, never one disabled for another reason, and a re-run finishes anything that failed. Without `--yes` both print the plan. One site at a time works too: `O` on a site, or `--site <domain>` on either command; the confirmation says how many other sites on its server stay up, since PHP is shared. Uptime Kuma monitors for those sites sit in a maintenance window until they're back, and offline servers are flagged `⏻ off` in the Servers list and on the Overview. See [docs/taking-sites-offline.md](docs/taking-sites-offline.md).
 
@@ -1488,7 +1490,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/mwender/spinupwp-tui/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/mwender/spinupwp-tui/compare/v1.0.0...v1.1.0
