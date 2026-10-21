@@ -68,16 +68,15 @@ Scripts can branch on these:
 
 ### Calling Beacon from existing scripts
 
-`spinuptui` versions older than Beacon don't know the `beacon` subcommand and will try to open the dashboard instead of failing. A script that might run against an older install should check the version first. Compare only the `X.Y.Z` part: `sort -V` orders `1.2.0` before `1.2.0-alpha.1`, the reverse of SemVer, and every 1.2.0 build (pre-release or not) has Beacon.
+`spinuptui` versions without Beacon don't know the `beacon` subcommand and will try to open the dashboard instead of failing. A script that might run against one of them should ask first: `spinuptui --help` lists `beacon send` only when Beacon is there. Check that rather than the version number, which doesn't tell you: the stable 1.2.0 release has no Beacon, while `1.2.0-alpha.1` does.
 
 ```sh
 notify() {
-  v=$(spinuptui --version 2>/dev/null | cut -d- -f1)
-  if [ -n "$v" ] && printf '%s\n%s\n' "1.2.0" "$v" | sort -V -C; then
+  if spinuptui --help 2>/dev/null </dev/null | grep -q 'beacon send'; then
     spinuptui beacon send -- "$1"
     case $? in 0|2) return ;; esac   # 2 = tried and failed: don't double-send
   fi
-  legacy_send "$1"                    # not installed, too old, or not configured
+  legacy_send "$1"                    # not installed, no Beacon, or not configured
 }
 ```
 
