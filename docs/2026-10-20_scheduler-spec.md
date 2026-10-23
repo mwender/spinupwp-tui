@@ -13,7 +13,8 @@ Promoted from `docs/2026-10-15_ideas.md` (idea 1's Scheduler section and idea 4'
 **In this round:**
 
 - The dispatcher: `spinuptui scheduler tick`, run every 5 minutes by one LaunchAgent, installed and removed with `scheduler install|uninstall --plan|--apply`.
-- Two job sources: jobs modules declare (`ScheduledJobDecl`), and user follow-ups as Markdown files, either in Scheduler's own state directory or in a git repository the user chooses.
+- Two job sources: jobs modules declare (`ScheduledJobDecl`), and user follow-ups as Markdown files, in `~/SpinupTUI/scheduler/` or in a git repository the user chooses.
+- A per-job missed-slot policy (`late:`), and one station per git source (a claim recorded in the repository).
 - Four job kinds: `spinuptui` (run a SpinupTUI command and report), `script`, and `agent` with two adapters (Claude Code, Codex).
 - Reports on disk, one Beacon message per run, sent in-process.
 - The CLI for queuing and inspecting jobs, Scheduler on the Modules screen, and its `status()`.
@@ -68,8 +69,8 @@ On Linux, `--plan` prints a systemd user service and timer (`OnCalendar=*:0/5`, 
 
 1. **Takes the lock.** An exclusive, non-blocking `flock` on `<stateDir>/tick.lock`. A tick that finds a previous one still running (a long agent job) exits at once.
 2. **Runs due module jobs** (below).
-3. **For each user source**: takes that source's lock, pulls it if it's a git repository, runs each due job in turn, commits and pushes `runs/`.
-4. **Records itself** in `<stateDir>/last-tick.json` (`{ at, via, ran, errors }`, replaced atomically) on every tick, and appends a line to `<stateDir>/tick.log` (JSON lines, rotated at 1 MB) when anything ran or failed. `status()` reads the first; the second is history.
+3. **For each user source**: takes that source's lock and, for a git source, pulls it and checks the station claim (skipping a source another station runs, claiming one nobody does). Then it runs each due job in turn, applying its `late:` policy, and commits and pushes `runs/`.
+4. **Records itself** in `<stateDir>/last-tick.json` (`{ at, via, ran, errors }`, replaced atomically) on every dispatcher tick (a manual `run` or `tick --here` doesn't count, so it can't hide a stopped dispatcher), and appends a line to `<stateDir>/tick.log` (JSON lines, rotated at 1 MB) when anything ran or failed. `status()` reads the first; the second is history.
 
 Jobs run one at a time. Fleet work is mostly SSH and API calls against the same rate limit, so parallel jobs would mostly contend.
 
@@ -109,11 +110,20 @@ allow: Read,Grep,Glob             # claude: --allowedTools
 add_dirs: ~/Projects/other        # claude: extra readable directories
 model:                            # claude: optional model
 sandbox: read-only                # codex: read-only (default) | workspace-write | danger-full-access
+late: run                         # run (default) | skip | a grace window like 2h (see below)
 ---
 incidents example.com --hours 48
 ```
 
 **Scheduling rules** (also unchanged): a one-shot job runs once, at or after `when:`. A recurring job runs the latest slot it missed, once, and never a slot earlier than `created:`. Nothing runs after `expires:`, and every job must have one, so a forgotten job stops on its own. Times are the station's local time.
+
+**Late slots: `late:`.** Catch-up suits most follow-ups: a "verify at 08:00" check that runs at 14:00 after a power cut is still useful. Some jobs lose their point once late ("post the numbers before the client's 9am meeting"), so each job can choose:
+
+- `late: run` (the default): a missed slot runs once, whenever the station gets to it.
+- `late: skip`: the slot runs only if the station reaches it within 15 minutes (three ticks); otherwise it's skipped.
+- `late: 2h` (any `Nm` or `Nh`): the same, with that grace window.
+
+A skipped slot is recorded in `state.json` (`last_status: skipped`, `last_scheduled` set to the slot, no report, `runs` unchanged) and **paged**, with the slot and the time the station reached it. A silent skip would look exactly like "nothing to report". The policy applies to fixed-time slots (`when:` and calendar `every:`); an interval job's slot is always "now", so it is never late. `scheduler run` ignores it, since running now is the point. The old runner ignores headers it doesn't know, so during a cutover overlap it would run a late slot that Scheduler skips; that window is short and the outcome is no worse than today.
 
 **Write the body for a reader with no context.** A run starts cold. That's said in `add`'s help and in the agent preamble.
 
@@ -135,14 +145,44 @@ incidents example.com --hours 48
 
 A **source** is a directory holding `jobs/` and `runs/`.
 
-- **`local`** is built in: `<stateDir>` itself (`<configDir>/modules/scheduler/`). Queuing works with nothing set up.
-- **Named sources** are directories the user adds with `scheduler source add <name> <path>`. When the directory is a git repository, the tick pulls it (`git pull --rebase --autostash`) before reading `jobs/` and commits and pushes `runs/` afterwards; a failed push is retried on the next tick. This is the prior art's best idea, kept whole: **queue from any machine** by committing a job file, and read results with `git pull`. Authors write `jobs/`; only the station writes `runs/`.
+- **`local`** is built in: **`~/SpinupTUI/scheduler/`**. Queuing works with nothing set up.
+- **Named sources** are directories the user adds with `scheduler source add <name> <path>`, such as an existing job-runner repository.
 
-This is also the public-framework/private-data split. The engine is in SpinupTUI; the jobs, which name client sites and servers, live in a repository the user owns and SpinupTUI never sees on GitHub.
+**When a source is inside a git repository** (its own `.git`, or one in a parent directory), the tick pulls it (`git pull --rebase --autostash`) before reading `jobs/`, and commits and pushes `runs/` afterwards; a failed push is retried on the next tick. This is the prior art's best idea, kept whole: **queue from any machine** by committing a job file, and read results with `git pull`. Authors write `jobs/`; only the station writes `runs/`. The parent-directory rule is what makes `~/SpinupTUI/` itself the natural repository: `cd ~/SpinupTUI && git init`, add a remote, push, and the `local` source becomes a git source with no other change.
+
+This is also the public-framework/private-data split. The engine is in SpinupTUI; the jobs, which name client sites and servers, live in a folder or repository the user owns and SpinupTUI never sees on GitHub.
 
 `add`, `cancel`, `list` and `show` take `--source <name>`. The default is `scheduler.defaultSource` if set (`source add --default`), else `local`. In a git source, `add` and `cancel` commit and push, as the prior art does.
 
-**Each source has its own lock**, an `flock` on `<source>/.state/dispatch.lock`. That's the same file and the same lock call the existing runner uses, which is what makes the cutover below safe.
+**Each source has its own lock.** For a named source it's an `flock` on `<source>/.state/dispatch.lock`: the same file and the same lock call the existing runner uses, which is what makes the cutover below safe. `source add` lists `.state/` in the clone's `.git/info/exclude`, so the lock never shows up as an untracked file. The `local` source's lock lives in the state directory, so nothing but jobs and reports appears in `~/SpinupTUI/`.
+
+### Where files live: your work, and machine state
+
+Modules write two different kinds of file, and the contract now says where each goes:
+
+- **Your work** goes in **`~/SpinupTUI/<module>/`**: Scheduler's jobs and reports today, Sentinel's incident write-ups and Samurai's proposals later. It's visible in Finder and `ls ~`, easy to back up, and easy to turn into a git repository. It's deliberately not `~/Documents`, which many Macs sync to iCloud, and a second syncer writing inside a `.git` corrupts it. The folder is created on first use, never at install, and `SPINUPTUI_HOME` (or `homeDir` in `config.json`) moves it.
+- **Machine state** stays in `<configDir>/modules/<module>/`: locks, `last-tick.json`, `tick.log`, the module jobs' state, `launchd.log`. Nobody needs to open these, and they shouldn't sit next to work that might be committed and shared.
+
+Reports can contain whatever a job printed. Once `~/SpinupTUI/` is a git repository, that's committed, so keeping secrets out of job output is the author's job, as it is in the prior art. `add`'s help says so.
+
+### One station per source
+
+**The hazard.** Queuing from a laptop means the laptop has a clone of the jobs. The only difference between "a clone I queue from" and "a clone that runs jobs" is whether that machine has a dispatcher installed, which is one keypress on the Modules screen. With two dispatchers ticking clones of the same repository, both pull, both see a job as due, and both run it. The source lock can't help: it's a file on each machine's own disk.
+
+**The claim.** A git source records which station runs it, in the repository itself: `<source>/.scheduler/station`, holding the station's short hostname.
+
+- The first dispatcher tick on a source that has no claim writes one, commits and pushes it ("station: <host> runs <source>").
+- A tick that finds another station's name skips that source, and `status` says so: "followups is run by <host>; this machine only queues. To move it here: `spinuptui scheduler source claim followups`."
+- Two stations claiming in the same minute are settled by git: one push wins, the other is rejected, pulls, sees the winner's claim, discards its own commit and backs off.
+- Only the dispatcher claims. `scheduler add`, `list` and a manual `run` never do, so queuing from a laptop never takes a source over. A manual `run` on a machine that doesn't hold the claim works, with a warning, since it's deliberate.
+
+**Moving and releasing.**
+
+- `scheduler source claim <name>` takes a source over, from this machine, now. The old station sees the new name on its next pull and stops.
+- `scheduler source release <name>` gives it up: the claim file is removed (committed and pushed), and this machine is marked queue-only for that source (`scheduler.sources.<name>.queueOnly` in `config.json`), so its next tick doesn't simply re-claim it. The next other station to tick claims it. Retiring a machine is releasing each of its sources; consolidating several stations onto one is claiming each source there.
+- `claim` clears `queueOnly` again.
+
+A non-git source isn't shared between machines, so it has no claim. The station name is the short hostname; two stations with the same hostname would both believe they hold the claim, which `status` can't detect. That's noted below as an open question.
 
 ### Reports and state
 
@@ -169,6 +209,8 @@ spinuptui scheduler run <id> [--source <name>]           run now, on this machin
 spinuptui scheduler validate [--source <name>]
 spinuptui scheduler source add <name> <path> [--default]
 spinuptui scheduler source remove <name>
+spinuptui scheduler source claim <name>                   run this git source from this station
+spinuptui scheduler source release <name>                 stop running it here; another station takes it
 spinuptui scheduler tick [--here]
 spinuptui scheduler install | uninstall --plan | --apply
 ```
@@ -181,7 +223,7 @@ As with every module: one JSON result on stdout with `--json`, progress on stder
 
 - **dispatcher**: installed or not (from `scheduler.dispatcher` and the unit file still existing).
 - **last tick**: its age. Fine under 15 minutes (three missed ticks). Older than that with a dispatcher installed is `degraded`, the one-question answer to "is the station alive?".
-- **sources**: each readable, and for git sources, whether the last pull and push worked.
+- **sources**: each readable; for git sources, which station holds the claim, and whether this machine runs it or only queues.
 - **jobs**: how many are active, and any whose last run failed.
 - **Beacon**: whether digests can be delivered.
 
@@ -212,11 +254,12 @@ Scheduler moves from `UPCOMING_MODULES` to `MODULES`. Its detail pane shows the 
 
 ## Testing
 
-- **Unit tests** (`bun test`): schedule parsing, due-slot computation (including catch-up, `created` and `expires`), job-file parsing and validation, argument splitting, the launchd plist and systemd unit text, and the module-job change-only paging.
-- **Live, isolated**: a scratch `XDG_CONFIG_HOME`, `SPINUPTUI_SCHEDULER_LABEL=com.spinuptui.scheduler-devtest`, and `--bin` pointing at a wrapper that runs this checkout. Install, watch the proving tick, queue a `script` and a `spinuptui` job with `--when now`, check their reports and state, hold a source's lock from another process and confirm the tick skips it, then uninstall and confirm the unit is gone. The real config and the real dispatcher units are never touched.
+- **Unit tests** (`bun test`): schedule parsing, due-slot computation (including catch-up, `created`, `expires` and `late:`), the station claim against real git clones of a scratch repository (first claim, a rival's claim, the push race, release), job-file parsing and validation, argument splitting, the launchd plist and systemd unit text, and the module-job change-only paging.
+- **Live, isolated**: a scratch `XDG_CONFIG_HOME` and `SPINUPTUI_HOME`, `SPINUPTUI_SCHEDULER_LABEL=com.spinuptui.scheduler-devtest`, and `--bin` pointing at a wrapper that runs this checkout. Install, watch the proving tick, queue a `script` and a `spinuptui` job with `--when now`, check their reports and state, hold a source's lock from another process and confirm the tick skips it, then uninstall and confirm the unit is gone. The real config and the real dispatcher units are never touched.
 
 ## Open questions
 
-- **Missed-slot policy per job.** Catch-up runs the latest missed slot once. A "verify at 08:00" check run at 14:00 after a power cut is still useful; a "post the numbers before the client's 9am meeting" job may not be. A `late:` header (`run` or `skip`) is the obvious addition if a job ever needs it.
-- **Which station runs a git source's jobs.** Today it's whichever machine installed a dispatcher and added the source. With two stations, both would run the same jobs, serialized only if they share a filesystem, which they wouldn't. A `station:` header, or a station claim recorded in the source, is a station-setup question.
-- **Job output that contains secrets.** Reports are committed to the user's own repository. A `spinuptui` job's JSON can include paths and hostnames, never tokens, but a `script` job can print anything. That's the author's responsibility, as it is in the prior art; worth a line in `add`'s help.
+- **Two stations with the same hostname** would both believe they hold a source's claim. A machine id stored next to the hostname would fix it; it's unlikely enough to wait for station setup, which will name stations explicitly anyway.
+- **Showing the claim elsewhere.** The claim is a ready-made record of where Scheduler runs, so a laptop's Modules screen can say "Scheduler runs on <host>" instead of offering to install a second clock. That view belongs with station setup.
+
+Resolved 2026-10-23: the missed-slot policy (`late:`), which station runs a git source (the claim), and where reports live (`~/SpinupTUI/`, with the output-secrets caveat in `add`'s help).

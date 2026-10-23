@@ -10,12 +10,16 @@
 //   module, written only by deliberate setup commands.
 // - Anything a module writes while running goes in its state directory, never
 //   config.json (whose writes are neither atomic nor locked).
+// - The user's work (jobs, reports, write-ups — anything a person reads, keeps
+//   or shares) goes in its work directory, ~/SpinupTUI/<id>/, not next to the
+//   tokens in the hidden config directory.
 // - Recurring work is declared in `jobs` for Scheduler to run; a module never
 //   installs an OS scheduler unit of its own.
 // - status() is computed on demand, is cheap, and never sends anything.
 
+import { homedir } from "node:os"
 import { join } from "node:path"
-import { configDir } from "../config.ts"
+import { configDir, loadConfig } from "../config.ts"
 
 export type ModuleId = "beacon" | "scheduler" | "sentinel" | "samurai"
 
@@ -48,13 +52,30 @@ export interface ModuleDefinition {
   summary: string
   dependsOn: ModuleId[]
   configKey: string
+  // Machine state: locks, logs, high-water marks.
   stateDir(): string
+  // The user's work. Created on first use, never at install.
+  workDir(): string
   jobs: ScheduledJobDecl[]
   status(): Promise<ModuleStatus>
 }
 
 export function moduleStateDir(id: ModuleId): string {
   return join(configDir(), "modules", id)
+}
+
+const expandHome = (p: string) => (p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p)
+
+// ~/SpinupTUI by default: visible and easy to back up or turn into a git
+// repository. Deliberately not ~/Documents, which iCloud may sync (a second
+// syncer writing inside a .git corrupts it).
+export function spinuptuiHome(): string {
+  const p = process.env.SPINUPTUI_HOME?.trim() || loadConfig().homeDir || join(homedir(), "SpinupTUI")
+  return expandHome(p)
+}
+
+export function moduleWorkDir(id: ModuleId): string {
+  return join(spinuptuiHome(), id)
 }
 
 // A module that hasn't shipped yet: just enough to draw its card.

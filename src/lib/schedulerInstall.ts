@@ -9,6 +9,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { loadConfig, saveConfig } from "../config.ts"
 import { readLastTick, schedulerStateDir } from "./schedulerJobs.ts"
+import { moduleWorkDir } from "../modules/contract.ts"
 import { spawn } from "./spawn.ts"
 
 export const DEFAULT_LABEL = "com.spinuptui.scheduler"
@@ -156,6 +157,7 @@ export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
     SPINUPTUI_SCHEDULER_DISPATCHER: "1",
   }
   if (process.env.XDG_CONFIG_HOME) env.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME
+  if (process.env.SPINUPTUI_HOME) env.SPINUPTUI_HOME = process.env.SPINUPTUI_HOME
   const label = schedulerLabel()
   // One clock per machine: a dispatcher installed under another label would
   // tick the same jobs alongside this one.
@@ -168,7 +170,7 @@ export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
       remedy: "Remove it first: spinuptui scheduler uninstall --apply",
     }
   }
-  const notes: string[] = []
+  const notes: string[] = [`Jobs and reports live in ${moduleWorkDir("scheduler")} (created on first use).`]
   if (checkout) notes.push(`--bin points into a checkout (${checkout}); fine for testing, never for a station.`)
   const missing = TOOLS.filter((t) => !Bun.which(t, { PATH: env.PATH }))
   if (missing.length) notes.push(`Not found, so jobs that need them will fail: ${missing.join(", ")}.`)

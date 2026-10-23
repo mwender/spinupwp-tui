@@ -8,9 +8,9 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import type { AppConfig } from "../config.ts"
-import { moduleStateDir } from "../modules/contract.ts"
+import { moduleStateDir, moduleWorkDir } from "../modules/contract.ts"
 import { parseDate, parseEvery, parseWhen, type ScheduleState } from "./schedule.ts"
 
 export const KINDS = ["spinuptui", "script", "agent", "codex"] as const
@@ -25,7 +25,12 @@ export const DEFAULT_TIMEOUT_MIN = 30
 export interface Source {
   name: string
   path: string
+  // The git repository the source is in (its own .git or a parent's), if any.
+  // `~/SpinupTUI/` made into a repository turns `local` into a git source.
+  gitRoot: string | null
   git: boolean
+  // This machine queues to it but never claims or runs it (`source release`).
+  queueOnly: boolean
 }
 
 export const LOCAL_SOURCE = "local"
@@ -38,12 +43,28 @@ export function expandHome(p: string): string {
   return p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p
 }
 
-export function listSources(cfg: AppConfig): Source[] {
-  const out: Source[] = [{ name: LOCAL_SOURCE, path: schedulerStateDir(), git: false }]
-  for (const [name, s] of Object.entries(cfg.scheduler?.sources ?? {})) {
-    const path = expandHome(s.path)
-    out.push({ name, path, git: existsSync(join(path, ".git")) })
+// The nearest directory at or above `path` holding .git, stopping below the
+// home directory and the filesystem root (a dotfiles repo in ~ shouldn't turn
+// every folder into a git source).
+export function gitRootOf(path: string): string | null {
+  const home = homedir()
+  let dir = path
+  for (;;) {
+    if (existsSync(join(dir, ".git"))) return dir
+    const up = dirname(dir)
+    if (up === dir || up === home || dir === home) return null
+    dir = up
   }
+}
+
+function makeSource(cfg: AppConfig, name: string, path: string): Source {
+  const gitRoot = gitRootOf(path)
+  return { name, path, gitRoot, git: gitRoot !== null, queueOnly: (cfg.scheduler?.queueOnly ?? []).includes(name) }
+}
+
+export function listSources(cfg: AppConfig): Source[] {
+  const out: Source[] = [makeSource(cfg, LOCAL_SOURCE, moduleWorkDir("scheduler"))]
+  for (const [name, s] of Object.entries(cfg.scheduler?.sources ?? {})) out.push(makeSource(cfg, name, expandHome(s.path)))
   return out
 }
 
@@ -59,7 +80,13 @@ export function findSource(cfg: AppConfig, name: string | null | undefined): Sou
 
 export const jobsDir = (s: Source) => join(s.path, "jobs")
 export const runsDir = (s: Source) => join(s.path, "runs")
-export const sourceLockPath = (s: Source) => join(s.path, ".state", "dispatch.lock")
+// A named source's lock is the existing job runner's own lock file, so the two
+// serialize during a cutover. The local source's lives with the machine state,
+// keeping ~/SpinupTUI/ to jobs and reports.
+export const sourceLockPath = (s: Source) =>
+  s.name === LOCAL_SOURCE ? join(schedulerStateDir(), "local-source.lock") : join(s.path, ".state", "dispatch.lock")
+// Which station runs this (git) source: one short hostname.
+export const claimPath = (s: Source) => join(s.path, ".scheduler", "station")
 
 // ---- job files ------------------------------------------------------------------
 
@@ -107,6 +134,7 @@ export function validateJob(header: JobHeader, body: string, filename?: string):
   }
   if (header.timeout && !/^\d+$/.test(header.timeout)) problems.push("timeout: is whole minutes")
   if (header.notify && !["beacon", "telegram", "none"].includes(header.notify)) problems.push("notify: is beacon or none")
+  if (header.late && lateGraceMs(header.late) === undefined) problems.push("late: is run, skip, or a grace window like 30m or 2h")
   if (!body) problems.push("the body (command, prompt or script) is empty")
   if (header.kind === "spinuptui" && body) {
     try {
@@ -137,6 +165,18 @@ export function loadJobs(source: Source): Job[] {
 
 export function renderJob(header: [string, string][], body: string): string {
   return "---\n" + header.map(([k, v]) => `${k}: ${v}\n`).join("") + "---\n" + body.trim() + "\n"
+}
+
+// `late:` as a grace window in ms: null = run whenever reached (the default),
+// undefined = not a valid value.
+export const LATE_SKIP_GRACE_MS = 15 * 60_000
+export function lateGraceMs(value: string | undefined): number | null | undefined {
+  const v = (value ?? "run").trim().toLowerCase()
+  if (v === "run") return null
+  if (v === "skip") return LATE_SKIP_GRACE_MS
+  const m = v.match(/^(\d+)\s*([mh])$/)
+  if (!m || +m[1]! === 0) return undefined
+  return +m[1]! * (m[2] === "h" ? 3_600_000 : 60_000)
 }
 
 // The effective kind and agent: `kind: codex` is the older spelling of
@@ -182,7 +222,7 @@ export function saveState(s: Source, id: string, state: JobState): void {
 export interface TickRun {
   source: string
   id: string
-  status: "ok" | "failed" | "timeout" | "error" | "auth" | "invalid"
+  status: "ok" | "failed" | "timeout" | "error" | "auth" | "invalid" | "skipped"
   report?: string
   notified?: string
 }
@@ -193,6 +233,8 @@ export interface TickRecord {
   durationMs: number
   ran: TickRun[]
   errors: string[]
+  // Git sources another station runs (or released here): expected, not errors.
+  notRunHere?: string[]
 }
 
 export const lastTickPath = () => join(schedulerStateDir(), "last-tick.json")

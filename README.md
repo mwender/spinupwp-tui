@@ -83,8 +83,9 @@
   messages split instead of dropped, and a send log. A guided setup creates the
   bot connection for you. → [docs/beacon.md](docs/beacon.md)
   Then **Scheduler**: follow-ups that run themselves. Queue "check this
-  tomorrow at 8" from any session (or commit it to a git repository from any
-  machine), and the result arrives through Beacon. One LaunchAgent ticks every
+  tomorrow at 8" from any session, and the result arrives through Beacon. Jobs
+  and reports live in `~/SpinupTUI/scheduler/`; make that folder a git
+  repository to queue from any machine. One LaunchAgent ticks every
   5 minutes and is the clock the other modules run on. → [docs/scheduler.md](docs/scheduler.md)
 - **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
   resolves a domain to a live SSH target with a live connectivity probe;

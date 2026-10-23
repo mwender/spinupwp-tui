@@ -4,7 +4,7 @@
 // { ok: false, reason, message, remedy? } shape and exit 1.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { join, relative, resolve } from "node:path"
 import { loadConfig, saveConfig } from "../config.ts"
 import { schedulerModule } from "../modules/scheduler.ts"
 import { fmt, nextRunText } from "./schedule.ts"
@@ -12,6 +12,7 @@ import {
   defaultSourceName,
   expandHome,
   findSource,
+  gitRootOf,
   ID_RE,
   jobsDir,
   KINDS,
@@ -25,7 +26,8 @@ import {
   type Source,
 } from "./schedulerJobs.ts"
 import { applyInstall, applyUninstall, binHasScheduler, NO_SCHEDULER, planInstall, planUninstall } from "./schedulerInstall.ts"
-import { git, gitPull, tick } from "./schedulerTick.ts"
+import { tick } from "./schedulerTick.ts"
+import { git, gitPull, readClaim, removeClaim, stationName, writeClaim } from "./schedulerGit.ts"
 
 const VALUE_FLAGS = new Set([
   "--source",
@@ -46,10 +48,12 @@ const VALUE_FLAGS = new Set([
   "--body-file",
   "--prompt-file",
   "--bin",
+  "--late",
 ])
 
 // Header keys `add` writes from flags, in file order.
 const OPTIONAL_KEYS: [string, string][] = [
+  ["late", "--late"],
   ["workdir", "--workdir"],
   ["timeout", "--timeout"],
   ["notify", "--notify"],
@@ -72,6 +76,8 @@ const USAGE = `Usage:
   spinuptui scheduler run <id> [--source <name>]     run it now, on this machine
   spinuptui scheduler validate [--source <name>]
   spinuptui scheduler source add <name> <path> [--default] | source remove <name>
+  spinuptui scheduler source claim <name>     run this git source from this station
+  spinuptui scheduler source release <name>   stop running it here; another station takes it
   spinuptui scheduler tick [--here]
   spinuptui scheduler install | uninstall --plan | --apply [--bin <path>]
 
@@ -79,8 +85,11 @@ Schedules: --every 30m | 6h | "daily 08:00" | "weekdays 08:00" | "mon,thu 08:00"
 Add options: --workdir <dir> --timeout <min> --notify beacon|none --to <channel>
   agent jobs: --agent claude|codex --allow <tools> --add-dirs <dirs> --model <m> --sandbox <mode>
 The body is a spinuptui command line (kind spinuptui), a bash script (script), or a prompt
-(agent). Write it for a reader with no context, and keep secrets out of it: reports are
-written to the source, and a git source commits them.`
+(agent). Write it for a reader with no context, and keep secrets out of what it prints:
+reports go in ~/SpinupTUI/scheduler/runs/ (or the source's runs/), and a git source
+commits them.
+
+Late slots: --late run (default) | skip (only within 15 min of the slot) | 2h (a grace window).`
 
 interface Parsed {
   positionals: string[]
@@ -358,41 +367,96 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
 
 async function source(pos: string[], p: Parsed, json: boolean): Promise<number> {
   const [action, name, path] = pos
-  const stored = loadConfig().scheduler ?? {}
+  const cfg = loadConfig()
+  const stored = cfg.scheduler ?? {}
   if (action === "add") {
     if (!name || !path) return fail(json, "usage", "Usage: spinuptui scheduler source add <name> <path> [--default]")
     if (!NAME_RE.test(name) || name === LOCAL_SOURCE) return fail(json, "usage", `"${name}" can't be a source name (lowercase letters, digits and dashes; "local" is built in).`)
     const abs = resolve(expandHome(path))
     if (!existsSync(abs) || !statSync(abs).isDirectory()) return fail(json, "not_a_directory", `${abs} is not a directory.`)
-    const git = existsSync(join(abs, ".git"))
+    const root = gitRootOf(abs)
     // The source's lock lives in .state/; keep it out of the repository without
     // committing anything to it (info/exclude is local to this clone).
-    if (git && existsSync(join(abs, ".git", "info"))) {
-      const exclude = join(abs, ".git", "info", "exclude")
+    if (root && existsSync(join(root, ".git", "info"))) {
+      const rel = relative(root, abs)
+      const pattern = rel ? `/${rel}/.state/` : "/.state/"
+      const exclude = join(root, ".git", "info", "exclude")
       const current = existsSync(exclude) ? readFileSync(exclude, "utf8") : ""
-      if (!current.split("\n").some((l) => l.trim() === ".state/" || l.trim() === "/.state/")) {
-        writeFileSync(exclude, current + (current && !current.endsWith("\n") ? "\n" : "") + "# SpinupTUI Scheduler's lock\n/.state/\n")
+      if (!current.split("\n").some((l) => l.trim() === pattern || (!rel && l.trim() === ".state/"))) {
+        writeFileSync(exclude, current + (current && !current.endsWith("\n") ? "\n" : "") + `# SpinupTUI Scheduler's lock\n${pattern}\n`)
       }
     }
     await saveConfig({
       scheduler: { ...stored, sources: { ...(stored.sources ?? {}), [name]: { path: abs } }, ...(p.flags.has("--default") ? { defaultSource: name } : {}) },
     })
-    const jobs = existsSync(join(abs, "jobs")) ? loadJobs({ name, path: abs, git }).length : 0
-    if (json) console.log(JSON.stringify({ ok: true, source: name, path: abs, git, jobs, default: p.flags.has("--default") }))
-    else console.log(`Added source "${name}" (${abs}${git ? ", git: pulled before each tick, runs/ pushed after" : ""}) with ${jobs} job file(s)${p.flags.has("--default") ? "; it's now the default" : ""}.`)
+    const src = findSource(loadConfig(), name)!
+    const jobs = existsSync(join(abs, "jobs")) ? loadJobs(src).length : 0
+    const holder = src.git ? readClaim(src) : null
+    const git = src.git
+    if (json) console.log(JSON.stringify({ ok: true, source: name, path: abs, git, jobs, station: holder, default: p.flags.has("--default") }))
+    else {
+      console.log(`Added source "${name}" (${abs}${git ? ", git: pulled before each tick, runs/ pushed after" : ""}) with ${jobs} job file(s)${p.flags.has("--default") ? "; it's now the default" : ""}.`)
+      if (holder && holder !== stationName()) console.log(`It's run by ${holder}, so this machine will only queue to it. To move it here: spinuptui scheduler source claim ${name}`)
+    }
     return 0
   }
   if (action === "remove") {
     if (!name || !stored.sources?.[name]) return fail(json, "unknown_source", `No Scheduler source named "${name ?? ""}".`)
     const { [name]: _gone, ...sources } = stored.sources
-    const next = { ...stored, sources }
+    const next = { ...stored, sources, queueOnly: (stored.queueOnly ?? []).filter((n) => n !== name) }
     if (next.defaultSource === name) delete next.defaultSource
     await saveConfig({ scheduler: next })
     if (json) console.log(JSON.stringify({ ok: true, removed: name }))
     else console.log(`Removed source "${name}". Its directory and files are untouched.`)
     return 0
   }
-  return fail(json, "usage", "Usage: spinuptui scheduler source add <name> <path> [--default] | source remove <name>")
+  if (action === "claim" || action === "release") {
+    if (!name) return fail(json, "usage", `Usage: spinuptui scheduler source ${action} <name>`)
+    const src = findSource(cfg, name)
+    if (!src) return fail(json, "unknown_source", `No Scheduler source named "${name}".`)
+    if (!src.git) return fail(json, "not_git", `${name} isn't in a git repository, so only this machine can see it; there's nothing to ${action}.`)
+    const e = await gitPull(src.path)
+    if (e) return fail(json, "git_failed", `${name}: ${e}`)
+    const host = stationName()
+    const holder = readClaim(src)
+    const queueOnly = new Set(stored.queueOnly ?? [])
+    if (action === "claim") {
+      if (holder !== host) {
+        const r = await writeClaim(src, host, `station: ${host} runs ${name}${holder ? ` (was ${holder})` : ""}`)
+        if (r) return fail(json, "claim_failed", `Couldn't claim ${name}: ${r}`, "Check the repository's remote, then try again.")
+      }
+      queueOnly.delete(name)
+      await saveConfig({ scheduler: { ...stored, queueOnly: [...queueOnly] } })
+      const result = { ok: true, source: name, station: host, previous: holder }
+      if (json) console.log(JSON.stringify(result))
+      else
+        console.log(
+          holder === host
+            ? `${name} is already run by this station (${host}).`
+            : `${host} now runs ${name}.${holder ? ` ${holder} stops on its next pull.` : ""}${loadConfig().scheduler?.dispatcher ? "" : " This machine has no dispatcher yet: spinuptui scheduler install --plan"}`,
+        )
+      return 0
+    }
+    // release
+    if (holder && holder !== host && !p.flags.has("--force")) {
+      return fail(
+        json,
+        "not_holder",
+        `${name} is run by ${holder}, not this station (${host}), so there's nothing to release here.`,
+        `Release it on ${holder}, or move it here with: spinuptui scheduler source claim ${name}`,
+      )
+    }
+    if (holder === host) {
+      const r = await removeClaim(src, `station: ${host} releases ${name}`)
+      if (r) return fail(json, "release_failed", `Couldn't release ${name}: ${r}`)
+    }
+    queueOnly.add(name)
+    await saveConfig({ scheduler: { ...stored, queueOnly: [...queueOnly] } })
+    if (json) console.log(JSON.stringify({ ok: true, source: name, released: holder === host, queueOnly: true }))
+    else console.log(`Released ${name}: this machine only queues to it now. The next other station to tick it takes it over. To take it back: spinuptui scheduler source claim ${name}`)
+    return 0
+  }
+  return fail(json, "usage", "Usage: spinuptui scheduler source add <name> <path> [--default] | remove <name> | claim <name> | release <name>")
 }
 
 async function doTick(p: Parsed, json: boolean): Promise<number> {

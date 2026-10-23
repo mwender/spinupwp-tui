@@ -244,3 +244,110 @@ describe("flock", () => {
     b!.release()
   })
 })
+
+// ---- late: ------------------------------------------------------------------------
+
+import { lateGraceMs } from "./schedulerJobs.ts"
+import { isTooLate } from "./schedulerTick.ts"
+
+describe("late:", () => {
+  test("values", () => {
+    expect(lateGraceMs(undefined)).toBeNull()
+    expect(lateGraceMs("run")).toBeNull()
+    expect(lateGraceMs("skip")).toBe(15 * 60_000)
+    expect(lateGraceMs("2h")).toBe(2 * 3_600_000)
+    expect(lateGraceMs("45m")).toBe(45 * 60_000)
+    expect(lateGraceMs("0m")).toBeUndefined()
+    expect(lateGraceMs("later")).toBeUndefined()
+  })
+
+  test("validation names a bad value", () => {
+    const { header, body } = parseJobText(VALID)
+    expect(validateJob({ ...header, late: "sometime" }, body)[0]).toMatch(/late: is run, skip/)
+    expect(validateJob({ ...header, late: "skip" }, body)).toEqual([])
+  })
+
+  test("skip only past the grace window; run never; intervals never", () => {
+    const occ = at("2026-10-21 08:00")
+    expect(isTooLate({ late: "skip" }, occ, at("2026-10-21 08:10"))).toBe(false)
+    expect(isTooLate({ late: "skip" }, occ, at("2026-10-21 08:20"))).toBe(true)
+    expect(isTooLate({ late: "2h" }, occ, at("2026-10-21 09:55"))).toBe(false)
+    expect(isTooLate({ late: "2h" }, occ, at("2026-10-21 10:05"))).toBe(true)
+    expect(isTooLate({}, occ, at("2026-10-22 08:00"))).toBe(false)
+    expect(isTooLate({ late: "skip", every: "30m" }, occ, at("2026-10-21 12:00"))).toBe(false)
+    expect(isTooLate({ late: "skip", every: "daily 08:00" }, occ, at("2026-10-21 12:00"))).toBe(true)
+  })
+})
+
+// ---- the station claim, against real git ------------------------------------------
+
+import { readFileSync as readFile, existsSync as exists, writeFileSync as writeFile } from "node:fs"
+import { spawn } from "./spawn.ts"
+import { decideClaim, removeClaim, writeClaim, readClaim } from "./schedulerGit.ts"
+import type { Source } from "./schedulerJobs.ts"
+
+async function sh(cwd: string, ...cmd: string[]) {
+  const p = spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe" })
+  const out = await new Response(p.stdout).text()
+  if ((await p.exited) !== 0) throw new Error(`${cmd.join(" ")}: ${await new Response(p.stderr).text()}`)
+  return out.trim()
+}
+
+async function twoStations() {
+  for (const [k, v] of Object.entries({ GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" })) process.env[k] = v
+  const root = mkdtempSync(join(tmpdir(), "claim-"))
+  await sh(root, "git", "init", "-q", "--bare", "-b", "main", "remote.git")
+  await sh(root, "git", "clone", "-q", "remote.git", "a")
+  await sh(join(root, "a"), "git", "commit", "-q", "--allow-empty", "-m", "init")
+  await sh(join(root, "a"), "git", "push", "-q", "-u", "origin", "main")
+  await sh(root, "git", "clone", "-q", "remote.git", "b")
+  const src = (dir: string, queueOnly = false): Source => ({ name: "followups", path: join(root, dir), gitRoot: join(root, dir), git: true, queueOnly })
+  return { root, a: src("a"), b: src("b"), src }
+}
+
+describe("station claim", () => {
+  test("first tick claims; a rival backs off, even when it hadn't pulled the claim yet", async () => {
+    const { a, b } = await twoStations()
+    expect(await decideClaim(a, "mini")).toEqual({ run: true, claimed: true })
+    expect(await decideClaim(a, "mini")).toEqual({ run: true })
+    // b never pulled: its own claim's push is rejected, rolled back, and it
+    // finds mini's claim on the pull.
+    const d = await decideClaim(b, "nas")
+    expect(d.run).toBe(false)
+    expect(d.run === false && d.holder).toBe("mini")
+    expect(readClaim(b)).toBe("mini")
+  })
+
+  test("a failed takeover restores the holder's claim and keeps the user's own work", async () => {
+    const { a, b } = await twoStations()
+    await decideClaim(a, "mini")
+    await sh(b.path, "git", "pull", "-q")
+    // mini moves on, so b is behind when it tries to take over.
+    writeFile(join(a.path, "notes.md"), "x\n")
+    await sh(a.path, "git", "add", "notes.md")
+    await sh(a.path, "git", "commit", "-q", "-m", "notes")
+    await sh(a.path, "git", "push", "-q")
+    writeFile(join(b.path, "mine.txt"), "uncommitted work\n")
+    const r = await writeClaim(b, "nas", "station: nas runs followups")
+    expect(r).toMatch(/push rejected/)
+    expect(readClaim(b)).toBe("mini")
+    expect(readFile(join(b.path, "mine.txt"), "utf8")).toBe("uncommitted work\n")
+    // After the rollback and pull, a deliberate claim succeeds.
+    expect(await writeClaim(b, "nas", "station: nas runs followups")).toBeNull()
+    await sh(a.path, "git", "pull", "-q")
+    const d = await decideClaim(a, "mini")
+    expect(d.run === false && d.holder).toBe("nas")
+  })
+
+  test("release hands the source to the next station; a queue-only machine never claims", async () => {
+    const { a, b, src } = await twoStations()
+    await decideClaim(a, "mini")
+    expect(await removeClaim(a, "station: mini releases followups")).toBeNull()
+    expect(exists(join(a.path, ".scheduler", "station"))).toBe(false)
+    // mini marked itself queue-only on release, so its next tick doesn't re-claim.
+    const again = await decideClaim(src("a", true), "mini")
+    expect(again.run).toBe(false)
+    await sh(b.path, "git", "pull", "-q")
+    expect(await decideClaim(b, "nas")).toEqual({ run: true, claimed: true })
+  })
+})

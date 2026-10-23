@@ -52,6 +52,16 @@ Agent jobs are **read-only by default.** Claude Code gets `Read,Grep,Glob` unles
 
 If the agent's login has lapsed, the job doesn't count as run. You get one page saying to log in on the station, and it retries every 30 minutes until it expires.
 
+### Late slots
+
+If the station was asleep or off when a job was due, it runs the job once when it comes back. That suits most follow-ups: a check meant for 08:00 is still worth running at 14:00. For a job that loses its point once late, say so with `--late`:
+
+- `--late run` (the default): run it whenever the station gets to it.
+- `--late skip`: run it only within 15 minutes of its time; otherwise skip it.
+- `--late 2h` (or `45m`, …): the same, with your own grace window.
+
+A skipped job is paged ("Skipped job post-numbers: it was due at 08:00, and this station only got to it at 14:10"), so a skip never looks like silence. `late:` only applies to jobs with a fixed time. A `30m`-style job simply runs on the next tick.
+
 Other options: `--timeout <minutes>` (default 30), `--notify none` to skip the page, `--to <channel>` for a Beacon channel other than the default, `--workdir`, `--add-dirs` and `--model` for agent jobs, `--body-file <path>` instead of `-- …`, and `--replace` to overwrite a job with the same id.
 
 ## See what's queued and what happened
@@ -64,19 +74,29 @@ spinuptui scheduler cancel verify-410s   # remove it; its reports stay
 spinuptui scheduler status               # is the station's clock running?
 ```
 
+Jobs and reports live in **`~/SpinupTUI/scheduler/`**, a visible folder that's yours to read, back up or share. It's created the first time you queue something. (`SPINUPTUI_HOME` moves it. It's deliberately not in `~/Documents`, which iCloud may sync.) SpinupTUI's own bookkeeping (locks, the tick log) stays out of it, in `~/.config/spinupwp-tui/modules/scheduler/`.
+
 Each run writes a report to `runs/<id>/<YYYY-MM-DD-HHMM>.md`, with the schedule, the duration, the exit code and the full output, and keeps `runs/<id>/state.json` up to date. A run that misses its slot (the machine was asleep or off) runs once on the next tick. Missed slots of a recurring job don't pile up.
 
 `status` (and the Modules tab) reports how long ago the dispatcher last ticked. More than 15 minutes means the station's clock has stopped. A manual `run` doesn't count, so it can't hide a dead dispatcher.
 
-## Queue from anywhere: git sources
+## Queue from anywhere: make it a git repository
 
-By default, jobs live in Scheduler's own folder (`~/.config/spinupwp-tui/modules/scheduler/`), the `local` source. To queue jobs from other machines, keep them in a git repository instead:
+To queue jobs from other machines, make `~/SpinupTUI/` a git repository with a remote:
+
+```sh
+cd ~/SpinupTUI && git init && git add -A && git commit -m "Follow-ups"
+git remote add origin git@github.com:you/spinuptui-followups.git   # a private repo
+git push -u origin main
+```
+
+That's all. Scheduler notices the repository and, before each tick, pulls it, runs whatever is due, then commits and pushes the reports. Its commits only ever touch `runs/` and its own claim file, never anything else you've changed or staged. On a laptop, clone the same repository to `~/SpinupTUI/`, and `scheduler add` there commits and pushes the job for you. Read results with `git pull`.
+
+An existing folder or repository of jobs (in the same format) can be added as a named source instead:
 
 ```sh
 spinuptui scheduler source add followups ~/Projects/followups --default
 ```
-
-Before each tick, the station pulls that repository, runs whatever is due, then commits and pushes `runs/`. To queue a job from a laptop, run `scheduler add` there against your own clone (it commits and pushes for you), or commit a job file by hand. Read results with `git pull`. Authors write `jobs/`, and only the station writes `runs/`, so the two never conflict.
 
 A job file is Markdown with a short header:
 
@@ -87,10 +107,28 @@ kind: spinuptui
 when: 2026-10-21 08:00
 expires: 2026-10-28
 created_by: Claude Code — example.com session
+late: run
 ---
 ssh-exec example.com -- 'curl -sI https://example.com/old-page'
 ```
 
 `spinuptui scheduler validate` checks every job file. An invalid file is skipped, with one page about what's wrong.
 
-Reports land in that repository, so keep secrets out of what jobs print. The repository is yours: SpinupTUI's public code never sees the domains and servers your jobs name.
+Reports land in the repository, so keep secrets out of what jobs print.
+
+### One station runs each repository
+
+Every machine with a clone can queue jobs. Only one runs them: the **station** that claimed the repository. The first machine with a dispatcher installed claims it automatically by committing a small file (`.scheduler/station`, holding its hostname). If a second machine also gets a dispatcher, for example a laptop where someone pressed install on the Modules tab, it sees the claim and leaves those jobs alone. `scheduler status` says which machine runs what:
+
+```
+✓ source local: ~/SpinupTUI/scheduler (git, run by mini; this machine only queues)
+```
+
+To move the jobs to another machine, or to retire a station:
+
+```sh
+spinuptui scheduler source claim local     # on the new station: run them here from now on
+spinuptui scheduler source release local   # on the old one: stop running them here
+```
+
+`claim` takes over at once, and the old station stops on its next pull. `release` removes the claim and stops this machine from claiming the source again. The next other station to tick takes it over. Use `local` for `~/SpinupTUI/`, or the name of a source you added.

@@ -8,12 +8,20 @@ import { tryLock } from "../lib/flock.ts"
 import { loadConfig } from "../config.ts"
 import { beaconFromConfig } from "../lib/beacon.ts"
 import { nextRunText, parseWhen } from "../lib/schedule.ts"
-import { listSources, loadJobs, loadState, readLastTick } from "../lib/schedulerJobs.ts"
-import { moduleStateDir, type ModuleCheck, type ModuleDefinition, type ModuleStatus } from "./contract.ts"
+import { listSources, loadJobs, loadState, readLastTick, type Source } from "../lib/schedulerJobs.ts"
+import { readClaim, stationName } from "../lib/schedulerGit.ts"
+import { moduleStateDir, moduleWorkDir, type ModuleCheck, type ModuleDefinition, type ModuleStatus } from "./contract.ts"
 
 // Three missed ticks.
 export const TICK_STALE_MS = 15 * 60_000
 const RECENT_FAILURE_MS = 24 * 60 * 60_000
+
+function claimText(s: Source): string {
+  const holder = readClaim(s)
+  if (s.queueOnly) return holder ? `run by ${holder}; released here, this machine only queues` : "released here; this machine only queues"
+  if (!holder) return "unclaimed: the next dispatcher tick here claims it"
+  return holder === stationName() ? "run by this station" : `run by ${holder}; this machine only queues`
+}
 
 function tickRunning(): boolean {
   try {
@@ -41,6 +49,7 @@ export const schedulerModule: ModuleDefinition = {
   dependsOn: ["beacon"],
   configKey: "scheduler",
   stateDir: () => moduleStateDir("scheduler"),
+  workDir: () => moduleWorkDir("scheduler"),
   jobs: [],
   async status(): Promise<ModuleStatus> {
     const cfg = loadConfig()
@@ -70,7 +79,8 @@ export const schedulerModule: ModuleDefinition = {
     const failed: string[] = []
     for (const s of listSources(cfg)) {
       const exists = existsSync(s.path)
-      if (s.name !== "local") checks.push({ name: `source ${s.name}`, ok: exists, detail: exists ? `${s.path}${s.git ? " (git)" : ""}` : `${s.path} does not exist` })
+      // The local folder appears on first use, so its absence is normal.
+      if (s.name !== "local" || exists) checks.push({ name: `source ${s.name}`, ok: exists, detail: exists ? `${s.path}${s.git ? ` (git, ${claimText(s)})` : ""}` : `${s.path} does not exist` })
       if (!exists) continue
       for (const j of loadJobs(s)) {
         if (j.problems.length) {

@@ -16,42 +16,30 @@ import { loadConfig } from "../config.ts"
 import { MODULES } from "../modules/index.ts"
 import type { ScheduledJobDecl } from "../modules/contract.ts"
 import { tryLock } from "./flock.ts"
-import { declSchedule, dueOccurrence, fmt, parseWhen } from "./schedule.ts"
-import { ID_RE, lastTickPath, listSources, loadJobs, loadState, saveState, schedulerStateDir, sourceLockPath, tickLogPath, type Source, type TickRecord, type TickRun } from "./schedulerJobs.ts"
+import { declSchedule, dueOccurrence, fmt, parseEvery, parseWhen } from "./schedule.ts"
+import {
+  ID_RE,
+  lastTickPath,
+  lateGraceMs,
+  listSources,
+  loadJobs,
+  loadState,
+  saveState,
+  schedulerStateDir,
+  sourceLockPath,
+  tickLogPath,
+  type JobHeader,
+  type Source,
+  type TickRecord,
+  type TickRun,
+} from "./schedulerJobs.ts"
 import { jobEnv, notify, runJob, runProcess, selfCommand } from "./schedulerRun.ts"
-import { spawn } from "./spawn.ts"
+import { commitAndPush, decideClaim, gitPull, readClaim, stationName } from "./schedulerGit.ts"
 
 const LOG_MAX_BYTES = 1_000_000
 const MODULE_JOB_TIMEOUT_MS = 10 * 60_000
 
 export type TickResult = ({ ok: true } & TickRecord) | { ok: true; skipped: "locked"; message: string }
-
-// ---- git --------------------------------------------------------------------------
-
-export async function git(dir: string, ...args: string[]): Promise<{ code: number; out: string }> {
-  const p = spawn(["git", "-C", dir, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: jobEnv() })
-  const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
-  return { code: await p.exited, out: (out + err).trim() }
-}
-
-export async function gitPull(dir: string): Promise<string | null> {
-  const r = await git(dir, "pull", "--rebase", "--autostash", "--quiet")
-  return r.code === 0 ? null : `git pull failed: ${r.out}`
-}
-
-// Commits runs/ when it changed, and pushes whenever the branch is ahead, so a
-// push that failed on an earlier tick is retried.
-async function commitAndPushRuns(dir: string, message: string): Promise<string | null> {
-  await git(dir, "add", "--", "runs")
-  if ((await git(dir, "diff", "--cached", "--quiet")).code !== 0) await git(dir, "commit", "--quiet", "-m", message)
-  const ahead = await git(dir, "rev-list", "--count", "@{u}..HEAD")
-  if (ahead.code === 0 && ahead.out !== "" && ahead.out !== "0") {
-    await gitPull(dir)
-    const r = await git(dir, "push", "--quiet")
-    if (r.code !== 0) return `git push failed (retried next tick): ${r.out}`
-  }
-  return null
-}
 
 // ---- module jobs -----------------------------------------------------------------
 
@@ -134,7 +122,24 @@ async function configuredModuleJobs(): Promise<ScheduledJobDecl[]> {
 
 // ---- sources ---------------------------------------------------------------------
 
-async function tickSource(source: Source, now: Date, only: string | null, force: boolean): Promise<{ ran: TickRun[]; errors: string[] }> {
+// `late:`: is this slot too old to run? Only fixed-time slots can be late; an
+// interval job's slot is always "now".
+export function isTooLate(header: JobHeader, occ: Date, now: Date): boolean {
+  const grace = lateGraceMs(header.late)
+  if (grace === null || grace === undefined) return false
+  if (header.every && parseEvery(header.every).type === "interval") return false
+  return now.getTime() - occ.getTime() > grace
+}
+
+const hm = (d: Date) => fmt(d).slice(11)
+
+async function tickSource(
+  source: Source,
+  now: Date,
+  only: string | null,
+  force: boolean,
+  via: "dispatcher" | "manual",
+): Promise<{ ran: TickRun[]; errors: string[]; notRunHere?: string }> {
   const ran: TickRun[] = []
   const errors: string[] = []
   if (!existsSync(source.path)) return { ran, errors: [`source ${source.name}: ${source.path} does not exist`] }
@@ -144,6 +149,18 @@ async function tickSource(source: Source, now: Date, only: string | null, force:
     if (source.git) {
       const e = await gitPull(source.path)
       if (e) errors.push(`source ${source.name}: ${e}`)
+      // One station per git source. Only the dispatcher claims; a manual `run`
+      // on a machine that doesn't hold the claim is deliberate, so it proceeds.
+      if (via === "dispatcher") {
+        const d = await decideClaim(source)
+        if (!d.run) {
+          if (d.holder === null && d.why.startsWith("couldn't")) errors.push(`source ${d.why}`)
+          return { ran, errors, notRunHere: d.why }
+        }
+      } else {
+        const holder = readClaim(source)
+        if (holder && holder !== stationName()) process.stderr.write(`Warning: ${source.name} is run by ${holder}; running it here anyway, because you asked.\n`)
+      }
     }
     for (const job of loadJobs(source)) {
       const id = job.header.id
@@ -173,13 +190,28 @@ async function tickSource(source: Source, now: Date, only: string | null, force:
         continue
       }
       if (!occ) continue
+      if (!force && isTooLate(job.header, occ, now)) {
+        state.last_scheduled = fmt(occ)
+        state.last_status = "skipped"
+        delete state.retry_after
+        saveState(source, id!, state)
+        const notified =
+          (job.header.notify || "beacon") === "none"
+            ? "skipped"
+            : await notify(
+                `⏭ Skipped job ${id}: it was due at ${fmt(occ)}, and this station only got to it at ${hm(now)}. Its late: ${job.header.late} policy says not to run it late.\n\nQueued by: ${job.header.created_by}`,
+                job.header.to,
+              )
+        ran.push({ source: source.name, id: id!, status: "skipped", notified })
+        continue
+      }
       process.stderr.write(`→ running ${source.name}/${id} (scheduled ${fmt(occ)})\n`)
       const outcome = await runJob(source, job, occ, now)
       ran.push({ source: source.name, id: id!, ...outcome })
     }
     if (source.git) {
       const mine = ran.filter((r) => r.source === source.name)
-      const e = await commitAndPushRuns(source.path, "runs: " + (mine.length ? mine.map((r) => `${r.id} (${r.status})`).join(", ") : "state"))
+      const e = await commitAndPush(source.path, ["runs"], "runs: " + (mine.length ? mine.map((r) => `${r.id} (${r.status})`).join(", ") : "state"))
       if (e) errors.push(`source ${source.name}: ${e}`)
     }
   } finally {
@@ -216,6 +248,7 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
   const now = opts.now ?? new Date()
   const ran: TickRun[] = []
   const errors: string[] = []
+  const notRunHere: string[] = []
   try {
     if (!opts.only) {
       const decls = await configuredModuleJobs()
@@ -235,12 +268,20 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
     }
     for (const source of listSources(loadConfig())) {
       if (opts.only && source.name !== opts.only.source) continue
-      const r = await tickSource(source, now, opts.only?.id ?? null, !!opts.only)
+      const r = await tickSource(source, now, opts.only?.id ?? null, !!opts.only, opts.via)
       ran.push(...r.ran)
       errors.push(...r.errors)
+      if (r.notRunHere) notRunHere.push(r.notRunHere)
     }
     for (const r of ran) if (r.notified && r.notified !== "sent" && r.notified !== "skipped") errors.push(`${r.source}/${r.id}: not paged (${r.notified})`)
-    const record: TickRecord = { at: new Date().toISOString(), via: opts.via, durationMs: Date.now() - startedAt, ran, errors }
+    const record: TickRecord = {
+      at: new Date().toISOString(),
+      via: opts.via,
+      durationMs: Date.now() - startedAt,
+      ran,
+      errors,
+      ...(notRunHere.length ? { notRunHere } : {}),
+    }
     // Only the dispatcher's ticks count as "the station is alive": a manual
     // `run` or `tick --here` must not mask a dispatcher that has stopped.
     if (opts.via === "dispatcher") {
