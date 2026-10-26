@@ -23,6 +23,7 @@ import {
   lateGraceMs,
   listSources,
   loadJobs,
+  LOCAL_SOURCE,
   loadState,
   saveState,
   schedulerStateDir,
@@ -142,7 +143,12 @@ async function tickSource(
 ): Promise<{ ran: TickRun[]; errors: string[]; notRunHere?: string }> {
   const ran: TickRun[] = []
   const errors: string[] = []
-  if (!existsSync(source.path)) return { ran, errors: [`source ${source.name}: ${source.path} does not exist`] }
+  if (!existsSync(source.path)) {
+    // ~/SpinupTUI/scheduler appears on first use, so a missing local folder
+    // just means nothing has been queued there yet.
+    if (source.name === LOCAL_SOURCE) return { ran, errors }
+    return { ran, errors: [`source ${source.name}: ${source.path} does not exist`] }
+  }
   const lock = tryLock(sourceLockPath(source))
   if (!lock) return { ran, errors: [`source ${source.name}: busy (another dispatcher holds its lock); skipped this tick`] }
   try {
