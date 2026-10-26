@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **WordPress versions no longer go stale.** The version shown for a site was read once, when the site was first identified, and never again, so sites updated outside SpinupTUI (auto-updates, wp-admin, deploys) kept showing the old version, and `r` didn't help. Versions older than a day are now re-checked in the background when the site list loads, one site at a time per server, stopping at a server's first failure so unattended SSH can't trip fail2ban. A reading that couldn't be refreshed shows its age in the Stacks list, and the Details pane always says when it was taken.
+
 ## [1.2.0] - 2026-10-21
 
 ### Added

@@ -16,7 +16,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
-import { bar, truncate } from "../../lib/format.ts"
+import { bar, timeAgo, truncate } from "../../lib/format.ts"
+import { isVersionOld } from "../../lib/stackCache.ts"
 import { STACKS, effectiveStack, stackColor, type Stack } from "../../lib/stack.ts"
 import { phpSortKey } from "../../lib/phpEol.ts"
 import { probeKindColor, type ProbeKind } from "../../lib/probe.ts"
@@ -421,11 +422,23 @@ export function Stacks({ rows }: { rows: number }) {
                     ) : vanity ? (
                       <text content="Vanity Site" fg={selected ? theme.text : VANITY_COLOR} wrapMode="none" />
                     ) : cached ? (
-                      <text
-                        content={truncate(cached.result.label, 20) + (isProbeStale(s) ? "*" : "")}
-                        fg={probeKindColor(cached.result.kind, selected)}
-                        wrapMode="none"
-                      />
+                      <>
+                        <text
+                          content={truncate(cached.result.label, 20) + (isProbeStale(s) ? "*" : "")}
+                          fg={probeKindColor(cached.result.kind, selected)}
+                          wrapMode="none"
+                        />
+                        {/* A version past its re-check age (the background re-probe
+                            failed or hasn't run) says how old it is, so it can't
+                            pass for current. */}
+                        {isVersionOld(cached) && (
+                          <text
+                            content={" " + timeAgo(new Date(cached.detectedAt).toISOString()).replace(/ ago$/, "")}
+                            fg={selected ? theme.text : theme.warn}
+                            wrapMode="none"
+                          />
+                        )}
+                      </>
                     ) : errored ? (
                       <text content="probe failed" fg={selected ? theme.text : theme.bad} wrapMode="none" />
                     ) : (

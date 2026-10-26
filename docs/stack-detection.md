@@ -29,3 +29,5 @@ Probes reuse the same SSH access as the health view (`site_user@ip`, your local
 keys, `BatchMode`) and are **read-only**. Results are cached to
 `~/.config/spinupwp-tui/stack-cache.json` (per account — see [multiple-accounts.md](multiple-accounts.md)), hydrated at startup, so detections
 survive restarts without re-running SSH.
+
+**WordPress versions refresh themselves.** A site's stack rarely changes, but its WordPress version does, through auto-updates, wp-admin or a deploy, and none of those go through SpinupTUI. So a version reading older than a day is re-checked in the background whenever the site list loads (at launch and on `r`), for sites that have been identified before. Each server's sites are checked one at a time, and the first failure on a server stops that server's checks until the next day, so unattended SSH can't trip fail2ban on a site whose key has been removed. A site whose re-check fails keeps its last reading, marked with its age (`WordPress 6.9.4 4mo`) in the Stacks list. The Details pane always shows when the reading was taken.
