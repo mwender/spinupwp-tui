@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.3.0-alpha.2] - 2026-10-26
+
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.2.0.
+
 ### Added
 - **Scheduler: follow-ups that run themselves.** Queue a job for later (`spinuptui scheduler add verify-410s --kind spinuptui --when "2026-10-21 08:00" --expires 2026-10-28 --created-by "…" -- incidents example.com`) and this machine runs it at that time, writes a report, and sends you the result through Beacon. Jobs can be a SpinupTUI command, a shell script, or a prompt for an agent CLI (Claude Code or Codex, read-only by default). They can be one-offs or recurring (`every 30m`, `weekdays 08:00`, `mon,thu 08:00`), and every job carries an expiry date so a forgotten one stops on its own. Jobs and reports live in `~/SpinupTUI/scheduler/`, a visible folder of your own. Make `~/SpinupTUI/` a git repository and Scheduler pulls it before each run and commits and pushes the reports, so you can queue a job from any machine with a commit. Only one machine runs a repository's jobs: the first station to tick it claims it, so a second machine with a dispatcher can't run them twice. `scheduler source claim` and `release` move them between machines. A job can say what happens when the station reaches it late (`--late run`, `skip`, or a grace window like `2h`). A skipped job is paged, not dropped silently. `scheduler list`, `show`, `run`, `cancel` and `validate` round it out. See [docs/scheduler.md](docs/scheduler.md).
 - **`spinuptui scheduler install --plan|--apply`** sets up the one LaunchAgent everything runs on: a tick at login and every five minutes, with the PATH a bare launchd environment lacks written into it. `--apply` doesn't report success until a tick has actually run under launchd. `uninstall` removes it and keeps your jobs and reports. Scheduler shows up live on the Modules tab (`6`), where `⏎` shows the same plan and installs it on confirm, and in `spinuptui modules`, which reports how long ago the last tick ran. Modules will declare their own recurring work for Scheduler to run, so a station needs only this one unit. The design is in [docs/2026-10-20_scheduler-spec.md](docs/2026-10-20_scheduler-spec.md).
@@ -1513,7 +1517,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.2...HEAD
+[1.3.0-alpha.2]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.1...v1.3.0-alpha.2
 [1.3.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...v1.3.0-alpha.1
 [1.2.0]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0
 [1.2.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0-alpha.1
