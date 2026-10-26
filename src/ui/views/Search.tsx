@@ -36,7 +36,7 @@ function score(haystack: string, q: string): number | null {
 
 export function Search({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sites, serverById, sitesForServer, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setServerActionsServer, accountSlug, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite, setGrantKeySite, runProbe, setEnableLocalSyncSite, setVanityServer, vanityJob } = store
+  const { servers, sites, serverById, sitesForServer, setInputMode, setRoute, route, overlayOpen, setHealthServer, setPhpUpgradeSite, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setServerActionsServer, openInSpinupWP, localLinks, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setDbBackupSite, dbBackups, setDbSyncSite, dbSyncs, localSync, setMediaFallbackSite, beginClone, setSudoConnectServer, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setWpInventorySite, setGrantKeySite, runProbe, setEnableLocalSyncSite, setVanityServer, vanityJob } = store
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState(0)
   // "query" = typing/filtering (input focused); "actions" = input blurred so the
@@ -101,9 +101,8 @@ export function Search({ rows }: { rows: number }) {
     openUrl((s.https?.enabled ? "https://" : "http://") + s.domain)
     flashMsg(`Opening ${s.domain}…`)
   }
-  const openInSpinup = (url: string) => {
-    openUrl(url)
-    flashMsg(accountSlug ? "Opening in SpinupWP…" : "Set accountSlug for deep links — opening dashboard")
+  const openInSpinup = (build: (slug: string) => string) => {
+    if (openInSpinupWP(build)) flashMsg("Opening in SpinupWP…")
   }
 
   useKeyboard((key) => {
@@ -141,8 +140,8 @@ export function Search({ rows }: { rows: number }) {
         if (current?.kind === "site") openSite(current.site)
         return
       case "w":
-        if (current?.kind === "site") openInSpinup(siteWebUrl(current.site.id, accountSlug))
-        else if (current?.kind === "server") openInSpinup(serverWebUrl(current.server.id, accountSlug))
+        if (current?.kind === "site") openInSpinup((slug) => siteWebUrl(current.site.id, slug))
+        else if (current?.kind === "server") openInSpinup((slug) => serverWebUrl(current.server.id, slug))
         return
       case "u":
         if (current?.kind === "site") setPhpUpgradeSite(current.site)

@@ -13,6 +13,7 @@ version; such changes are called out here.
 
 ### Fixed
 - **WordPress versions no longer go stale.** The version shown for a site was read once, when the site was first identified, and never again, so sites updated outside SpinupTUI (auto-updates, wp-admin, deploys) kept showing the old version, and `r` didn't help. Versions older than a day are now re-checked in the background when the site list loads, one site at a time per server, stopping at a server's first failure so unattended SSH can't trip fail2ban. A reading that couldn't be refreshed shows its age in the Stacks list, and the Details pane always says when it was taken.
+- **`w` opens the site or server you picked, not the SpinupWP dashboard.** Deep links need the account slug, which SpinupWP's API doesn't provide and first-run setup never asked for, so unless you had added `accountSlug` to `config.json` by hand, `w` quietly fell back to the dashboard. Now `w` asks for the slug the first time it needs it (pasting any dashboard URL works), saves it to the current account and opens the right page. First-run setup also asks for it, as an optional step after the token.
 
 ## [1.2.0] - 2026-10-21
 

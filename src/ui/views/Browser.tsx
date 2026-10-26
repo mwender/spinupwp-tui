@@ -24,7 +24,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, accountSlug, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks, setDbBackupSite, setMediaFallbackSite, setEnableLocalSyncSite } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, openInSpinupWP, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks, setDbBackupSite, setMediaFallbackSite, setEnableLocalSyncSite } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -283,11 +283,11 @@ export function Browser({ rows }: { rows: number }) {
         // Open the focused server/site in the SpinupWP web app — useful for
         // actions the API can't do (e.g. running a pending server upgrade).
         if (focus === "sites" && sites[siteIndex]) {
-          openUrl(siteWebUrl(sites[siteIndex].id, accountSlug))
-          setFlash(accountSlug ? "Opening in SpinupWP…" : "Set accountSlug for deep links — opening dashboard")
+          const id = sites[siteIndex].id
+          if (openInSpinupWP((slug) => siteWebUrl(id, slug))) setFlash("Opening in SpinupWP…")
         } else if (server) {
-          openUrl(serverWebUrl(server.id, accountSlug))
-          setFlash(accountSlug ? "Opening in SpinupWP…" : "Set accountSlug for deep links — opening dashboard")
+          const id = server.id
+          if (openInSpinupWP((slug) => serverWebUrl(id, slug))) setFlash("Opening in SpinupWP…")
         }
         setTimeout(() => setFlash(null), 2000)
         return

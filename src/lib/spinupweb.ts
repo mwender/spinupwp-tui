@@ -12,6 +12,17 @@
 
 const WEB_BASE = "https://spinupwp.app"
 
+// Read an account slug from what a user types: the slug itself, or any dashboard
+// URL pasted whole ("https://spinupwp.app/acme-agency/sites/123" → "acme-agency").
+// Null when it doesn't look like a slug.
+export function parseAccountSlug(input: string): string | null {
+  let s = input.trim()
+  const at = s.toLowerCase().indexOf("spinupwp.app/")
+  if (at >= 0) s = s.slice(at + "spinupwp.app/".length)
+  s = s.replace(/^\/+/, "").split(/[/?#]/)[0] ?? ""
+  return /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(s) ? s : null
+}
+
 export function serverWebUrl(id: number, accountSlug: string | null): string {
   return accountSlug ? `${WEB_BASE}/${accountSlug}/servers/${id}` : WEB_BASE
 }

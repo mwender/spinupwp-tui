@@ -819,6 +819,14 @@ interface StoreValue extends DataState {
   enableLocalSync: () => void
   // SpinupWP account slug (from env/config) for building web deep links.
   accountSlug: string | null
+  // Open a page in the SpinupWP web app. Deep links need the account slug, which
+  // the API doesn't expose; with none saved this asks for it (slugPrompt) and
+  // opens the page once it's given, rather than landing on the dashboard root.
+  // Returns true when the page opened straight away.
+  openInSpinupWP: (build: (slug: string) => string) => boolean
+  slugPrompt: { build: (slug: string) => string } | null
+  setSlugPrompt: (p: { build: (slug: string) => string } | null) => void
+  saveAccountSlug: (slug: string) => void
   // The account (profile) this store is mounted for — see config.ts "Accounts".
   // Switching remounts the whole store, so these never change under a view.
   profileId: string
@@ -1032,6 +1040,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
   const [profileLabel, setProfileLabel] = useState(cfgRef.current.profileLabel)
+  const [accountSlug, setAccountSlug] = useState(cfgRef.current.accountSlug)
+  const [slugPrompt, setSlugPrompt] = useState<{ build: (slug: string) => string } | null>(null)
+  const saveAccountSlug = useCallback((slug: string) => {
+    cfgRef.current.accountSlug = slug
+    setAccountSlug(slug)
+    void saveProfileConfig({ accountSlug: slug })
+  }, [])
+  const openInSpinupWP = useCallback(
+    (build: (slug: string) => string) => {
+      if (accountSlug) {
+        openUrl(build(accountSlug))
+        return true
+      }
+      setSlugPrompt({ build })
+      return false
+    },
+    [accountSlug],
+  )
   const [route, setRoute] = useState<Route>("dashboard")
   const [inputMode, setInputMode] = useState(false)
   const [overlayOpen, setOverlayOpen] = useState(false)
@@ -4611,7 +4637,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     enableLocalSyncSite,
     setEnableLocalSyncSite,
     enableLocalSync,
-    accountSlug: cfgRef.current.accountSlug,
+    accountSlug,
+    openInSpinupWP,
+    slugPrompt,
+    setSlugPrompt,
+    saveAccountSlug,
     profileId: cfgRef.current.profileId,
     profileLabel,
     setProfileLabel,
