@@ -171,6 +171,8 @@ The old direct-send code stays in each caller as the fallback until the soak bel
 
 Rollback at any point is reverting one caller's change. The env file and the old code path are still there until step 7.
 
+**Status, 2026-10-26: done through step 7.** The soak ran for nine days with every message delivered and no fallback used, so the fallbacks were removed from all four callers. Each now logs a message Beacon can't send as `NOT SENT` instead of trying another route, so Beacon is the only sender. Not yet exercised in real use: a multi-part message and a real down alert. **What this trades away:** with no second sender, a broken global `spinuptui` (a bad release, say) silences every page until it's fixed. The station heartbeat planned for station setup, an Uptime Kuma push monitor that pages from outside the station when it goes quiet, is what closes that gap.
+
 ## Release plan
 
 Decided 2026-10-16: Beacon on its own is a useful tool, but the public story lands with Sentinel. So the modules ship through a **pre-release channel** first:
