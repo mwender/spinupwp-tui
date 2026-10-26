@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Scheduler no longer reports a problem on every tick before you've queued anything locally.** `~/SpinupTUI/scheduler/` is created on first use, so its absence is normal; `scheduler status` used to list "source local … does not exist" as a problem from the last tick.
+
 ## [1.3.0-alpha.2] - 2026-10-26
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.2.0.
