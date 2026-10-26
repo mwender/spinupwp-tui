@@ -748,6 +748,9 @@ interface StoreValue extends DataState {
   // Beacon's guided setup overlay, opened from the Modules tab.
   beaconSetupOpen: boolean
   setBeaconSetupOpen: (v: boolean) => void
+  // Scheduler's install plan + confirm overlay, opened from the Modules tab.
+  schedulerInstallOpen: boolean
+  setSchedulerInstallOpen: (v: boolean) => void
   // Whether the "needs a local copy" (forgotten) report overlay is open, and an
   // optional stack filter (set from the selected Stacks group when opened).
   forgottenOpen: boolean
@@ -1118,6 +1121,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [localRoots, setLocalRoots] = useState<string[]>(() => [...cfgRef.current.localRoots])
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const [beaconSetupOpen, setBeaconSetupOpen] = useState(false)
+  const [schedulerInstallOpen, setSchedulerInstallOpen] = useState(false)
   const [forgottenOpen, setForgottenOpen] = useState(false)
   const [forgottenStack, setForgottenStack] = useState<Stack | null>(null)
   const [linkReturnToForgotten, setLinkReturnToForgotten] = useState(false)
@@ -4540,6 +4544,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setDiscoverOpen,
     beaconSetupOpen,
     setBeaconSetupOpen,
+    schedulerInstallOpen,
+    setSchedulerInstallOpen,
     forgottenOpen,
     setForgottenOpen,
     forgottenStack,

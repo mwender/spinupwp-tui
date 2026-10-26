@@ -2,7 +2,7 @@
 
 import { loadConfig } from "../config.ts"
 import { beaconFromConfig, lastSendLogEntry, maskChatId, maskToken } from "../lib/beacon.ts"
-import { moduleStateDir, type ModuleCheck, type ModuleDefinition, type ModuleStatus } from "./contract.ts"
+import { moduleStateDir, moduleWorkDir, type ModuleCheck, type ModuleDefinition, type ModuleStatus } from "./contract.ts"
 
 export const beaconModule: ModuleDefinition = {
   id: "beacon",
@@ -11,6 +11,7 @@ export const beaconModule: ModuleDefinition = {
   dependsOn: [],
   configKey: "beacon",
   stateDir: () => moduleStateDir("beacon"),
+  workDir: () => moduleWorkDir("beacon"),
   jobs: [],
   async status(): Promise<ModuleStatus> {
     const beacon = beaconFromConfig(loadConfig())

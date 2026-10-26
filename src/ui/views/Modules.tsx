@@ -16,6 +16,7 @@ import { MODULES, UPCOMING_MODULES } from "../../modules/index.ts"
 import type { ModuleId, ModuleStatus } from "../../modules/contract.ts"
 import { beaconFromConfig, beaconSend, testMessage } from "../../lib/beacon.ts"
 import { loadConfig } from "../../config.ts"
+import { upcomingRuns } from "../../modules/scheduler.ts"
 
 interface Card {
   id: ModuleId
@@ -42,16 +43,16 @@ function stateLabel(card: Card, status: ModuleStatus | undefined): { dot: string
 
 export function Modules({ rows }: { rows: number }) {
   const store = useStore()
-  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen } = store
+  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen, schedulerInstallOpen, setSchedulerInstallOpen } = store
   const [selected, setSelected] = useState(0)
   const [statuses, setStatuses] = useState<Map<ModuleId, ModuleStatus>>(new Map())
   const [testing, setTesting] = useState(false)
 
-  // Recompute on open and whenever the setup overlay closes (it may have
-  // changed the config). status() is cheap and never sends anything.
+  // Recompute on open and whenever a setup overlay closes (it may have changed
+  // the config). status() is cheap and never sends anything.
   const [tick, setTick] = useState(0)
   useEffect(() => {
-    if (beaconSetupOpen) return
+    if (beaconSetupOpen || schedulerInstallOpen) return
     let live = true
     void Promise.all(MODULES.map((m) => m.status())).then((list) => {
       if (live) setStatuses(new Map(list.map((s) => [s.id, s])))
@@ -59,7 +60,7 @@ export function Modules({ rows }: { rows: number }) {
     return () => {
       live = false
     }
-  }, [beaconSetupOpen, tick])
+  }, [beaconSetupOpen, schedulerInstallOpen, tick])
 
   const isActive = route === "modules" && !inputMode && !overlayOpen
   const card = CARDS[selected]!
@@ -88,6 +89,7 @@ export function Modules({ rows }: { rows: number }) {
       case "return":
       case "s":
         if (card.id === "beacon") return setBeaconSetupOpen(true)
+        if (card.id === "scheduler") return setSchedulerInstallOpen(true)
         return
       case "t":
         if (card.id === "beacon" && status && status.state !== "not_configured") return sendTest()
@@ -140,6 +142,7 @@ export function Modules({ rows }: { rows: number }) {
         hints={[
           { key: "↑↓/jk", label: "select" },
           ...(card.id === "beacon" ? [{ key: "⏎", label: beaconReady ? "reconfigure" : "set up" }] : []),
+          ...(card.id === "scheduler" ? [{ key: "⏎", label: status && status.state !== "not_configured" ? "reinstall" : "install" }] : []),
           ...(beaconReady ? [{ key: "t", label: testing ? "sending…" : "test page" }] : []),
         ]}
       />
@@ -191,6 +194,39 @@ function ModuleDetail({ card, status }: { card: Card; status: ModuleStatus | und
       {card.id === "beacon" && status.state !== "not_configured" && (
         <text content="⏎ reconfigure the pager  ·  t send a test page  ·  CLI: spinuptui beacon status" fg={theme.textFaint} />
       )}
+      {card.id === "scheduler" && <SchedulerDetail installed={status.state !== "not_configured"} />}
     </box>
+  )
+}
+
+function SchedulerDetail({ installed }: { installed: boolean }) {
+  const [runs] = useState(() => upcomingRuns())
+  return (
+    <>
+      <box style={{ height: 1 }} />
+      {!installed && (
+        <>
+          <text
+            content="Scheduler runs follow-ups on this machine while you're away: queue a check for tomorrow at 8 and the result arrives on your pager. It's also the clock the other modules run on, so turning it on is what makes this machine a station."
+            fg={theme.textDim}
+          />
+          <box style={{ height: 1 }} />
+          <text content="Press ⏎ to see exactly what it installs, then confirm." fg={theme.accent} />
+          <box style={{ height: 1 }} />
+        </>
+      )}
+      <text content={runs.length ? "Next up:" : "No follow-ups queued."} fg={theme.textDim} />
+      {runs.map((r) => (
+        <box key={`${r.source}/${r.id}`} style={{ flexDirection: "row" }}>
+          <text content={`  ${r.next.padEnd(17)} `} fg={theme.text} wrapMode="none" style={{ flexShrink: 0 }} />
+          <text content={`${r.source}/${r.id}`} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
+        </box>
+      ))}
+      <box style={{ height: 1 }} />
+      <text
+        content={`${installed ? "⏎ reinstall (repairs the unit)  ·  " : ""}CLI: spinuptui scheduler add | list | status`}
+        fg={theme.textFaint}
+      />
+    </>
   )
 }

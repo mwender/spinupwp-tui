@@ -30,7 +30,8 @@ interface ModuleDefinition {
   summary: string               // outcome copy, shared with the landing page
   dependsOn: ModuleId[]         // installed first; status shows what's missing
   configKey: string             // top-level key in config.json (= id)
-  stateDir(): string            // <configDir>/modules/<id>/
+  stateDir(): string            // <configDir>/modules/<id>/: machine state
+  workDir(): string             // ~/SpinupTUI/<id>/: the user's work (added 2026-10-23)
   jobs: ScheduledJobDecl[]      // recurring work, handed to Scheduler (Beacon: none)
   status(): Promise<ModuleStatus>
 }
@@ -54,7 +55,8 @@ interface ScheduledJobDecl {
 **The rules behind the shape:**
 
 - **Config lives in one place.** A module's settings are a top-level key in the existing `config.json`, named after the module. The key is machine-level, not per account: one operator's pager serves every SpinupWP account on the machine, the same way the Uptime Kuma login does. A module that later needs per-account data (Sentinel's per-site expectations) adds it to the profile keys explicitly.
-- **State lives in its own directory.** Logs, high-water marks and reports go in `<configDir>/modules/<id>/`. Nothing a module writes during a run touches `config.json`. Writes to `config.json` are not atomic and not locked, and a frequent unattended writer racing a running TUI would lose one side's change. Config is written only by deliberate setup commands.
+- **State lives in its own directory.** Logs, locks and high-water marks go in `<configDir>/modules/<id>/`. Nothing a module writes during a run touches `config.json`. Writes to `config.json` are not atomic and not locked, and a frequent unattended writer racing a running TUI would lose one side's change. Config is written only by deliberate setup commands.
+- **Your work lives where you can see it.** Anything a person reads, keeps or shares (Scheduler's jobs and reports, Sentinel's write-ups, Samurai's proposals) goes in `~/SpinupTUI/<id>/`, not in the hidden config directory next to tokens. It's created on first use, `SPINUPTUI_HOME` (or `homeDir` in `config.json`) moves it, and it's deliberately not `~/Documents`, which iCloud may sync. Added 2026-10-23 with Scheduler; see `docs/2026-10-20_scheduler-spec.md`.
 - **Schedules are declarations, not OS units.** A module never installs a launchd or systemd unit. It lists its recurring jobs, and Scheduler (next session) runs them from its single dispatcher. Beacon has no recurring work, so its list is empty.
 - **Status is a function, not a file.** `status()` computes health on demand from config and state, so it can't go stale. It must be cheap and must not send anything.
 - **Every module has a CLI first.** The TUI is a front end over the same functions. Headless commands print one JSON result on stdout and progress on stderr, and use the existing `{ ok: false, reason, message, remedy? }` failure shape.

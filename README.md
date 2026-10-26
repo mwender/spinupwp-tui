@@ -82,6 +82,11 @@
   pages you on Telegram from any cron job, watcher or agent, with retries, long
   messages split instead of dropped, and a send log. A guided setup creates the
   bot connection for you. → [docs/beacon.md](docs/beacon.md)
+  Then **Scheduler**: follow-ups that run themselves. Queue "check this
+  tomorrow at 8" from any session, and the result arrives through Beacon. Jobs
+  and reports live in `~/SpinupTUI/scheduler/`; make that folder a git
+  repository to queue from any machine. One LaunchAgent ticks every
+  5 minutes and is the clock the other modules run on. → [docs/scheduler.md](docs/scheduler.md)
 - **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
   resolves a domain to a live SSH target with a live connectivity probe;
   `spinuptui ssh-exec <domain> -- <command>` runs a command over SSH, but only
@@ -375,7 +380,7 @@ These can be set in `config.json` or via an environment variable:
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `A` | Accounts — switch, add, rename, or remove SpinupWP accounts (from anywhere) |
-| `⏎` / `s` | Set up the selected module — Beacon opens its guided Telegram setup (Modules tab) |
+| `⏎` / `s` | Set up the selected module — Beacon opens its guided Telegram setup, Scheduler its install plan (Modules tab) |
 | `t` | Send a test page through Beacon (Modules tab, once Beacon is set up) |
 | `r` | Refresh data from the API |
 | `i` | Explain the current screen (what each pane and key does) |
