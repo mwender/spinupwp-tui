@@ -226,8 +226,21 @@ As with every module: one JSON result on stdout with `--json`, progress on stder
 - **sources**: each readable; for git sources, which station holds the claim, and whether this machine runs it or only queues.
 - **jobs**: how many are active, and any whose last run failed.
 - **Beacon**: whether digests can be delivered.
+- **heartbeat**: whether one is set, and whether Kuma took the last ping (see below).
 
 `not_configured` means no dispatcher is installed. The remedy is `spinuptui scheduler install --plan`.
+
+## Station heartbeat
+
+Added 2026-10-27. Since Beacon became the only sender, a station that stops (machine off, a bad release of the global binary, a missing LaunchAgent) silences every page, including the one that would say so. The heartbeat is the alarm that lives off the station. At the end of every **dispatcher** tick, Scheduler GETs an Uptime Kuma push URL (`scheduler.heartbeat.url`, set by `scheduler heartbeat set`, which pings before saving), with `status`, `msg` (the tick's outcome) and `ping` (the tick's duration). When the pings stop, Kuma pages through its own notification channel.
+
+- **Owned by the station, carried by Scheduler.** The heartbeat isn't Sentinel's: a station running only Beacon and Scheduler needs one too. Scheduler is the station's clock, so its tick carries the ping. Station setup will configure it when that exists.
+- **Down means "running, but can't page you".** The ping says `down` when Beacon has no channel or its last send failed (`send.log`). That clears itself with the next page that gets through. This is the one failure Beacon can't report about itself.
+- **Only the dispatcher pings.** Manual ticks and `run` don't, so they can't mask a stopped dispatcher. This is the same rule as `last-tick.json`.
+- **Bounded.** The ping times out after 10 seconds. A failed ping is recorded in the tick (`heartbeat` in `last-tick.json`, plus an error) and shown by `status`. It never fails the tick.
+- **Kuma off the station.** A monitor on the station itself would die with it. The docs point at a small VPS as the easiest home, and that's the first deployment a future Kuma bootstrap will support.
+
+This retires the separate watchdog that watched the old incident watcher, once Sentinel's tick runs as a Scheduler job: a wedged job is killed by the job timeout, and a wedged station is caught by the heartbeat.
 
 ## The Modules screen
 

@@ -36,6 +36,7 @@ import {
 } from "./schedulerJobs.ts"
 import { jobEnv, notify, runJob, runProcess, selfCommand } from "./schedulerRun.ts"
 import { commitAndPush, decideClaim, gitPull, readClaim, stationName } from "./schedulerGit.ts"
+import { pagerProblem, sendHeartbeat, tickHeartbeat } from "./heartbeat.ts"
 
 const LOG_MAX_BYTES = 1_000_000
 const MODULE_JOB_TIMEOUT_MS = 10 * 60_000
@@ -289,8 +290,16 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
       ...(notRunHere.length ? { notRunHere } : {}),
     }
     // Only the dispatcher's ticks count as "the station is alive": a manual
-    // `run` or `tick --here` must not mask a dispatcher that has stopped.
+    // `run` or `tick --here` must not mask a dispatcher that has stopped. The
+    // same goes for the heartbeat, which tells Kuma the clock is running.
     if (opts.via === "dispatcher") {
+      const hb = loadConfig().scheduler?.heartbeat
+      if (hb) {
+        const t = tickHeartbeat(ran.length, errors, pagerProblem())
+        const r = await sendHeartbeat(hb.url, t.status, t.msg, record.durationMs)
+        record.heartbeat = { ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) }
+        if (!r.ok) record.errors.push(`heartbeat: Kuma didn't take the ping (${r.error})`)
+      }
       writeFileSync(`${lastTickPath()}.tmp`, JSON.stringify(record, null, 2) + "\n")
       renameSync(`${lastTickPath()}.tmp`, lastTickPath())
     }

@@ -142,6 +142,9 @@ export interface SchedulerStored {
   queueOnly?: string[]
   // Written by `scheduler install --apply`, cleared by uninstall.
   dispatcher?: { label: string; unitPath: string; bin: string; installedAt: string }
+  // The station heartbeat: an Uptime Kuma push monitor, pinged at the end of
+  // every dispatcher tick (lib/heartbeat.ts). Set by `scheduler heartbeat set`.
+  heartbeat?: { url: string; setAt: string }
 }
 
 export interface ServerProviderRef {
