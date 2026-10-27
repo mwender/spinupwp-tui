@@ -80,6 +80,21 @@ Each run writes a report to `runs/<id>/<YYYY-MM-DD-HHMM>.md`, with the schedule,
 
 `status` (and the Modules tab) reports how long ago the dispatcher last ticked. More than 15 minutes means the station's clock has stopped. A manual `run` doesn't count, so it can't hide a dead dispatcher.
 
+## Know when the station itself stops
+
+`status` can only tell you the clock stopped if you look. If the machine is off, the installed `spinuptui` is broken, or the LaunchAgent is gone, nothing on the station can page you, because the pager is on the station too. The heartbeat closes that gap from outside: at the end of every dispatcher tick, Scheduler pings an [Uptime Kuma](https://github.com/louislam/uptime-kuma) push monitor running on another machine. A small VPS is the easiest place for it. When the pings stop, Kuma alerts you through its own notifications.
+
+1. In Kuma: **Add New Monitor**, with **Monitor Type: Push** and **Heartbeat Interval: 900** seconds (three missed ticks). Give it a notification that doesn't go through Beacon.
+2. Copy its push URL, then:
+
+```sh
+spinuptui scheduler heartbeat set 'https://kuma.example.com/api/push/AbC123?status=up&msg=OK&ping='
+```
+
+`set` sends a ping first and saves the URL only if Kuma accepts it. Quote the URL, because it contains `?` and `&`.
+
+Each ping carries the tick's result: what ran and the first problem, if there was one. It reports **down** when the station is running but can't page you, because Beacon isn't set up or its last page failed. A broken pager then reaches you through Kuma instead of going unnoticed. Manual ticks and `run` never ping, so they can't hide a dispatcher that has stopped. `spinuptui scheduler heartbeat` shows the last ping, `heartbeat test` sends one now, and `heartbeat remove` stops them; pause the monitor in Kuma too.
+
 ## Queue from anywhere: make it a git repository
 
 To queue jobs from other machines, share `~/SpinupTUI/` through a private git repository. SpinupTUI does it for you, after showing you the plan:

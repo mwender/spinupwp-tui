@@ -235,6 +235,8 @@ export interface TickRecord {
   errors: string[]
   // Git sources another station runs (or released here): expected, not errors.
   notRunHere?: string[]
+  // The station heartbeat's ping at the end of this tick, when one is set.
+  heartbeat?: { ok: boolean; status: "up" | "down"; error?: string }
 }
 
 export const lastTickPath = () => join(schedulerStateDir(), "last-tick.json")

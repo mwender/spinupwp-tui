@@ -104,6 +104,19 @@ export const schedulerModule: ModuleDefinition = {
     checks.push({ name: "jobs", ok: failed.length === 0, detail: `${active} active${failed.length ? `; not ok in the last day: ${failed.slice(0, 3).join(", ")}` : ""}` })
     const beacon = beaconFromConfig(cfg)
     checks.push({ name: "digests", ok: beacon.channels.length > 0, detail: beacon.channels.length ? `via Beacon (${beacon.defaultChannel ?? "no default"})` : "Beacon isn't set up, so runs aren't reported" })
+    const hb = cfg.scheduler?.heartbeat
+    const lastHb = last?.heartbeat
+    checks.push({
+      name: "heartbeat",
+      ok: !hb || !lastHb || lastHb.ok,
+      detail: !hb
+        ? "not set: nothing outside this machine notices if it stops (spinuptui scheduler heartbeat set <kuma-push-url>)"
+        : !lastHb
+          ? `${new URL(hb.url).host}: first ping on the next dispatcher tick`
+          : lastHb.ok
+            ? `pinging ${new URL(hb.url).host} every tick (last: ${lastHb.status})`
+            : `last ping to ${new URL(hb.url).host} failed: ${lastHb.error}`,
+    })
 
     if (!installed && !d) {
       return {
