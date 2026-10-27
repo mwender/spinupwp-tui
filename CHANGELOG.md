@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Your SpinupTUI folder explains itself, and can be shared across machines in one step.** `~/SpinupTUI/`, where Scheduler keeps your jobs and reports, now gets a `README.md` when it's created, covering what each part is, which parts are yours to edit, and how to move or share it. `spinuptui home` shows where it is and whether it's shared. `spinuptui home sync --plan|--apply` shares it through a private git repository: it creates one on GitHub (`--github <name>`, using the GitHub CLI) or pushes to an empty one you made (`--remote <url>`). Then you can queue jobs from any machine and read the reports anywhere. On a second machine, `--clone <url>` sets up the same folder. It won't share a folder inside iCloud, Dropbox or another sync service, push to a repository that already has commits, or use a public GitHub repository. The Modules tab shows where jobs and reports land, and `f` on Scheduler walks through the same steps. Queuing a job now prints the full path of the job file and where its reports will go.
+
 ### Fixed
 - **Scheduler no longer reports a problem on every tick before you've queued anything locally.** `~/SpinupTUI/scheduler/` is created on first use, so its absence is normal; `scheduler status` used to list "source local … does not exist" as a problem from the last tick.
 

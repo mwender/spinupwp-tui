@@ -74,7 +74,7 @@ spinuptui scheduler cancel verify-410s   # remove it; its reports stay
 spinuptui scheduler status               # is the station's clock running?
 ```
 
-Jobs and reports live in **`~/SpinupTUI/scheduler/`**, a visible folder that's yours to read, back up or share. It's created the first time you queue something. (`SPINUPTUI_HOME` moves it. It's deliberately not in `~/Documents`, which iCloud may sync.) SpinupTUI's own bookkeeping (locks, the tick log) stays out of it, in `~/.config/spinupwp-tui/modules/scheduler/`.
+Jobs and reports live in **`~/SpinupTUI/scheduler/`**, a visible folder that's yours to read, back up or share. It's created the first time you queue something, with a `README.md` that explains each part. (`SPINUPTUI_HOME` moves it. It's deliberately not in `~/Documents`, which iCloud may sync.) SpinupTUI's own bookkeeping (locks, the tick log) stays out of it, in `~/.config/spinupwp-tui/modules/scheduler/`.
 
 Each run writes a report to `runs/<id>/<YYYY-MM-DD-HHMM>.md`, with the schedule, the duration, the exit code and the full output, and keeps `runs/<id>/state.json` up to date. A run that misses its slot (the machine was asleep or off) runs once on the next tick. Missed slots of a recurring job don't pile up.
 
@@ -82,13 +82,14 @@ Each run writes a report to `runs/<id>/<YYYY-MM-DD-HHMM>.md`, with the schedule,
 
 ## Queue from anywhere: make it a git repository
 
-To queue jobs from other machines, make `~/SpinupTUI/` a git repository with a remote:
+To queue jobs from other machines, share `~/SpinupTUI/` through a private git repository. SpinupTUI does it for you, after showing you the plan:
 
 ```sh
-cd ~/SpinupTUI && git init && git add -A && git commit -m "Follow-ups"
-git remote add origin git@github.com:you/spinuptui-followups.git   # a private repo
-git push -u origin main
+spinuptui home sync --github spinuptui-home --plan          # create a private GitHub repository (needs gh)
+spinuptui home sync --remote git@example.com:you/x.git --plan   # or use an empty private one you made
 ```
+
+Run it again with `--apply` to do it: `git init`, a `.gitignore`, a first commit, the remote, a push. On the Modules tab, `f` on Scheduler does the same thing step by step. It refuses a folder inside iCloud, Dropbox or another sync service (two programs syncing one `.git` can corrupt it), a remote that already has commits, and a public GitHub repository. On a second machine, `spinuptui home sync --clone <url> --apply` sets up the same folder there. `spinuptui home` shows where the folder is and whether it's shared. You can also do it by hand with `git init` and a remote; Scheduler only cares that the folder is a repository.
 
 That's all. Scheduler notices the repository and, before each tick, pulls it, runs whatever is due, then commits and pushes the reports. Its commits only ever touch `runs/` and its own claim file, never anything else you've changed or staged. On a laptop, clone the same repository to `~/SpinupTUI/`, and `scheduler add` there commits and pushes the job for you. Read results with `git pull`.
 
