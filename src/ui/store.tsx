@@ -51,7 +51,7 @@ import { carrySiteSettings, type SettingsCarryResult } from "../lib/cloneSetting
 import { syncAdditionalDomains } from "../lib/cloneDomains.ts"
 import { parseRepo, deployKeysSettingsUrl, ghAvailable, ghDeployKeyPresent, ghAddDeployKey, generateDeployKeypair, type RepoHost } from "../lib/gitDeployKey.ts"
 import { keychainAvailable, setSudoPassword, getSudoPassword, deleteSudoPassword } from "../lib/keychain.ts"
-import { StackCache, siteSignature, type CachedProbe } from "../lib/stackCache.ts"
+import { StackCache, siteSignature, isRecheckDue, type CachedProbe } from "../lib/stackCache.ts"
 import { resolvePhpEolDates, refreshPhpEolDates, isPhpEol as isPhpEolWith, offeredPhpVersions as offeredPhpVersionsWith, type PhpEolDates } from "../lib/phpEol.ts"
 import { resolveUbuntuEolDates, refreshUbuntuEolDates, isUbuntuEol as isUbuntuEolWith, type UbuntuEolDates } from "../lib/ubuntuEol.ts"
 import { wpCoreBusy } from "./wpCoreJobs.tsx"
@@ -825,6 +825,14 @@ interface StoreValue extends DataState {
   enableLocalSync: () => void
   // SpinupWP account slug (from env/config) for building web deep links.
   accountSlug: string | null
+  // Open a page in the SpinupWP web app. Deep links need the account slug, which
+  // the API doesn't expose; with none saved this asks for it (slugPrompt) and
+  // opens the page once it's given, rather than landing on the dashboard root.
+  // Returns true when the page opened straight away.
+  openInSpinupWP: (build: (slug: string) => string) => boolean
+  slugPrompt: { build: (slug: string) => string } | null
+  setSlugPrompt: (p: { build: (slug: string) => string } | null) => void
+  saveAccountSlug: (slug: string) => void
   // The account (profile) this store is mounted for — see config.ts "Accounts".
   // Switching remounts the whole store, so these never change under a view.
   profileId: string
@@ -1038,6 +1046,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })
   }, [])
   const [profileLabel, setProfileLabel] = useState(cfgRef.current.profileLabel)
+  const [accountSlug, setAccountSlug] = useState(cfgRef.current.accountSlug)
+  const [slugPrompt, setSlugPrompt] = useState<{ build: (slug: string) => string } | null>(null)
+  const saveAccountSlug = useCallback((slug: string) => {
+    cfgRef.current.accountSlug = slug
+    setAccountSlug(slug)
+    void saveProfileConfig({ accountSlug: slug })
+  }, [])
+  const openInSpinupWP = useCallback(
+    (build: (slug: string) => string) => {
+      if (accountSlug) {
+        openUrl(build(accountSlug))
+        return true
+      }
+      setSlugPrompt({ build })
+      return false
+    },
+    [accountSlug],
+  )
   const [route, setRoute] = useState<Route>("dashboard")
   const [inputMode, setInputMode] = useState(false)
   const [overlayOpen, setOverlayOpen] = useState(false)
@@ -1258,7 +1284,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const probeOne = useCallback(
-    async (site: Site) => {
+    async (site: Site): Promise<boolean> => {
       const cache = cacheRef.current!
       setProbingIds((prev) => new Set(prev).add(site.id))
       setProbeErrors((prev) => {
@@ -1280,6 +1306,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         next.delete(site.id)
         return next
       })
+      return outcome.ok
     },
     [servers],
   )
@@ -1312,6 +1339,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   const isProbeStale = useCallback((site: Site) => cacheRef.current!.isStale(site.id, siteSignature(site)), [])
+
+  // Re-check WordPress versions that have gone old, whenever the site list loads
+  // (launch, and every `r`). Only sites already probed successfully: an unprobed
+  // site's stack is the user's call (`d`/`D`), and it may not be reachable at all.
+  // Each site gets at most one automatic attempt per max-age window, recorded in
+  // the cache so it holds across launches: a site whose probe now fails keeps its
+  // old reading (shown with its age) instead of being retried on every launch or
+  // refresh. Dev Mode's servers aren't real.
+  //
+  // Unattended SSH must not trip fail2ban, which bans the source IP after a few
+  // failed logins on one server. So each server's sites go one at a time, and the
+  // first failure on a server ends that server's run for this window: at most one
+  // failed login per server per day. Servers run in parallel, a few at a time.
+  useEffect(() => {
+    if (isDevMode() || servers.length === 0) return
+    const cache = cacheRef.current!
+    const now = Date.now()
+    const due = sites.filter((s) => isRecheckDue(cache.get(s.id), now))
+    if (due.length === 0) return
+    // Marked up front, all of them: a reload mid-run must not queue these again,
+    // and a server's sites after its first failure are skipped for the window too.
+    void cache.noteRecheck(due.map((s) => s.id))
+    const byServer = new Map<number, Site[]>()
+    for (const s of due) byServer.set(s.server_id, [...(byServer.get(s.server_id) ?? []), s])
+    const queues = [...byServer.values()]
+    let cursor = 0
+    const worker = async () => {
+      while (cursor < queues.length) {
+        for (const site of queues[cursor++]) if (!(await probeOne(site))) break
+      }
+    }
+    for (let i = 0; i < Math.min(3, queues.length); i++) void worker()
+    // probeOne changes identity with `servers`, which reloads together with
+    // `sites` — this should only re-run when the site list itself is reloaded.
+  }, [sites, servers])
 
   const isPhpEol = useCallback((version: string | null | undefined) => isPhpEolWith(version, phpEolDates), [phpEolDates])
   const offeredPhpVersions = useCallback(
@@ -4587,7 +4649,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     enableLocalSyncSite,
     setEnableLocalSyncSite,
     enableLocalSync,
-    accountSlug: cfgRef.current.accountSlug,
+    accountSlug,
+    openInSpinupWP,
+    slugPrompt,
+    setSlugPrompt,
+    saveAccountSlug,
     profileId: cfgRef.current.profileId,
     profileLabel,
     setProfileLabel,

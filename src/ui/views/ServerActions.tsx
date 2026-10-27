@@ -19,7 +19,6 @@ import { Panel, Spinner, Centered } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
 import { moveSelection } from "../List.tsx"
-import { openUrl } from "../../lib/open.ts"
 import { serverWebUrl } from "../../lib/spinupweb.ts"
 import { toast } from "../toast.ts"
 import type { RebootInfo } from "../../lib/ssh.ts"
@@ -67,7 +66,7 @@ export function ServerActions() {
     rebootInfoLoading,
     rebootInfoErrors,
     loadRebootInfo,
-    accountSlug,
+    openInSpinupWP,
     refresh,
   } = store
 
@@ -161,8 +160,11 @@ export function ServerActions() {
           return
         case "w":
           if (upgradeRequired && server) {
-            openUrl(serverWebUrl(server.id, accountSlug))
-            toast.success(accountSlug ? "Opening in SpinupWP…" : "Set accountSlug for deep links — opening dashboard")
+            const id = server.id
+            if (openInSpinupWP((slug) => serverWebUrl(id, slug))) toast.success("Opening in SpinupWP…")
+            // No slug yet: the prompt takes over — close this overlay so its
+            // keys don't fire underneath.
+            else close()
           }
           return
       }

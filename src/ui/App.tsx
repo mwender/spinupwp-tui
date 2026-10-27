@@ -19,6 +19,7 @@ import { SiteUpdate } from "./views/SiteUpdate.tsx"
 import { BulkWpUpdate } from "./views/BulkWpUpdate.tsx"
 import { HttpsToggle } from "./views/HttpsToggle.tsx"
 import { PurgeCache } from "./views/PurgeCache.tsx"
+import { AccountSlugPrompt } from "./views/AccountSlugPrompt.tsx"
 import { SiteOffline } from "./views/SiteOffline.tsx"
 import { ReleaseNotes } from "./views/ReleaseNotes.tsx"
 import { GrantKey } from "./views/GrantKey.tsx"
@@ -94,7 +95,8 @@ export function App() {
     store.dnsRecordsTarget !== null ||
     store.kumaSite !== null ||
     store.beaconSetupOpen ||
-    store.schedulerInstallOpen
+    store.schedulerInstallOpen ||
+    store.slugPrompt !== null
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
   }, [overlayActive, store])
@@ -131,6 +133,9 @@ export function App() {
 
     // The Accounts overlay owns the keyboard while open.
     if (showAccounts) return
+
+    // The account-slug prompt (from `w`) owns the keyboard while open.
+    if (store.slugPrompt) return
 
     // The release-notes overlay owns the keyboard while open (any key dismisses).
     if (store.releaseNotesInfo) return
@@ -304,6 +309,7 @@ export function App() {
       {store.beaconSetupOpen && <BeaconSetup />}
       {store.schedulerInstallOpen && <SchedulerInstall />}
       {showAccounts && <Accounts onClose={() => setShowAccounts(false)} />}
+      {store.slugPrompt && <AccountSlugPrompt />}
       <ToastStack />
     </box>
   )

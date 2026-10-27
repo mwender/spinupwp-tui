@@ -16,7 +16,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
-import { bar, truncate } from "../../lib/format.ts"
+import { bar, timeAgo, truncate } from "../../lib/format.ts"
+import { isVersionOld } from "../../lib/stackCache.ts"
 import { STACKS, effectiveStack, stackColor, type Stack } from "../../lib/stack.ts"
 import { phpSortKey } from "../../lib/phpEol.ts"
 import { probeKindColor, type ProbeKind } from "../../lib/probe.ts"
@@ -75,7 +76,7 @@ function nonWpSub(kind: ProbeKind | null, vanity: boolean): NonWpSub {
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
   const wpCoreJobs = useWpCoreJobs()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, setBulkWpGroup, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite, setKumaSite } =
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, openInSpinupWP, setPhpUpgradeSite, setBulkWpGroup, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite, setKumaSite } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
@@ -218,8 +219,8 @@ export function Stacks({ rows }: { rows: number }) {
       case "w":
         // Open the selected site in the SpinupWP web app.
         if (focus === "sites" && groupSites[siteIndex]) {
-          openUrl(siteWebUrl(groupSites[siteIndex].id, accountSlug))
-          flashMsg(accountSlug ? "Opening in SpinupWP…" : "Set accountSlug for deep links — opening dashboard")
+          const id = groupSites[siteIndex].id
+          if (openInSpinupWP((slug) => siteWebUrl(id, slug))) flashMsg("Opening in SpinupWP…")
         }
         return
       case "d":
@@ -421,11 +422,23 @@ export function Stacks({ rows }: { rows: number }) {
                     ) : vanity ? (
                       <text content="Vanity Site" fg={selected ? theme.text : VANITY_COLOR} wrapMode="none" />
                     ) : cached ? (
-                      <text
-                        content={truncate(cached.result.label, 20) + (isProbeStale(s) ? "*" : "")}
-                        fg={probeKindColor(cached.result.kind, selected)}
-                        wrapMode="none"
-                      />
+                      <>
+                        <text
+                          content={truncate(cached.result.label, 20) + (isProbeStale(s) ? "*" : "")}
+                          fg={probeKindColor(cached.result.kind, selected)}
+                          wrapMode="none"
+                        />
+                        {/* A version past its re-check age (the background re-probe
+                            failed or hasn't run) says how old it is, so it can't
+                            pass for current. */}
+                        {isVersionOld(cached) && (
+                          <text
+                            content={" " + timeAgo(new Date(cached.detectedAt).toISOString()).replace(/ ago$/, "")}
+                            fg={selected ? theme.text : theme.warn}
+                            wrapMode="none"
+                          />
+                        )}
+                      </>
                     ) : errored ? (
                       <text content="probe failed" fg={selected ? theme.text : theme.bad} wrapMode="none" />
                     ) : (
