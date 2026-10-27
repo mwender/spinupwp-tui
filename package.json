@@ -1,6 +1,6 @@
 {
   "name": "spinuptui",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "SpinupTUI — a terminal dashboard for browsing, monitoring, and managing your SpinupWP servers and sites.",
   "type": "module",
   "bin": {
