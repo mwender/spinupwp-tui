@@ -76,7 +76,7 @@ function nonWpSub(kind: ProbeKind | null, vanity: boolean): NonWpSub {
 export function Stacks({ rows }: { rows: number }) {
   const store = useStore()
   const wpCoreJobs = useWpCoreJobs()
-  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, accountSlug, setPhpUpgradeSite, setBulkWpGroup, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite, setKumaSite } =
+  const { sites, serverById, route, inputMode, overlayOpen, probes, probingIds, probeErrors, runProbe, runProbeMany, isProbeStale, isPhpEol, openInSpinupWP, setPhpUpgradeSite, setBulkWpGroup, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setLocalLinkSite, openLocalTerminal, openLocalUrl, localLinks, setDiscoverOpen, setForgottenOpen, setForgottenStack, sshSite, setKumaSite } =
     store
 
   const [groupIndex, setGroupIndex] = useState(0)
@@ -219,8 +219,8 @@ export function Stacks({ rows }: { rows: number }) {
       case "w":
         // Open the selected site in the SpinupWP web app.
         if (focus === "sites" && groupSites[siteIndex]) {
-          openUrl(siteWebUrl(groupSites[siteIndex].id, accountSlug))
-          flashMsg(accountSlug ? "Opening in SpinupWP…" : "Set accountSlug for deep links — opening dashboard")
+          const id = groupSites[siteIndex].id
+          if (openInSpinupWP((slug) => siteWebUrl(id, slug))) flashMsg("Opening in SpinupWP…")
         }
         return
       case "d":

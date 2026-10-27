@@ -305,8 +305,9 @@ These can be set in `config.json` or via an environment variable:
 - **`accountSlug`** / `SPINUPWP_ACCOUNT_SLUG` — your SpinupWP account/team slug
   (the first path segment in a SpinupWP URL, e.g. `acme-agency` in
   `https://spinupwp.app/acme-agency/servers/12345`). The API
-  doesn't expose it, so set it to enable the `w` deep links into the web app.
-  Without it, `w` opens the SpinupWP dashboard root.
+  doesn't expose it, so it's needed for the `w` deep links into the web app.
+  You don't have to set it by hand: first-run setup asks for it (optional), and
+  `w` asks the first time it's needed, then saves it to the current account.
 - **`sshUser`** / `SPINUPWP_SSH_USER` — override the SSH user for the health view
   and stack probes (see "Server health" below).
 - **`localSync`** / `SPINUPWP_LOCAL_SYNC` — opt-in for the **Pull production →
