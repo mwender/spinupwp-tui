@@ -754,6 +754,9 @@ interface StoreValue extends DataState {
   // The SpinupTUI folder: where it is, and sharing it across machines (Modules tab).
   homeSyncOpen: boolean
   setHomeSyncOpen: (v: boolean) => void
+  // The station heartbeat (Kuma push monitor) overlay, from the Modules tab.
+  heartbeatSetupOpen: boolean
+  setHeartbeatSetupOpen: (v: boolean) => void
   // Whether the "needs a local copy" (forgotten) report overlay is open, and an
   // optional stack filter (set from the selected Stacks group when opened).
   forgottenOpen: boolean
@@ -1152,6 +1155,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [beaconSetupOpen, setBeaconSetupOpen] = useState(false)
   const [schedulerInstallOpen, setSchedulerInstallOpen] = useState(false)
   const [homeSyncOpen, setHomeSyncOpen] = useState(false)
+  const [heartbeatSetupOpen, setHeartbeatSetupOpen] = useState(false)
   const [forgottenOpen, setForgottenOpen] = useState(false)
   const [forgottenStack, setForgottenStack] = useState<Stack | null>(null)
   const [linkReturnToForgotten, setLinkReturnToForgotten] = useState(false)
@@ -4614,6 +4618,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSchedulerInstallOpen,
     homeSyncOpen,
     setHomeSyncOpen,
+    heartbeatSetupOpen,
+    setHeartbeatSetupOpen,
     forgottenOpen,
     setForgottenOpen,
     forgottenStack,

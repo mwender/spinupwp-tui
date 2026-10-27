@@ -91,7 +91,7 @@ spinuptui scheduler heartbeat setup --plan     # what it will create, and who Ku
 spinuptui scheduler heartbeat setup --apply
 ```
 
-It creates a push monitor named `SpinupTUI station: <this machine>` that goes down after 15 minutes without a ping (three missed ticks), sends the first ping, and saves it. Run it again and it reuses that monitor. Kuma alerts through its default notification, or the only one you have. If you have several and none is the default, choose with `--notify <name>`.
+In the app, `h` on the Modules tab's Scheduler card does the same thing step by step. It also shows the last ping and can send a test ping or remove the heartbeat. It creates a push monitor named `SpinupTUI station: <this machine>` that goes down after 15 minutes without a ping (three missed ticks), sends the first ping, and saves it. Run it again and it reuses that monitor. Kuma alerts through its default notification, or the only one you have. If you have several and none is the default, choose with `--notify <name>`.
 
 Without a saved login, make the monitor by hand: in Kuma, **Add New Monitor** with **Monitor Type: Push**, **Heartbeat Interval: 900** seconds, and a notification. Copy its push URL, then:
 

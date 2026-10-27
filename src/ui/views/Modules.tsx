@@ -44,7 +44,7 @@ function stateLabel(card: Card, status: ModuleStatus | undefined): { dot: string
 
 export function Modules({ rows }: { rows: number }) {
   const store = useStore()
-  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen, schedulerInstallOpen, setSchedulerInstallOpen, homeSyncOpen, setHomeSyncOpen } = store
+  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen, schedulerInstallOpen, setSchedulerInstallOpen, homeSyncOpen, setHomeSyncOpen, heartbeatSetupOpen, setHeartbeatSetupOpen } = store
   const [selected, setSelected] = useState(0)
   const [statuses, setStatuses] = useState<Map<ModuleId, ModuleStatus>>(new Map())
   const [testing, setTesting] = useState(false)
@@ -53,7 +53,7 @@ export function Modules({ rows }: { rows: number }) {
   // the config). status() is cheap and never sends anything.
   const [tick, setTick] = useState(0)
   useEffect(() => {
-    if (beaconSetupOpen || schedulerInstallOpen || homeSyncOpen) return
+    if (beaconSetupOpen || schedulerInstallOpen || homeSyncOpen || heartbeatSetupOpen) return
     let live = true
     void Promise.all(MODULES.map((m) => m.status())).then((list) => {
       if (live) setStatuses(new Map(list.map((s) => [s.id, s])))
@@ -61,7 +61,7 @@ export function Modules({ rows }: { rows: number }) {
     return () => {
       live = false
     }
-  }, [beaconSetupOpen, schedulerInstallOpen, homeSyncOpen, tick])
+  }, [beaconSetupOpen, schedulerInstallOpen, homeSyncOpen, heartbeatSetupOpen, tick])
 
   const isActive = route === "modules" && !inputMode && !overlayOpen
   const card = CARDS[selected]!
@@ -94,6 +94,9 @@ export function Modules({ rows }: { rows: number }) {
         return
       case "f":
         if (card.id === "scheduler") return setHomeSyncOpen(true)
+        return
+      case "h":
+        if (card.id === "scheduler") return setHeartbeatSetupOpen(true)
         return
       case "t":
         if (card.id === "beacon" && status && status.state !== "not_configured") return sendTest()
@@ -150,6 +153,7 @@ export function Modules({ rows }: { rows: number }) {
             ? [
                 { key: "⏎", label: status && status.state !== "not_configured" ? "reinstall" : "install" },
                 { key: "f", label: "your folder" },
+                { key: "h", label: "heartbeat" },
               ]
             : []),
           ...(beaconReady ? [{ key: "t", label: testing ? "sending…" : "test page" }] : []),
@@ -212,6 +216,7 @@ function SchedulerDetail({ installed, refreshKey }: { installed: boolean; refres
   const [runs] = useState(() => upcomingRuns())
   // Level 0 of the SpinupTUI folder: always say where the work lands.
   const [home, setHome] = useState<HomeStatus | null>(null)
+  const heartbeatSet = !!loadConfig().scheduler?.heartbeat
   useEffect(() => {
     let live = true
     void homeStatus().then((h) => live && setHome(h))
@@ -244,6 +249,7 @@ function SchedulerDetail({ installed, refreshKey }: { installed: boolean; refres
       {home && <text content={`Jobs and reports: ${tilde(home.path)}`} fg={theme.textDim} wrapMode="none" />}
       {home && <text content={`  ${describeShare(home)}`} fg={home.git && home.remote ? theme.good : theme.textDim} wrapMode="none" />}
       <text content={home?.git && home.remote ? "f your folder" : "f share it across machines, so you can queue jobs from anywhere"} fg={theme.accent} wrapMode="none" />
+      <text content={heartbeatSet ? "h station heartbeat" : "h get alerted from elsewhere if this machine stops (station heartbeat)"} fg={theme.accent} wrapMode="none" />
       <box style={{ height: 1 }} />
       <text
         content={`${installed ? "⏎ reinstall (repairs the unit)  ·  " : ""}CLI: spinuptui scheduler add | list | status`}
