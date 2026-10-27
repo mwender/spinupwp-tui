@@ -30,7 +30,7 @@ import {
 import { applyInstall, applyUninstall, binHasScheduler, NO_SCHEDULER, planInstall, planUninstall } from "./schedulerInstall.ts"
 import { tick } from "./schedulerTick.ts"
 import { prepareWorkDir, tilde } from "./home.ts"
-import { pagerProblem, parsePushUrl, sendHeartbeat, tickHeartbeat } from "./heartbeat.ts"
+import { createStationMonitor, pagerProblem, parsePushUrl, planStationMonitor, sendHeartbeat, STATION_INTERVAL_S, tickHeartbeat } from "./heartbeat.ts"
 import { git, gitPull, readClaim, removeClaim, stationName, writeClaim } from "./schedulerGit.ts"
 
 const VALUE_FLAGS = new Set([
@@ -84,7 +84,7 @@ const USAGE = `Usage:
   spinuptui scheduler source release <name>   stop running it here; another station takes it
   spinuptui scheduler tick [--here]
   spinuptui scheduler install | uninstall --plan | --apply [--bin <path>]
-  spinuptui scheduler heartbeat [set '<kuma-push-url>' | test | remove]
+  spinuptui scheduler heartbeat [setup --plan|--apply [--notify <name>] | set '<kuma-push-url>' | test | remove]
                           ping an Uptime Kuma push monitor on another machine every
                           tick, so a station that stops (or can't page) is noticed
 
@@ -169,7 +169,7 @@ export async function runScheduler(argv: string[]): Promise<number> {
     case "install":
       return install(p, json)
     case "heartbeat":
-      return heartbeat(p.positionals.slice(1), json)
+      return heartbeat(p.positionals.slice(1), p.flags, json)
     case "uninstall":
       return uninstall(p, json)
   }
@@ -544,7 +544,7 @@ async function uninstall(p: Parsed, json: boolean): Promise<number> {
 
 // ---- the station heartbeat ------------------------------------------------------
 
-async function heartbeat(pos: string[], json: boolean): Promise<number> {
+async function heartbeat(pos: string[], flags: Map<string, string>, json: boolean): Promise<number> {
   const [action, arg] = pos
   const cfg = loadConfig()
   const stored = cfg.scheduler ?? {}
@@ -555,8 +555,11 @@ async function heartbeat(pos: string[], json: boolean): Promise<number> {
     if (json) console.log(JSON.stringify({ ok: true, set: !!current, ...(current ? { host: new URL(current.url).host, setAt: current.setAt } : {}), last }))
     else if (!current) {
       console.log("No heartbeat set. Nothing outside this machine notices if it stops ticking.")
-      console.log("Make a Push monitor in Uptime Kuma (on another machine; heartbeat interval 900s), then:")
-      console.log("  spinuptui scheduler heartbeat set '<its push URL>'")
+      if (cfg.uptimeKuma) console.log(`Set it up in your Uptime Kuma (${cfg.uptimeKuma.url}): spinuptui scheduler heartbeat setup --plan`)
+      else {
+        console.log("Make a Push monitor in Uptime Kuma (on another machine; heartbeat interval 900s), then:")
+        console.log("  spinuptui scheduler heartbeat set '<its push URL>'")
+      }
     } else {
       console.log(`Heartbeat: pings ${new URL(current.url).host} at the end of every dispatcher tick (set ${current.setAt.slice(0, 10)}).`)
       console.log(last ? `Last ping: ${last.ok ? "accepted" : `failed (${last.error})`}, status ${last.status}.` : "No dispatcher tick has pinged it yet.")
@@ -565,6 +568,7 @@ async function heartbeat(pos: string[], json: boolean): Promise<number> {
     }
     return 0
   }
+  if (action === "setup") return heartbeatSetup(flags, json)
   if (action === "set" || action === "test") {
     const url = action === "set" ? arg : current?.url
     if (!url) return fail(json, "usage", action === "set" ? "Usage: spinuptui scheduler heartbeat set '<kuma-push-url>'" : "No heartbeat set to test.")
@@ -597,5 +601,99 @@ async function heartbeat(pos: string[], json: boolean): Promise<number> {
     else console.log("Removed. Pause or delete the monitor in Kuma too, or it will report this station as down.")
     return 0
   }
-  return fail(json, "usage", "Usage: spinuptui scheduler heartbeat [set '<kuma-push-url>' | test | remove]")
+  return fail(json, "usage", "Usage: spinuptui scheduler heartbeat [setup --plan|--apply | set '<kuma-push-url>' | test | remove]")
+}
+
+// Pings `url` and saves it as the heartbeat; the shared end of `set` and `setup`.
+async function connectHeartbeat(url: string, host: string): Promise<{ ok: true; status: "up" | "down" } | { ok: false; error: string }> {
+  const cfg = loadConfig()
+  const t = tickHeartbeat(0, [], pagerProblem(cfg))
+  const r = await sendHeartbeat(url, t.status, `${host}: heartbeat connected (${t.msg})`)
+  if (!r.ok) return { ok: false, error: r.error ?? "unknown error" }
+  await saveConfig({ scheduler: { ...(cfg.scheduler ?? {}), heartbeat: { url: parsePushUrl(url)!.toString(), setAt: new Date().toISOString() } } })
+  return { ok: true, status: t.status }
+}
+
+async function heartbeatSetup(flags: Map<string, string>, json: boolean): Promise<number> {
+  const apply = flags.has("--apply")
+  if (apply === flags.has("--plan")) return fail(json, "usage", "Pass --plan to see what would be created in Kuma, or --apply to create it.")
+  const cfg = loadConfig()
+  const conn = cfg.uptimeKuma
+  if (!conn) {
+    return fail(
+      json,
+      "no_kuma",
+      "SpinupTUI has no Uptime Kuma login to set it up with.",
+      "Connect Kuma in the app (site monitoring, M), or make a Push monitor by hand (interval 900s) and run: spinuptui scheduler heartbeat set '<its push URL>'",
+    )
+  }
+  const host = stationName()
+  const saveJwt = async (jwt: string) => {
+    if (!conn.env && jwt && jwt !== conn.jwt) await saveConfig({ uptimeKuma: { url: conn.url, username: conn.username, password: conn.password, jwt } })
+  }
+  let plan
+  try {
+    const r = await planStationMonitor(conn, host, flags.get("--notify") || undefined)
+    plan = r.plan
+    await saveJwt(r.jwt)
+  } catch (e) {
+    const msg = (e as Error).message
+    return fail(
+      json,
+      "kuma_failed",
+      `Couldn't read Uptime Kuma at ${conn.url}: ${msg}`,
+      /2FA|token/i.test(msg) ? "Its saved session has expired. Log in again from the app (M on any site, with your 2FA code), then rerun this; it reuses that session." : undefined,
+    )
+  }
+  const who = plan.chosen.map((n) => n.name)
+  if (!plan.existing && plan.needChoice) return fail(json, "choose_notification", plan.needChoice, "e.g. spinuptui scheduler heartbeat setup --plan --notify \"<name>\"")
+  const steps = [
+    plan.existing ? `Use the existing Kuma monitor "${plan.name}" (#${plan.existing.id})` : `Create a push monitor "${plan.name}" in ${conn.url}: down after ${STATION_INTERVAL_S / 60} min without a ping`,
+    "Ping it once, then save it: every dispatcher tick pings it from then on",
+  ]
+  const notes = [
+    plan.existing
+      ? "The existing monitor keeps its own notification settings."
+      : `When it goes down, Kuma alerts: ${who.join(", ")}. That doesn't go through Beacon, which is the point.`,
+    "Kuma must run on another machine: a monitor on this station would stop with it.",
+  ]
+  if (!apply) {
+    if (json) console.log(JSON.stringify({ ok: true, applied: false, kuma: conn.url, monitor: plan.name, existing: plan.existing?.id ?? null, notifications: who, steps, notes }))
+    else {
+      console.log("Plan:")
+      steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`))
+      for (const n of notes) console.log(`\n${n}`)
+      console.log("\nRun with --apply to do it.")
+    }
+    return 0
+  }
+  let url = plan.existing?.url
+  let created: number | null = null
+  if (!url) {
+    try {
+      const r = await createStationMonitor(conn, host, plan.chosen.map((n) => n.id))
+      url = r.url
+      created = r.id
+      await saveJwt(r.jwt)
+    } catch (e) {
+      return fail(json, "kuma_failed", `Kuma didn't create the monitor: ${(e as Error).message}`)
+    }
+  }
+  const r = await connectHeartbeat(url, host)
+  if (!r.ok) {
+    return fail(
+      json,
+      "ping_failed",
+      `${created ? `Created monitor #${created}, but ` : ""}Kuma didn't take the first ping: ${r.error}`,
+      "Check this machine can reach Kuma, then run setup --apply again (it reuses the monitor).",
+    )
+  }
+  const dispatcher = !!loadConfig().scheduler?.dispatcher
+  if (json) console.log(JSON.stringify({ ok: true, applied: true, monitorId: created ?? plan.existing!.id, created: created !== null, status: r.status, dispatcher }))
+  else {
+    console.log(`${created ? `Created "${plan.name}" (#${created}) and` : `Reused "${plan.name}" and`} sent the first ping (status ${r.status}).`)
+    if (r.status === "down") console.log(`It says "down" because ${pagerProblem()}. Fix that and the next tick reports "up".`)
+    console.log(dispatcher ? "Every dispatcher tick pings it from now on." : "This machine has no dispatcher yet, so nothing pings it until you install one: spinuptui scheduler install --plan")
+  }
+  return 0
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { AppConfig } from "../config.ts"
-import { pagerProblem, parsePushUrl, pingUrl, sendHeartbeat, tickHeartbeat } from "./heartbeat.ts"
+import { chooseNotifications, pagerProblem, parsePushUrl, pingUrl, sendHeartbeat, stationMonitorPayload, tickHeartbeat } from "./heartbeat.ts"
 
 const PUSH = "https://kuma.example.com/api/push/AbC123?status=up&msg=OK&ping="
 
@@ -64,5 +64,23 @@ describe("sendHeartbeat against a fake Kuma", () => {
       server.stop(true)
     }
     expect((await sendHeartbeat("http://127.0.0.1:1/api/push/x", "up", "m")).ok).toBe(false)
+  })
+})
+
+describe("station monitor setup", () => {
+  const n = (id: number, name: string, isDefault = false) => ({ id, name, active: true, isDefault })
+
+  test("who it alerts", () => {
+    expect(chooseNotifications([n(1, "Pager")]).chosen.map((x) => x.id)).toEqual([1])
+    expect(chooseNotifications([n(1, "Email"), n(2, "Telegram", true)]).chosen.map((x) => x.id)).toEqual([2])
+    expect(chooseNotifications([n(1, "Email"), n(2, "Telegram")]).needChoice).toMatch(/--notify/)
+    expect(chooseNotifications([n(1, "Email"), n(2, "Telegram")], "telegram").chosen.map((x) => x.id)).toEqual([2])
+    expect(chooseNotifications([n(1, "Email")], "2").needChoice).toMatch(/No active Kuma notification/)
+    expect(chooseNotifications([]).needChoice).toMatch(/no active notifications/)
+  })
+
+  test("a push monitor that waits three ticks", () => {
+    const p = stationMonitorPayload("SpinupTUI station: x", "tok")
+    expect(p).toMatchObject({ type: "push", pushToken: "tok", interval: 900, maxretries: 0 })
   })
 })

@@ -11,8 +11,9 @@
 // the station's clock, until station setup exists. See
 // docs/2026-10-20_scheduler-spec.md, "Station heartbeat".
 
-import { loadConfig, type AppConfig } from "../config.ts"
+import { loadConfig, type AppConfig, type UptimeKumaConn } from "../config.ts"
 import { beaconFromConfig, lastSendLogEntry } from "./beacon.ts"
+import { genPushToken, pushUrl, withKuma, type KumaNotificationInfo } from "./uptimeKuma.ts"
 
 export const HEARTBEAT_TIMEOUT_MS = 10_000
 
@@ -77,4 +78,83 @@ export function tickHeartbeat(ranCount: number, errors: string[], pager: string 
   if (pager) return { status: "down", msg: `Station is up, but ${pager}` }
   const what = ranCount ? `${ranCount} job${ranCount === 1 ? "" : "s"} ran` : "nothing due"
   return { status: "up", msg: errors.length ? `tick ok, ${what}; ${errors.length} problem${errors.length === 1 ? "" : "s"}: ${errors[0]}` : `tick ok, ${what}` }
+}
+
+// ---- setup through SpinupTUI's own Kuma login --------------------------------------
+//
+// With a Kuma login saved (the one site monitoring uses), SpinupTUI creates the
+// station's push monitor itself: one per station, found again by name, so
+// re-running repairs rather than duplicates. Without one, `heartbeat set <url>`
+// takes a monitor made by hand.
+
+// Three missed 5-minute ticks, the same threshold `scheduler status` uses.
+export const STATION_INTERVAL_S = 900
+
+export const stationMonitorName = (host: string) => `SpinupTUI station: ${host}`
+
+export function stationMonitorPayload(name: string, pushToken: string): Record<string, unknown> {
+  return {
+    type: "push",
+    name,
+    pushToken,
+    description: "Pinged by SpinupTUI's Scheduler at the end of every tick. Down = the station stopped, or it can't page you (see the message).",
+    interval: STATION_INTERVAL_S,
+    retryInterval: 60,
+    maxretries: 0,
+    upsideDown: false,
+    accepted_statuscodes: ["200-299"],
+  }
+}
+
+export interface StationMonitorPlan {
+  kumaUrl: string
+  name: string
+  existing: { id: number; url: string } | null
+  // Every active notification in this Kuma, and the ones the monitor will use.
+  available: KumaNotificationInfo[]
+  chosen: KumaNotificationInfo[]
+  // Why none could be chosen (ask for --notify), when that's the case.
+  needChoice: string | null
+}
+
+// Who the station monitor alerts: the one asked for by name or id; else
+// Kuma's default notifications; else the only one there is. Several and no
+// default means asking: alerting the wrong channel (or none) defeats the point.
+export function chooseNotifications(available: KumaNotificationInfo[], want?: string): { chosen: KumaNotificationInfo[]; needChoice: string | null } {
+  const list = available.map((n) => `"${n.name}"`).join(", ")
+  if (want) {
+    const hit = available.find((n) => n.name.toLowerCase() === want.toLowerCase() || String(n.id) === want)
+    return hit ? { chosen: [hit], needChoice: null } : { chosen: [], needChoice: `No active Kuma notification called "${want}". Choose one of: ${list}` }
+  }
+  const defaults = available.filter((n) => n.isDefault)
+  if (defaults.length) return { chosen: defaults, needChoice: null }
+  if (available.length === 1) return { chosen: available, needChoice: null }
+  if (!available.length) return { chosen: [], needChoice: "This Kuma has no active notifications, so the monitor would alert no one. Add one in Kuma (Settings → Notifications) first." }
+  return { chosen: [], needChoice: `This Kuma has several notifications and no default. Choose who the station alerts with --notify <name>: ${list}` }
+}
+
+export async function planStationMonitor(conn: UptimeKumaConn, host: string, want?: string): Promise<{ plan: StationMonitorPlan; jwt: string }> {
+  const name = stationMonitorName(host)
+  const { result, jwt } = await withKuma(conn, async (kuma) => {
+    const found = (await kuma.getMonitors()).find((m) => m.name === name && m.type === "push" && m.pushToken)
+    const available = (await kuma.getNotifications()).filter((n) => n.active)
+    return { found, available }
+  })
+  return {
+    plan: {
+      kumaUrl: conn.url,
+      name,
+      existing: result.found ? { id: result.found.id, url: pushUrl(conn.url, result.found.pushToken!) } : null,
+      available: result.available,
+      ...chooseNotifications(result.available, want),
+    },
+    jwt,
+  }
+}
+
+export async function createStationMonitor(conn: UptimeKumaConn, host: string, notificationIds: number[]): Promise<{ id: number; url: string; jwt: string }> {
+  const token = genPushToken()
+  const notificationIDList = Object.fromEntries(notificationIds.map((id) => [String(id), true]))
+  const { result, jwt } = await withKuma(conn, (kuma) => kuma.addMonitor({ ...stationMonitorPayload(stationMonitorName(host), token), notificationIDList }))
+  return { id: result, url: pushUrl(conn.url, token), jwt }
 }
