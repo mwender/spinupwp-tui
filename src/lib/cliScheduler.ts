@@ -3,7 +3,7 @@
 // result object on stdout, progress goes to stderr, failures use the
 // { ok: false, reason, message, remedy? } shape and exit 1.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { join, relative, resolve } from "node:path"
 import { loadConfig, saveConfig } from "../config.ts"
 import { schedulerModule } from "../modules/scheduler.ts"
@@ -22,11 +22,13 @@ import {
   LOCAL_SOURCE,
   parseJobText,
   renderJob,
+  runsDir,
   validateJob,
   type Source,
 } from "./schedulerJobs.ts"
 import { applyInstall, applyUninstall, binHasScheduler, NO_SCHEDULER, planInstall, planUninstall } from "./schedulerInstall.ts"
 import { tick } from "./schedulerTick.ts"
+import { prepareWorkDir, tilde } from "./home.ts"
 import { git, gitPull, readClaim, removeClaim, stationName, writeClaim } from "./schedulerGit.ts"
 
 const VALUE_FLAGS = new Set([
@@ -295,7 +297,7 @@ async function add(pos: string[], p: Parsed, json: boolean): Promise<number> {
   const problems = validateJob(parsed.header, parsed.body, `${id}.md`)
   if (problems.length) return fail(json, "invalid_job", `Not added: ${problems.join("; ")}`)
 
-  mkdirSync(jobsDir(s), { recursive: true })
+  prepareWorkDir(jobsDir(s))
   writeFileSync(`${path}.tmp`, text)
   renameSync(`${path}.tmp`, path)
   let pushed: boolean | null = null
@@ -308,7 +310,7 @@ async function add(pos: string[], p: Parsed, json: boolean): Promise<number> {
   }
   const result = { ok: true, source: s.name, id, path, pushed }
   if (json) console.log(JSON.stringify(result))
-  else console.log(`Queued ${s.name}/jobs/${id}.md${pushed ? " and pushed it" : ""}. The station runs it within 5 minutes of it falling due.`)
+  else console.log(`Queued ${tilde(path)}${pushed ? " and pushed it" : ""}. The station runs it within 5 minutes of it falling due; reports go in ${tilde(join(runsDir(s), id))}/.`)
   return 0
 }
 

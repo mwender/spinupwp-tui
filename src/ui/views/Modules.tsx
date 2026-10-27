@@ -17,6 +17,7 @@ import type { ModuleId, ModuleStatus } from "../../modules/contract.ts"
 import { beaconFromConfig, beaconSend, testMessage } from "../../lib/beacon.ts"
 import { loadConfig } from "../../config.ts"
 import { upcomingRuns } from "../../modules/scheduler.ts"
+import { describeShare, homeStatus, tilde, type HomeStatus } from "../../lib/home.ts"
 
 interface Card {
   id: ModuleId
@@ -43,7 +44,7 @@ function stateLabel(card: Card, status: ModuleStatus | undefined): { dot: string
 
 export function Modules({ rows }: { rows: number }) {
   const store = useStore()
-  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen, schedulerInstallOpen, setSchedulerInstallOpen } = store
+  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen, schedulerInstallOpen, setSchedulerInstallOpen, homeSyncOpen, setHomeSyncOpen } = store
   const [selected, setSelected] = useState(0)
   const [statuses, setStatuses] = useState<Map<ModuleId, ModuleStatus>>(new Map())
   const [testing, setTesting] = useState(false)
@@ -52,7 +53,7 @@ export function Modules({ rows }: { rows: number }) {
   // the config). status() is cheap and never sends anything.
   const [tick, setTick] = useState(0)
   useEffect(() => {
-    if (beaconSetupOpen || schedulerInstallOpen) return
+    if (beaconSetupOpen || schedulerInstallOpen || homeSyncOpen) return
     let live = true
     void Promise.all(MODULES.map((m) => m.status())).then((list) => {
       if (live) setStatuses(new Map(list.map((s) => [s.id, s])))
@@ -60,7 +61,7 @@ export function Modules({ rows }: { rows: number }) {
     return () => {
       live = false
     }
-  }, [beaconSetupOpen, schedulerInstallOpen, tick])
+  }, [beaconSetupOpen, schedulerInstallOpen, homeSyncOpen, tick])
 
   const isActive = route === "modules" && !inputMode && !overlayOpen
   const card = CARDS[selected]!
@@ -90,6 +91,9 @@ export function Modules({ rows }: { rows: number }) {
       case "s":
         if (card.id === "beacon") return setBeaconSetupOpen(true)
         if (card.id === "scheduler") return setSchedulerInstallOpen(true)
+        return
+      case "f":
+        if (card.id === "scheduler") return setHomeSyncOpen(true)
         return
       case "t":
         if (card.id === "beacon" && status && status.state !== "not_configured") return sendTest()
@@ -142,7 +146,12 @@ export function Modules({ rows }: { rows: number }) {
         hints={[
           { key: "↑↓/jk", label: "select" },
           ...(card.id === "beacon" ? [{ key: "⏎", label: beaconReady ? "reconfigure" : "set up" }] : []),
-          ...(card.id === "scheduler" ? [{ key: "⏎", label: status && status.state !== "not_configured" ? "reinstall" : "install" }] : []),
+          ...(card.id === "scheduler"
+            ? [
+                { key: "⏎", label: status && status.state !== "not_configured" ? "reinstall" : "install" },
+                { key: "f", label: "your folder" },
+              ]
+            : []),
           ...(beaconReady ? [{ key: "t", label: testing ? "sending…" : "test page" }] : []),
         ]}
       />
@@ -194,13 +203,22 @@ function ModuleDetail({ card, status }: { card: Card; status: ModuleStatus | und
       {card.id === "beacon" && status.state !== "not_configured" && (
         <text content="⏎ reconfigure the pager  ·  t send a test page  ·  CLI: spinuptui beacon status" fg={theme.textFaint} />
       )}
-      {card.id === "scheduler" && <SchedulerDetail installed={status.state !== "not_configured"} />}
+      {card.id === "scheduler" && <SchedulerDetail installed={status.state !== "not_configured"} refreshKey={status} />}
     </box>
   )
 }
 
-function SchedulerDetail({ installed }: { installed: boolean }) {
+function SchedulerDetail({ installed, refreshKey }: { installed: boolean; refreshKey: unknown }) {
   const [runs] = useState(() => upcomingRuns())
+  // Level 0 of the SpinupTUI folder: always say where the work lands.
+  const [home, setHome] = useState<HomeStatus | null>(null)
+  useEffect(() => {
+    let live = true
+    void homeStatus().then((h) => live && setHome(h))
+    return () => {
+      live = false
+    }
+  }, [refreshKey])
   return (
     <>
       <box style={{ height: 1 }} />
@@ -222,6 +240,10 @@ function SchedulerDetail({ installed }: { installed: boolean }) {
           <text content={`${r.source}/${r.id}`} fg={theme.textDim} wrapMode="none" style={{ flexShrink: 1 }} />
         </box>
       ))}
+      <box style={{ height: 1 }} />
+      {home && <text content={`Jobs and reports: ${tilde(home.path)}`} fg={theme.textDim} wrapMode="none" />}
+      {home && <text content={`  ${describeShare(home)}`} fg={home.git && home.remote ? theme.good : theme.textDim} wrapMode="none" />}
+      <text content={home?.git && home.remote ? "f your folder" : "f share it across machines, so you can queue jobs from anywhere"} fg={theme.accent} wrapMode="none" />
       <box style={{ height: 1 }} />
       <text
         content={`${installed ? "⏎ reinstall (repairs the unit)  ·  " : ""}CLI: spinuptui scheduler add | list | status`}

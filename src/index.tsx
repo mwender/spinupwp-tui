@@ -112,6 +112,10 @@ Usage:
                        Queue a follow-up for this station to run later and report
                        on through Beacon (\`spinuptui scheduler\` for the rest)
   spinuptui scheduler list | status | install --plan|--apply
+  spinuptui home       Where the SpinupTUI folder (your jobs and reports) is
+  spinuptui home sync --plan|--apply --github <name> | --remote <url> | --clone <url>
+                       Share that folder across machines through a private git
+                       repository, or set it up from one on a second machine
   spinuptui modules    List SpinupTUI's modules and their status (--json)
   spinuptui --version  Print the version
   spinuptui --help     Show this help
@@ -310,6 +314,11 @@ if (command === "beacon") {
 
 if (command === "modules") {
   process.exit(await runModules(args.slice(1)))
+}
+
+if (command === "home") {
+  const { runHome } = await import("./lib/cliHome.ts")
+  process.exit(await runHome(args.slice(args.indexOf("home") + 1)))
 }
 
 if (command === "scheduler") {

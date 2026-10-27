@@ -6,12 +6,13 @@
 // rather than counted as a run) carry over from the git-backed job runner; see
 // docs/2026-10-20_scheduler-spec.md.
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, writeFileSync } from "node:fs"
 import { hostname, homedir } from "node:os"
 import { join } from "node:path"
 import { loadConfig } from "../config.ts"
 import { beaconFromConfig, beaconSend } from "./beacon.ts"
 import { spawn } from "./spawn.ts"
+import { prepareWorkDir } from "./home.ts"
 import { fmt } from "./schedule.ts"
 import { agentOf, DEFAULT_TIMEOUT_MIN, expandHome, loadState, runsDir, saveState, splitArgs, type Job, type Source } from "./schedulerJobs.ts"
 
@@ -144,7 +145,7 @@ export async function runJob(source: Source, job: Job, occurrence: Date, now = n
   const workdir = expandHome(h.workdir || source.path)
   const timeoutMs = Number(h.timeout || DEFAULT_TIMEOUT_MIN) * 60_000
   const runs = join(runsDir(source), id)
-  mkdirSync(runs, { recursive: true })
+  prepareWorkDir(runs)
   const reportRel = `runs/${id}/${stamp(now)}.md`
 
   const started = new Date()
