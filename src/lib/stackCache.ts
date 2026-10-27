@@ -5,7 +5,8 @@
 //   - set()   is called after a successful `d` probe; it upserts the entry and
 //             writes the whole file back immediately (write-through), so a probe
 //             survives even if the TUI is killed with q / Ctrl+C.
-// Probing itself is always on-demand and per-site — this cache exists to avoid
+// Probing is on-demand and per-site, with one exception: a WP version older than
+// VERSION_MAX_AGE_MS is re-probed in the background. This cache exists to avoid
 // repeating the slow SSH round-trips across launches, not to save RAM. It's a
 // deliberately small, reusable pattern for other expensive derived data later.
 
@@ -21,6 +22,10 @@ export interface CachedProbe {
   result: ProbeResult
   detectedAt: number // epoch ms
   signature: string // invalidation key (see siteSignature)
+  // Last automatic re-check of an old version (epoch ms), kept even when it
+  // failed, so the once-per-window limit holds across launches. A successful
+  // probe replaces the whole entry, which clears it.
+  recheckedAt?: number
 }
 
 interface CacheFile {
@@ -30,6 +35,25 @@ interface CacheFile {
 
 export function stackCachePath(dir = profileDataDir()): string {
   return join(dir, "stack-cache.json")
+}
+
+// A WordPress version is a fact about the server that changes without us: auto-
+// updates, wp-admin and deploys all move it, and none of them touch the site's
+// shape below. So a reading that carries a version is re-checked once it's older
+// than this (in the background, when the site list loads), and its age is shown.
+export const VERSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+// True when the entry carries a WP version read longer ago than the max age.
+// Identities without a version (WHMCS, Laravel, static) don't drift this way.
+export function isVersionOld(entry: CachedProbe | undefined, now = Date.now()): boolean {
+  return entry?.result.version != null && now - entry.detectedAt > VERSION_MAX_AGE_MS
+}
+
+// True when an old version is due an automatic re-check: none was attempted in
+// the current window. Unattended SSH that fails must not repeat on every launch.
+export function isRecheckDue(entry: CachedProbe | undefined, now = Date.now()): boolean {
+  if (!entry || !isVersionOld(entry, now)) return false
+  return entry.recheckedAt == null || now - entry.recheckedAt > VERSION_MAX_AGE_MS
 }
 
 // A cached probe is considered stale when the site's relevant shape changes.
@@ -80,6 +104,16 @@ export class StackCache {
   // Upsert a probe result and persist immediately (write-through).
   async set(siteId: number, result: ProbeResult, signature: string): Promise<void> {
     this.entries.set(siteId, { result, detectedAt: Date.now(), signature })
+    await this.persist()
+  }
+
+  // Record an automatic re-check attempt on existing entries, in one write.
+  async noteRecheck(siteIds: number[]): Promise<void> {
+    const now = Date.now()
+    for (const id of siteIds) {
+      const e = this.entries.get(id)
+      if (e) this.entries.set(id, { ...e, recheckedAt: now })
+    }
     await this.persist()
   }
 

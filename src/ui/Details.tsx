@@ -180,7 +180,13 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       <Field label="Stack" value={stack} valueColor={stackColor(stack)} />
       <Field
         label="Detected"
-        value={probing ? "identifying…" : probe ? probe.result.label + (isProbeStale(site) ? " (stale)" : "") : "not identified · d"}
+        value={
+          probing
+            ? "identifying…"
+            : probe
+              ? `${probe.result.label}${isProbeStale(site) ? " (stale)" : ""} · ${timeAgo(new Date(probe.detectedAt).toISOString())}`
+              : "not identified · d"
+        }
         valueColor={probing ? theme.textDim : probe ? probeKindColor(probe.result.kind) : theme.textFaint}
       />
       <Field label="Type" value={isWordPress ? "WordPress" : "Generic"} valueColor={isWordPress ? theme.brand : theme.textDim} />
