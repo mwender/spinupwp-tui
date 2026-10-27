@@ -238,6 +238,7 @@ Added 2026-10-27. Since Beacon became the only sender, a station that stops (mac
 - **Down means "running, but can't page you".** The ping says `down` when Beacon has no channel or its last send failed (`send.log`). That clears itself with the next page that gets through. This is the one failure Beacon can't report about itself.
 - **Only the dispatcher pings.** Manual ticks and `run` don't, so they can't mask a stopped dispatcher. This is the same rule as `last-tick.json`.
 - **Bounded.** The ping times out after 10 seconds. A failed ping is recorded in the tick (`heartbeat` in `last-tick.json`, plus an error) and shown by `status`. It never fails the tick.
+- **Set up through SpinupTUI's own Kuma login.** `scheduler heartbeat setup --plan|--apply` uses the login site monitoring already saved. It finds or creates `SpinupTUI station: <host>` (push, interval 900s, no retries) and attaches the Kuma default notification, the only one, or the one named with `--notify`. It refuses to guess between several. `set <url>` takes a monitor made by hand, for users without a saved login.
 - **Kuma off the station.** A monitor on the station itself would die with it. The docs point at a small VPS as the easiest home, and that's the first deployment a future Kuma bootstrap will support.
 
 This retires the separate watchdog that watched the old incident watcher, once Sentinel's tick runs as a Scheduler job: a wedged job is killed by the job timeout, and a wedged station is caught by the heartbeat.

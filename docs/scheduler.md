@@ -84,8 +84,16 @@ Each run writes a report to `runs/<id>/<YYYY-MM-DD-HHMM>.md`, with the schedule,
 
 `status` can only tell you the clock stopped if you look. If the machine is off, the installed `spinuptui` is broken, or the LaunchAgent is gone, nothing on the station can page you, because the pager is on the station too. The heartbeat closes that gap from outside: at the end of every dispatcher tick, Scheduler pings an [Uptime Kuma](https://github.com/louislam/uptime-kuma) push monitor running on another machine. A small VPS is the easiest place for it. When the pings stop, Kuma alerts you through its own notifications.
 
-1. In Kuma: **Add New Monitor**, with **Monitor Type: Push** and **Heartbeat Interval: 900** seconds (three missed ticks). Give it a notification that doesn't go through Beacon.
-2. Copy its push URL, then:
+If SpinupTUI already has your Kuma login (from site monitoring, `M` in the app), it sets the monitor up itself:
+
+```sh
+spinuptui scheduler heartbeat setup --plan     # what it will create, and who Kuma will alert
+spinuptui scheduler heartbeat setup --apply
+```
+
+It creates a push monitor named `SpinupTUI station: <this machine>` that goes down after 15 minutes without a ping (three missed ticks), sends the first ping, and saves it. Run it again and it reuses that monitor. Kuma alerts through its default notification, or the only one you have. If you have several and none is the default, choose with `--notify <name>`.
+
+Without a saved login, make the monitor by hand: in Kuma, **Add New Monitor** with **Monitor Type: Push**, **Heartbeat Interval: 900** seconds, and a notification. Copy its push URL, then:
 
 ```sh
 spinuptui scheduler heartbeat set 'https://kuma.example.com/api/push/AbC123?status=up&msg=OK&ping='
