@@ -110,7 +110,7 @@ export const schedulerModule: ModuleDefinition = {
       name: "heartbeat",
       ok: !hb || !lastHb || lastHb.ok,
       detail: !hb
-        ? "not set: nothing outside this machine notices if it stops (spinuptui scheduler heartbeat set <kuma-push-url>)"
+        ? `not set: nothing outside this machine notices if it stops (${cfg.uptimeKuma ? "h on this card, or spinuptui scheduler heartbeat setup --plan" : "h on this card, or spinuptui scheduler heartbeat set <kuma-push-url>"})`
         : !lastHb
           ? `${new URL(hb.url).host}: first ping on the next dispatcher tick`
           : lastHb.ok
