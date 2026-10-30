@@ -427,7 +427,7 @@ Sentinel can't ship without these, and each is a separate commit.
 **Order of operations:**
 
 1. Publish `1.3.0-alpha.5` and install it globally with `@next`. Confirm the listener restarted on the new version and `scheduler status` is healthy.
-2. `sentinel setup --apply --shadow`, with the diagnostics workspace as `sentinel.workspace`, and add the expectations by hand with `expect add` (three config lines today, which expand to about six checks).
+2. `sentinel setup --apply --shadow`, with the diagnostics workspace as `sentinel.workspace`, and add the expectations by hand with `expect add` (three config lines today, which expand to about six checks). Seed `apt-sites.json` in Sentinel's state folder with the site that already works for each server, so the update check never spends an attempt on a site the station has no key for.
 3. **Shadow for at least 3 days,** through at least one real down event if the fleet provides one. Each morning, compare `sentinel digest --dry-run` with the old digest, and `shadow.log` with the old `run.log`: same events seen, sensible grouping. Check that every server's update line resolves.
 4. **Hand over,** just after a morning digest, with nothing diagnosing (no `incidents-watch.sh` process alive):
    1. Boot out the watchdog first, or it will try to kick the watcher.
