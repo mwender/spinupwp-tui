@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.3.0-alpha.4] - 2026-10-30
+
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
+
 ### Added
 - **Keep a job running longer without editing its file.** `spinuptui scheduler extend <id> --by 1y` moves a job's expiry a year later (`--by` takes days, weeks, months or years: `30d`, `2w`, `6m`, `1y`), or `--expires YYYY-MM-DD` sets a date. `--by` counts from the current expiry, or from today if the job has already expired. Only the `expires:` line changes, and in a git source the change is committed and pushed like `add` and `cancel`. It refuses a date that isn't later; to stop a job sooner, cancel it.
 - **The pager answers back: send `/jobs` to your Beacon bot.** Beacon's new listener lets you message the station from Telegram. `/jobs` replies with the station's scheduled jobs, soonest expiry first, and flags any that expire within 14 days. Recurring jobs about to expire get an **Extend 1 year** button, which commits and pushes the change like `scheduler extend`. Turn it on with `l` on the Modules tab's Beacon card, or `spinuptui beacon listener install --plan|--apply`. It runs as a LaunchAgent that launchd keeps alive and restarts itself after an upgrade. Scheduler's tick pages you if it stops polling. It answers only your own private chat with the bot, ignores everyone else without replying, acts on each message once, and makes every button work once. Beacon setup stops it while it looks for your chat, because Telegram allows only one reader of a bot's messages. See [docs/beacon.md](docs/beacon.md#let-the-pager-answer-you).
@@ -1541,7 +1545,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.3...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.4...HEAD
+[1.3.0-alpha.4]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.3...v1.3.0-alpha.4
 [1.3.0-alpha.3]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.2...v1.3.0-alpha.3
 [1.2.1]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...v1.2.1
 [1.3.0-alpha.2]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.1...v1.3.0-alpha.2
