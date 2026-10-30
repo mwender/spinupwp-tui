@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Beacon's listener no longer reads as down right after it starts.** Its first poll takes up to 50 seconds, so `beacon listener status` showed ✗ after an install, and a Scheduler tick in that window could have paged about a listener that was fine.
+
 ## [1.3.0-alpha.4] - 2026-10-30
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
