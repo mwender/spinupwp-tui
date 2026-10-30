@@ -36,7 +36,7 @@ spinuptui scheduler add verify-410s \
   -- ssh-exec example.com -- 'curl -sI https://example.com/old-page'
 ```
 
-`--when` takes a time in the station's local time, or `now` for the next tick. For recurring jobs, use `--every` instead: `30m`, `6h`, `daily 08:00`, `weekdays 08:00` or `mon,thu 08:00`. `--expires` is required, and nothing runs after that day, so a forgotten job stops on its own.
+`--when` takes a time in the station's local time, or `now` for the next tick. For recurring jobs, use `--every` instead: `30m`, `6h`, `daily 08:00`, `weekdays 08:00` or `mon,thu 08:00`. `--expires` is required, and nothing runs after that day, so a forgotten job stops on its own. To keep a job running longer, use `scheduler extend <id> --by 1y` (or `--expires YYYY-MM-DD`); `--by` counts from the current expiry, or from today if the job has already expired.
 
 **Write the job for a reader with no context.** It runs cold, maybe days later. Name the domain, the paths, and what "fixed" looks like.
 
@@ -70,6 +70,7 @@ Other options: `--timeout <minutes>` (default 30), `--notify none` to skip the p
 spinuptui scheduler list                 # every job: schedule, runs, last result, next run
 spinuptui scheduler show verify-410s     # the job file and its latest report
 spinuptui scheduler run verify-410s      # run it now, on this machine
+spinuptui scheduler extend verify-410s --by 1y   # keep it running a year longer
 spinuptui scheduler cancel verify-410s   # remove it; its reports stay
 spinuptui scheduler status               # is the station's clock running?
 ```

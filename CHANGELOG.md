@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Keep a job running longer without editing its file.** `spinuptui scheduler extend <id> --by 1y` moves a job's expiry a year later (`--by` takes days, weeks, months or years: `30d`, `2w`, `6m`, `1y`), or `--expires YYYY-MM-DD` sets a date. `--by` counts from the current expiry, or from today if the job has already expired. Only the `expires:` line changes, and in a git source the change is committed and pushed like `add` and `cancel`. It refuses a date that isn't later; to stop a job sooner, cancel it.
+
 ### Fixed
 - **`scheduler status` points to the right heartbeat setup.** With a saved Uptime Kuma login, the "heartbeat: not set" line now suggests `h` on the Scheduler card or `scheduler heartbeat setup`, which create the monitor for you, instead of the manual `heartbeat set <url>`.
 
