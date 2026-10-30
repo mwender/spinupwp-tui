@@ -18,10 +18,14 @@ export interface IncidentEvent {
   status: IncidentStatus
   time: string
   message: string
+  monitorId: number
 }
 
 export type IncidentsResult =
-  | { ok: true; windowHours: number; events: IncidentEvent[] }
+  // failedMonitors: monitors whose history couldn't be read this time, so a
+  // caller doesn't mistake their silence for "no events". kumaAlerted: with
+  // `wiring`, the monitors Kuma itself sends a notification for.
+  | { ok: true; windowHours: number; events: IncidentEvent[]; failedMonitors: string[]; kumaAlerted?: number[] }
   | { ok: false; reason: "kuma_not_configured" | "no_monitors_registered" | "kuma_error"; message: string }
 
 const STATUS_LABEL: Record<number, IncidentStatus> = { 0: "down", 1: "up", 2: "pending", 3: "maintenance" }
@@ -50,7 +54,7 @@ interface Target {
 
 export async function resolveIncidents(
   cfg: AppConfig,
-  opts: { domain?: string; hours: number },
+  opts: { domain?: string; hours: number; wiring?: boolean },
 ): Promise<IncidentsResult> {
   if (!cfg.uptimeKuma) {
     return {
@@ -83,11 +87,13 @@ export async function resolveIncidents(
 
   try {
     const { result } = await withKuma(cfg.uptimeKuma, async (kuma) => {
+      const failedMonitors: string[] = []
       const perTarget = await Promise.all(
         targets.map(async (t) => {
           try {
             return { t, beats: await kuma.getMonitorBeats(t.id, opts.hours) }
           } catch {
+            failedMonitors.push(`${t.domain} ${t.kind}`)
             return { t, beats: [] as KumaBeat[] }
           }
         }),
@@ -115,17 +121,18 @@ export async function resolveIncidents(
           const looksLikeDomainList = domainList.every((d) => /^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/.test(d))
           if (t.kind === "fatal" && status === "down" && looksLikeDomainList) {
             for (const domain of domainList) {
-              events.push({ domain, kind: t.kind, status, time: b.time, message })
+              events.push({ domain, kind: t.kind, status, time: b.time, message, monitorId: t.id })
             }
             continue
           }
-          events.push({ domain: t.domain, kind: t.kind, status, time: b.time, message })
+          events.push({ domain: t.domain, kind: t.kind, status, time: b.time, message, monitorId: t.id })
         }
       }
       events.sort((a, b) => a.time.localeCompare(b.time))
-      return events
+      const kumaAlerted = opts.wiring ? (await kuma.getMonitors()).filter((m) => Object.keys((m.notificationIDList as object | null) ?? {}).length > 0).map((m) => m.id) : undefined
+      return { events, failedMonitors, kumaAlerted }
     })
-    return { ok: true, windowHours: opts.hours, events: result }
+    return { ok: true, windowHours: opts.hours, ...result }
   } catch (err) {
     const message = err instanceof KumaError ? err.message : `Unexpected error: ${(err as Error).message}`
     return { ok: false, reason: "kuma_error", message }
