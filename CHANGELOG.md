@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **`scheduler status` points to the right heartbeat setup.** With a saved Uptime Kuma login, the "heartbeat: not set" line now suggests `h` on the Scheduler card or `scheduler heartbeat setup`, which create the monitor for you, instead of the manual `heartbeat set <url>`.
+
 ## [1.3.0-alpha.3] - 2026-10-27
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
