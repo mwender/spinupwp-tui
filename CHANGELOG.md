@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.3.0-alpha.5] - 2026-10-30
+
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
+
 ### Added
 - **Sentinel: know why, not just that it's down.** The third module checks Uptime Kuma every 5 minutes, groups what went down by server, pages you, and writes it up: the evidence on its own, or a full diagnosis if you bring an agent CLI. The agent reads servers only through `ssh-exec` and can't post anything; Sentinel saves its report and does the posting. A repeat within 6 hours skips the diagnosis and offers **Diagnose anyway**. A lapsed agent login delays work instead of losing it. Set it up from the Modules tab, or `spinuptui sentinel setup`. See [docs/sentinel.md](docs/sentinel.md).
 - **A morning digest that only speaks up about what's new.** Sentinel's 08:00 message covers station health, the last 24 hours, server updates and your expectation checks: a crawler that stopped arriving, a cache that stopped hitting, a box that latches under load. A flag is New on the day it trips, then Ongoing with its age, and the digest is silent unless something needs you.
@@ -1559,7 +1563,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.4...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.5...HEAD
+[1.3.0-alpha.5]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.4...v1.3.0-alpha.5
 [1.3.0-alpha.4]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.3...v1.3.0-alpha.4
 [1.3.0-alpha.3]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.2...v1.3.0-alpha.3
 [1.2.1]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...v1.2.1
