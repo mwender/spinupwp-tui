@@ -37,6 +37,9 @@ export const beaconModule: ModuleDefinition = {
       ok: beacon.defaultChannel !== null,
       detail: beacon.defaultChannel ?? "none — senders must pass --to",
     })
+    for (const [name, b] of Object.entries(loadConfig().beacon?.boards ?? {})) {
+      checks.push({ name: `board ${name}`, ok: true, detail: `Basecamp project ${b.projectId}, team only` })
+    }
     const listener = listenerHealth()
     checks.push(listener ? { name: "listener", ...listener } : { name: "listener", ok: true, detail: "not installed: the pager sends but doesn't answer" })
     const last = lastSendLogEntry()

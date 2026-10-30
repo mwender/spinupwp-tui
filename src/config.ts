@@ -127,9 +127,21 @@ export interface BeaconTelegramChannel {
 // are additive.
 export type BeaconChannel = BeaconTelegramChannel
 
+// A Basecamp project's message board, for the team's own record. Not a channel:
+// it's never paged, and only a named post reaches it. `audience` exists so a
+// client-facing board can't be reached by accident: only "team" is accepted
+// until the client channel's gate is built.
+export interface BeaconBoard {
+  type: "basecamp"
+  projectId: string
+  mention?: string // the person @-mentioned on a new post
+  audience: "team"
+}
+
 export interface BeaconStored {
   defaultChannel?: string
   channels?: Record<string, BeaconChannel>
+  boards?: Record<string, BeaconBoard>
   // Written by `beacon listener install --apply`, cleared by uninstall: the
   // resident process that answers the operator (lib/beaconListen.ts).
   listener?: { label: string; unitPath: string; bin: string; channel: string; installedAt: string }
