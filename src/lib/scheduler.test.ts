@@ -414,3 +414,41 @@ describe("extend", () => {
     expect(readFile(join(a.path, "jobs", "nightly.md"), "utf8")).toContain("expires: 2027-11-06")
   })
 })
+
+// ---- /jobs on the pager ------------------------------------------------------------
+
+import { extendReply, jobsReply } from "../modules/scheduler.ts"
+
+describe("/jobs", () => {
+  const write = (dir: string, id: string, schedule: string, expires: string) =>
+    writeFile(join(dir, `${id}.md`), `---\nid: ${id}\nkind: script\n${schedule}\nexpires: ${expires}\ncreated: 2026-10-01 09:00\ncreated_by: test\n---\necho hi\n`)
+
+  test("lists jobs by expiry, flags the soon ones, and offers Extend on recurring ones", async () => {
+    process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "jobs-cfg-"))
+    process.env.SPINUPTUI_HOME = mkdtempSync(join(tmpdir(), "jobs-home-"))
+    const jobs = join(process.env.SPINUPTUI_HOME, "scheduler", "jobs")
+    mkdirSync(jobs, { recursive: true })
+    write(jobs, "nightly", "every: daily 22:00", "2026-11-06")
+    write(jobs, "audit", "when: 2026-10-30 09:00", "2026-11-02")
+    write(jobs, "longterm", "every: weekdays 08:00", "2028-10-29")
+    write(jobs, "ancient", "every: daily 08:00", "2026-01-01")
+    const now = at("2026-10-29 12:00")
+    const r = await jobsReply({ now, pull: false })
+    expect(r.text).toContain("(3):")
+    const order = ["audit", "nightly", "longterm"].map((id) => r.text.indexOf(`${id}:`))
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+    expect(r.text).toContain("⚠️ nightly: expires 2026-11-06 (in 8 days)")
+    expect(r.text).toContain("⚠️ audit: expires 2026-11-02 (in 4 days)")
+    expect(r.text).toContain("longterm: expires 2028-10-29")
+    expect(r.text).not.toContain("⚠️ longterm")
+    expect(r.text).toContain("1 finished or long-expired not shown")
+    // A one-shot isn't offered a year of nothing.
+    expect(r.buttons).toEqual([[{ text: "Extend nightly 1 year", action: "scheduler.extend", payload: { source: "local", id: "nightly", from: "2026-11-06" } }]])
+
+    const done = await extendReply(r.buttons![0]![0]!.payload, now)
+    expect(done.text).toBe("✅ Extended nightly: it now expires 2027-11-06 (was 2026-11-06).")
+    // The same button again (say, from an older /jobs reply) doesn't stack a second year.
+    expect((await extendReply(r.buttons![0]![0]!.payload, now)).text).toMatch(/^Couldn't extend nightly: nightly already expires 2027-11-06/)
+    delete process.env.SPINUPTUI_HOME
+  })
+})

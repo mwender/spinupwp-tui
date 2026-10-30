@@ -757,6 +757,9 @@ interface StoreValue extends DataState {
   // The station heartbeat (Kuma push monitor) overlay, from the Modules tab.
   heartbeatSetupOpen: boolean
   setHeartbeatSetupOpen: (v: boolean) => void
+  // Beacon's listener (install / status / remove) overlay, from the Modules tab.
+  listenerSetupOpen: boolean
+  setListenerSetupOpen: (v: boolean) => void
   // Whether the "needs a local copy" (forgotten) report overlay is open, and an
   // optional stack filter (set from the selected Stacks group when opened).
   forgottenOpen: boolean
@@ -1156,6 +1159,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [schedulerInstallOpen, setSchedulerInstallOpen] = useState(false)
   const [homeSyncOpen, setHomeSyncOpen] = useState(false)
   const [heartbeatSetupOpen, setHeartbeatSetupOpen] = useState(false)
+  const [listenerSetupOpen, setListenerSetupOpen] = useState(false)
   const [forgottenOpen, setForgottenOpen] = useState(false)
   const [forgottenStack, setForgottenStack] = useState<Stack | null>(null)
   const [linkReturnToForgotten, setLinkReturnToForgotten] = useState(false)
@@ -4620,6 +4624,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setHomeSyncOpen,
     heartbeatSetupOpen,
     setHeartbeatSetupOpen,
+    listenerSetupOpen,
+    setListenerSetupOpen,
     forgottenOpen,
     setForgottenOpen,
     forgottenStack,

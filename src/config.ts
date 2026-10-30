@@ -130,6 +130,9 @@ export type BeaconChannel = BeaconTelegramChannel
 export interface BeaconStored {
   defaultChannel?: string
   channels?: Record<string, BeaconChannel>
+  // Written by `beacon listener install --apply`, cleared by uninstall: the
+  // resident process that answers the operator (lib/beaconListen.ts).
+  listener?: { label: string; unitPath: string; bin: string; channel: string; installedAt: string }
 }
 
 export interface SchedulerStored {

@@ -7,10 +7,11 @@ import { join } from "node:path"
 import { tryLock } from "../lib/flock.ts"
 import { loadConfig } from "../config.ts"
 import { beaconFromConfig } from "../lib/beacon.ts"
-import { nextRunText, parseWhen } from "../lib/schedule.ts"
-import { listSources, loadJobs, loadState, readLastTick, type Source } from "../lib/schedulerJobs.ts"
-import { readClaim, stationName } from "../lib/schedulerGit.ts"
-import { moduleStateDir, moduleWorkDir, type ModuleCheck, type ModuleDefinition, type ModuleStatus } from "./contract.ts"
+import { fmtDate, nextRunText, parseDate, parseWhen } from "../lib/schedule.ts"
+import { findSource, listSources, loadJobs, loadState, readLastTick, type Source } from "../lib/schedulerJobs.ts"
+import { gitPull, readClaim, stationName } from "../lib/schedulerGit.ts"
+import { addPeriod, extendJob } from "../lib/schedulerExtend.ts"
+import { moduleStateDir, moduleWorkDir, type BeaconButton, type BeaconReply, type ModuleCheck, type ModuleDefinition, type ModuleStatus } from "./contract.ts"
 
 // Three missed ticks.
 export const TICK_STALE_MS = 15 * 60_000
@@ -51,6 +52,8 @@ export const schedulerModule: ModuleDefinition = {
   stateDir: () => moduleStateDir("scheduler"),
   workDir: () => moduleWorkDir("scheduler"),
   jobs: [],
+  commands: [{ command: "jobs", describe: "this station's scheduled jobs and when they expire", run: () => jobsReply() }],
+  actions: [{ action: "scheduler.extend", run: (payload) => extendReply(payload) }],
   async status(): Promise<ModuleStatus> {
     const cfg = loadConfig()
     const d = cfg.scheduler?.dispatcher
@@ -156,4 +159,92 @@ export function upcomingRuns(limit = 5): { source: string; id: string; next: str
   }
   // Fixed times sort before "every N min", which has no single next time.
   return out.sort((a, b) => (a.next.startsWith("every") ? 1 : 0) - (b.next.startsWith("every") ? 1 : 0) || a.next.localeCompare(b.next)).slice(0, limit)
+}
+
+// ---- /jobs on the pager ------------------------------------------------------------
+
+// A job this close to expiring (or this recently expired) gets an Extend button.
+export const EXPIRING_SOON_DAYS = 14
+const DAY_MS = 24 * 60 * 60_000
+
+function daysUntil(expires: string, now: Date): number {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return Math.round((parseDate(expires).getTime() - today.getTime()) / DAY_MS)
+}
+
+function inDays(n: number): string {
+  if (n === 0) return "today"
+  if (n === 1) return "tomorrow"
+  if (n > 0) return `in ${n} days`
+  return n === -1 ? "yesterday" : `${-n} days ago`
+}
+
+// The station's jobs, soonest expiry first. Finished one-shots and long-expired
+// jobs are counted, not listed, so the reply stays short as history builds up.
+export async function jobsReply(opts: { now?: Date; pull?: boolean } = {}): Promise<BeaconReply> {
+  const now = opts.now ?? new Date()
+  const sources = listSources(loadConfig()).filter((s) => existsSync(s.path))
+  const multi = sources.length > 1
+  const rows: { line: string; days: number; button?: BeaconButton }[] = []
+  let hidden = 0
+  const problems: string[] = []
+  for (const s of sources) {
+    if (s.git && opts.pull !== false) {
+      const e = await gitPull(s.path)
+      if (e) problems.push(`${s.name}: ${e}`)
+    }
+    for (const j of loadJobs(s)) {
+      const h = j.header
+      if (j.problems.length) {
+        problems.push(`${s.name}/${h.id ?? j.name} is invalid: ${j.problems.join("; ")}`)
+        continue
+      }
+      let next: string
+      try {
+        next = nextRunText(h, loadState(s, h.id!), now)
+      } catch {
+        next = "?"
+      }
+      const days = daysUntil(h.expires!, now)
+      if (next === "done" || (next === "expired" && days < -EXPIRING_SOON_DAYS)) {
+        hidden++
+        continue
+      }
+      const name = multi ? `${s.name}/${h.id}` : h.id!
+      const soon = days <= EXPIRING_SOON_DAYS
+      const kind = h.kind === "agent" ? `agent/${h.agent || "claude"}` : h.kind
+      const schedule = h.when ? `once at ${h.when}` : `every ${h.every}`
+      const when = next === "expired" ? "expired" : `expires ${h.expires} (${inDays(days)})`
+      const line = `${soon ? "⚠️ " : ""}${name}: ${when}\n   ${kind}, ${schedule}${next !== "expired" && !h.when ? `, next ${next}` : ""}`
+      const extendable = soon && !h.when
+      rows.push({
+        line,
+        days,
+        ...(extendable ? { button: { text: `Extend ${name} 1 year`, action: "scheduler.extend", payload: { source: s.name, id: h.id!, from: h.expires! } } } : {}),
+      })
+    }
+  }
+  rows.sort((a, b) => a.days - b.days)
+  const station = stationName()
+  const head = rows.length ? `Scheduled jobs on ${station} (${rows.length}):` : `No scheduled jobs on ${station}.`
+  const tail: string[] = []
+  if (hidden) tail.push(`${hidden} finished or long-expired not shown (spinuptui scheduler list).`)
+  for (const p of problems) tail.push(`⚠️ ${p}`)
+  const text = [head, ...rows.map((r) => r.line), ...(tail.length ? ["", ...tail] : [])].join("\n")
+  const buttons = rows.filter((r) => r.button).map((r) => [r.button!])
+  return { text, ...(buttons.length ? { buttons } : {}) }
+}
+
+// The "Extend 1 year" button: a year past the expiry the reply showed, so a
+// stale button can't stack a second year onto one that was already extended.
+export async function extendReply(payload: Record<string, string>, now = new Date()): Promise<BeaconReply> {
+  const { source, id, from } = payload
+  if (!source || !id || !from) return { text: "That button is missing its job; send /jobs again." }
+  const s = findSource(loadConfig(), source)
+  if (!s) return { text: `There's no Scheduler source named "${source}" on this station any more.` }
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const base = parseDate(from) < today ? today : parseDate(from)
+  const r = await extendJob(s, id, { date: fmtDate(addPeriod(base, "1y")) }, { now })
+  if (!r.ok) return { text: `Couldn't extend ${id}: ${r.message}${r.remedy ? `\n${r.remedy}` : ""}` }
+  return { text: `✅ Extended ${id}: it now expires ${r.to} (was ${r.from})${r.pushed ? ", pushed" : ""}.` }
 }

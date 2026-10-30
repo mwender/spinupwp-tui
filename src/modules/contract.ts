@@ -16,6 +16,10 @@
 // - Recurring work is declared in `jobs` for Scheduler to run; a module never
 //   installs an OS scheduler unit of its own.
 // - status() is computed on demand, is cheap, and never sends anything.
+// - What a module answers on the operator's pager is declared in `commands`
+//   (a /command) and `actions` (a button tap). Beacon's listener receives,
+//   checks identity, records what it handled and routes; it knows nothing about
+//   what a command or button means.
 
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -29,6 +33,32 @@ export interface ScheduledJobDecl {
   at?: string // e.g. "08:00"
   // A spinuptui subcommand's arguments, never a path into a checkout.
   command: string[]
+}
+
+// A reply on the operator channel. Plain text (no markup), with optional rows
+// of inline buttons. A button names one of the module's own actions and the
+// payload to hand it; Beacon stores the payload and gives Telegram a short
+// one-use token instead, so a button works once, whatever its payload's size.
+export interface BeaconReply {
+  text: string
+  buttons?: BeaconButton[][]
+}
+
+export interface BeaconButton {
+  text: string
+  action: string // e.g. "scheduler.extend"
+  payload: Record<string, string>
+}
+
+export interface BeaconCommandDecl {
+  command: string // "jobs", answered as /jobs
+  describe: string // one line for /help
+  run(): Promise<BeaconReply>
+}
+
+export interface BeaconActionDecl {
+  action: string // "scheduler.extend"
+  run(payload: Record<string, string>): Promise<BeaconReply>
 }
 
 export interface ModuleCheck {
@@ -57,6 +87,8 @@ export interface ModuleDefinition {
   // The user's work. Created on first use, never at install.
   workDir(): string
   jobs: ScheduledJobDecl[]
+  commands?: BeaconCommandDecl[]
+  actions?: BeaconActionDecl[]
   status(): Promise<ModuleStatus>
 }
 

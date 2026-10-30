@@ -47,6 +47,7 @@ import { BeaconSetup } from "./views/BeaconSetup.tsx"
 import { SchedulerInstall } from "./views/SchedulerInstall.tsx"
 import { HomeSync } from "./views/HomeSync.tsx"
 import { HeartbeatSetup } from "./views/HeartbeatSetup.tsx"
+import { ListenerSetup } from "./views/ListenerSetup.tsx"
 
 const MIN_SPLASH_MS = 1200
 
@@ -100,6 +101,7 @@ export function App() {
     store.schedulerInstallOpen ||
     store.homeSyncOpen ||
     store.heartbeatSetupOpen ||
+    store.listenerSetupOpen ||
     store.slugPrompt !== null
   useEffect(() => {
     store.setOverlayOpen(overlayActive)
@@ -224,6 +226,7 @@ export function App() {
     if (store.schedulerInstallOpen) return
     if (store.homeSyncOpen) return
     if (store.heartbeatSetupOpen) return
+    if (store.listenerSetupOpen) return
 
     // A (Shift+a): the Accounts overlay — the header advertises it from every tab.
     if (key.shift && key.name === "a") return setShowAccounts(true)
@@ -316,6 +319,7 @@ export function App() {
       {store.schedulerInstallOpen && <SchedulerInstall />}
       {store.homeSyncOpen && <HomeSync />}
       {store.heartbeatSetupOpen && <HeartbeatSetup />}
+      {store.listenerSetupOpen && <ListenerSetup />}
       {showAccounts && <Accounts onClose={() => setShowAccounts(false)} />}
       {store.slugPrompt && <AccountSlugPrompt />}
       <ToastStack />

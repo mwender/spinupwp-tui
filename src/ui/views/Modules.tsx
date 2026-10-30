@@ -16,6 +16,7 @@ import { MODULES, UPCOMING_MODULES } from "../../modules/index.ts"
 import type { ModuleId, ModuleStatus } from "../../modules/contract.ts"
 import { beaconFromConfig, beaconSend, testMessage } from "../../lib/beacon.ts"
 import { loadConfig } from "../../config.ts"
+import { listenerInstalled } from "../../lib/beaconListenInstall.ts"
 import { upcomingRuns } from "../../modules/scheduler.ts"
 import { describeShare, homeStatus, tilde, type HomeStatus } from "../../lib/home.ts"
 
@@ -44,7 +45,7 @@ function stateLabel(card: Card, status: ModuleStatus | undefined): { dot: string
 
 export function Modules({ rows }: { rows: number }) {
   const store = useStore()
-  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen, schedulerInstallOpen, setSchedulerInstallOpen, homeSyncOpen, setHomeSyncOpen, heartbeatSetupOpen, setHeartbeatSetupOpen } = store
+  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen, schedulerInstallOpen, setSchedulerInstallOpen, homeSyncOpen, setHomeSyncOpen, heartbeatSetupOpen, setHeartbeatSetupOpen, listenerSetupOpen, setListenerSetupOpen } = store
   const [selected, setSelected] = useState(0)
   const [statuses, setStatuses] = useState<Map<ModuleId, ModuleStatus>>(new Map())
   const [testing, setTesting] = useState(false)
@@ -53,7 +54,7 @@ export function Modules({ rows }: { rows: number }) {
   // the config). status() is cheap and never sends anything.
   const [tick, setTick] = useState(0)
   useEffect(() => {
-    if (beaconSetupOpen || schedulerInstallOpen || homeSyncOpen || heartbeatSetupOpen) return
+    if (beaconSetupOpen || schedulerInstallOpen || homeSyncOpen || heartbeatSetupOpen || listenerSetupOpen) return
     let live = true
     void Promise.all(MODULES.map((m) => m.status())).then((list) => {
       if (live) setStatuses(new Map(list.map((s) => [s.id, s])))
@@ -61,7 +62,7 @@ export function Modules({ rows }: { rows: number }) {
     return () => {
       live = false
     }
-  }, [beaconSetupOpen, schedulerInstallOpen, homeSyncOpen, heartbeatSetupOpen, tick])
+  }, [beaconSetupOpen, schedulerInstallOpen, homeSyncOpen, heartbeatSetupOpen, listenerSetupOpen, tick])
 
   const isActive = route === "modules" && !inputMode && !overlayOpen
   const card = CARDS[selected]!
@@ -97,6 +98,9 @@ export function Modules({ rows }: { rows: number }) {
         return
       case "h":
         if (card.id === "scheduler") return setHeartbeatSetupOpen(true)
+        return
+      case "l":
+        if (card.id === "beacon" && status && status.state !== "not_configured") return setListenerSetupOpen(true)
         return
       case "t":
         if (card.id === "beacon" && status && status.state !== "not_configured") return sendTest()
@@ -156,7 +160,7 @@ export function Modules({ rows }: { rows: number }) {
                 { key: "h", label: "heartbeat" },
               ]
             : []),
-          ...(beaconReady ? [{ key: "t", label: testing ? "sending…" : "test page" }] : []),
+          ...(beaconReady ? [{ key: "t", label: testing ? "sending…" : "test page" }, { key: "l", label: "listener" }] : []),
         ]}
       />
     </box>
@@ -205,7 +209,15 @@ function ModuleDetail({ card, status }: { card: Card; status: ModuleStatus | und
         </>
       )}
       {card.id === "beacon" && status.state !== "not_configured" && (
-        <text content="⏎ reconfigure the pager  ·  t send a test page  ·  CLI: spinuptui beacon status" fg={theme.textFaint} />
+        <>
+          <text
+            content={listenerInstalled() ? "l the listener: answers /jobs on your pager" : "l let the pager answer you: send /jobs to see and extend this station's jobs"}
+            fg={theme.accent}
+            wrapMode="none"
+          />
+          <box style={{ height: 1 }} />
+          <text content="⏎ reconfigure the pager  ·  t send a test page  ·  CLI: spinuptui beacon status" fg={theme.textFaint} />
+        </>
       )}
       {card.id === "scheduler" && <SchedulerDetail installed={status.state !== "not_configured"} refreshKey={status} />}
     </box>
