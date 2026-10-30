@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Sentinel's digest no longer reads healthy servers as unverified.** Each update check looked the fleet up through the API, so a large fleet hit the rate limit and probes ran out of time before they connected. A digest now looks the fleet up once. A domain that exists on two servers no longer fails the check either.
+
 ## [1.3.0-alpha.5] - 2026-10-30
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.

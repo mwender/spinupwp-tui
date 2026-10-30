@@ -9,7 +9,9 @@ import { sentinelModule } from "../modules/sentinel.ts"
 import { BLOCKED_EXIT } from "./schedulerRun.ts"
 import { postToBoard } from "./beaconBoard.ts"
 import { readFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, relative } from "node:path"
+import { commitAndPush } from "./schedulerGit.ts"
+import { gitRootOf } from "./schedulerJobs.ts"
 import { applyAttach, planAttach, type AttachPlan } from "./sentinelAttach.ts"
 import { composeDigest, expectDeps, gatherDigest, recordDigest } from "./sentinelDigest.ts"
 import { EXPECT_TYPES, loadExpectations, runExpectation, saveExpectations, validateExpectation, type Expectation } from "./sentinelExpect.ts"
@@ -267,6 +269,10 @@ async function digestCmd(p: Parsed, json: boolean): Promise<number> {
     return 0
   }
   recordDigest(digest, data)
+  // Expectations and trends live here even when the workspace is elsewhere.
+  const work = moduleWorkDir("sentinel")
+  const root = gitRootOf(work)
+  if (root) await commitAndPush(root, [relative(root, work)], "sentinel: digest").catch(() => null)
   const sent = await sendPage(cfg, { text: digest.text, silent: digest.silent }, s.channel)
   if (sent === "sent") return 0
   console.error(`The digest wasn't sent: ${sent}`)

@@ -134,6 +134,24 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R
   return out
 }
 
+// One digest asks about the same fleet dozens of times, and each ssh-exec resolves
+// its site through the API. Uncached, the rate limit makes a probe wait out its
+// time limit before it has even connected, and it reads as unverified.
+export function cachedClient(client: SpinupWPClientLike): SpinupWPClientLike {
+  const servers = new Map<string, unknown>()
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver) as unknown
+      if ((prop !== "listServers" && prop !== "listSites") || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value
+      return (...args: unknown[]) => {
+        const key = `${prop}:${String(args[0])}`
+        if (!servers.has(key)) servers.set(key, value.apply(target, args))
+        return servers.get(key)
+      }
+    },
+  })
+}
+
 export function expectDeps(cfg: AppConfig, client: SpinupWPClientLike): ExpectDeps {
   return {
     exec: async (domain, command, server) => {
@@ -170,7 +188,8 @@ async function checkApt(fleet: Fleet, cfg: AppConfig, deps: ExpectDeps, dryRun: 
   const lastGood = readJson<Record<string, string>>(aptSitesPath(), {})
   const monitored = new Set(Object.entries(cfg.kumaMonitors).filter(([, r]) => hasIncidentMonitors(r)).map(([d]) => d))
   const results = await mapLimit(aptTargets(fleet, lastGood, monitored), CONCURRENCY, async ({ server, domain }) => {
-    const out = await bounded(() => deps.exec(domain, APT_COMMAND), null)
+    // The server, because a domain can exist on two of them during a move.
+    const out = await bounded(() => deps.exec(domain, APT_COMMAND, server), null)
     const read = readApt(out)
     if (read) lastGood[server] = domain
     const base = { id: `apt-${server}`, label: server }
@@ -190,7 +209,8 @@ async function probeAgent(s: SentinelSettings): Promise<HealthCheck> {
   return { name: "Agent", ok: false, detail: AUTH_FAIL_RE.test(r.output) ? `the ${s.agent} login has lapsed` : `unverified (probe ${r.timedOut ? "timed out" : `exited ${r.code}`})` }
 }
 
-export async function gatherDigest(s: SentinelSettings, cfg: AppConfig, client: SpinupWPClientLike, opts: { dryRun?: boolean; now?: Date } = {}): Promise<DigestData> {
+export async function gatherDigest(s: SentinelSettings, cfg: AppConfig, apiClient: SpinupWPClientLike, opts: { dryRun?: boolean; now?: Date } = {}): Promise<DigestData> {
+  const client = cachedClient(apiClient)
   const when = opts.now ?? new Date()
   const notes: string[] = []
   let fleet = loadFleet()
