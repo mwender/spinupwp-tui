@@ -11,7 +11,18 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Sentinel: know why, not just that it's down.** The third module checks Uptime Kuma every 5 minutes, groups what went down by server, pages you, and writes it up: the evidence on its own, or a full diagnosis if you bring an agent CLI. The agent reads servers only through `ssh-exec` and can't post anything; Sentinel saves its report and does the posting. A repeat within 6 hours skips the diagnosis and offers **Diagnose anyway**. A lapsed agent login delays work instead of losing it. Set it up from the Modules tab, or `spinuptui sentinel setup`. See [docs/sentinel.md](docs/sentinel.md).
+- **A morning digest that only speaks up about what's new.** Sentinel's 08:00 message covers station health, the last 24 hours, server updates and your expectation checks: a crawler that stopped arriving, a cache that stopped hitting, a box that latches under load. A flag is New on the day it trips, then Ongoing with its age, and the digest is silent unless something needs you.
+- **`spinuptui sentinel attach`** adopts an existing Kuma's monitors on a fresh install, without changing anything in Kuma.
+- **Jobs can say they're blocked.** A job that ran but couldn't do its work now reports `blocked` instead of `ok`: an agent with `STATUS: blocked`, a script by exiting 75. Failed and blocked pages, and `/jobs`, get a **Run again** button. It re-runs the job exactly as written and never adds permissions.
+- **Team boards.** `spinuptui beacon add basecamp <name> --project <id>` connects a Basecamp message board for your own team's record. It can't be paged, and it's where Sentinel posts reports.
+
+### Changed
+- **`spinuptui incidents` output** gains `monitorId` on each event and a `failedMonitors` list, so a caller can tell "no events" from "couldn't read that monitor".
+
 ### Fixed
+- **A long job no longer makes Kuma report a healthy station as dead.** The heartbeat was only sent when a tick finished, so a job past the 15-minute window looked like an outage. A tick that finds another still running now pings too.
 - **Beacon's listener no longer reads as down right after it starts.** Its first poll takes up to 50 seconds, so `beacon listener status` showed ✗ after an install, and a Scheduler tick in that window could have paged about a listener that was fine.
 
 ## [1.3.0-alpha.4] - 2026-10-30

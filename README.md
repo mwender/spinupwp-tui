@@ -91,6 +91,11 @@
   any machine. One LaunchAgent ticks every 5 minutes and is the clock the other
   modules run on, and a station heartbeat (`h`) pings your Uptime Kuma each
   tick, so a station that stops is noticed from elsewhere. → [docs/scheduler.md](docs/scheduler.md)
+  Then **Sentinel**: watches the fleet, works out what actually broke, and
+  writes it up. A page tells you why, not just that something's down, and a
+  morning digest covers what monitoring can't see, like a crawler that stopped
+  arriving or a cache that stopped hitting. Bring your own agent for diagnosis,
+  or use it without one. → [docs/sentinel.md](docs/sentinel.md)
 - **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
   resolves a domain to a live SSH target with a live connectivity probe;
   `spinuptui ssh-exec <domain> -- <command>` runs a command over SSH, but only
@@ -385,8 +390,9 @@ These can be set in `config.json` or via an environment variable:
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `A` | Accounts — switch, add, rename, or remove SpinupWP accounts (from anywhere) |
-| `⏎` / `s` | Set up the selected module — Beacon opens its guided Telegram setup, Scheduler its install plan (Modules tab) |
-| `t` | Send a test page through Beacon (Modules tab, once Beacon is set up) |
+| `⏎` / `s` | Set up the selected module — Beacon opens its guided Telegram setup, Scheduler its install plan, Sentinel its setup (Modules tab) |
+| `t` | Send a test page through Beacon, or preview Sentinel's digest (Modules tab) |
+| `p` | Pause Sentinel for 2 hours, or resume it (Modules tab, Sentinel) |
 | `l` | Beacon's listener: install it so the pager answers `/jobs`, see whether it's running, or remove it (Modules tab, Beacon) |
 | `f` | Your SpinupTUI folder: where jobs and reports live, and sharing it across machines (Modules tab, Scheduler) |
 | `h` | Station heartbeat: set up the Uptime Kuma push monitor, see the last ping, test or remove it (Modules tab, Scheduler) |

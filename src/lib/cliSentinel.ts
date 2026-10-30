@@ -127,7 +127,7 @@ export function planSetup(p: { shadow?: boolean; agent?: string; workspace?: str
   const notes: string[] = []
   if (!cfg.beacon?.channels || !Object.keys(cfg.beacon.channels).length) blockers.push("Beacon has no channel: spinuptui beacon setup")
   if (!cfg.scheduler?.dispatcher) blockers.push("Scheduler's dispatcher isn't installed: spinuptui scheduler install --plan")
-  if (!cfg.uptimeKuma) blockers.push("No Uptime Kuma connection: add one on the Sites tab's monitoring overlay (M)")
+  if (!cfg.uptimeKuma) blockers.push("No Uptime Kuma connection: press M on a site")
   const watching = Object.keys(cfg.kumaMonitors).length
   if (!watching) notes.push("No monitors are registered yet: run spinuptui sentinel attach --plan.")
   const found = (["claude", "codex"] as const).find((a) => Bun.which(a))

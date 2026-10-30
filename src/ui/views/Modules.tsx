@@ -256,7 +256,7 @@ function SentinelDetail({ ready }: { ready: boolean }) {
     return (
       <>
         <text
-          content="Sentinel checks Uptime Kuma every 5 minutes. When something goes down it works out which site really caused it, writes it up, and pages you the reason. Each morning a digest covers what monitoring can't see: a crawler that stopped arriving, a cache that stopped hitting, a server that stopped updating."
+          content="When something goes down, it finds the site that really caused it and pages you the reason. A morning digest covers what monitoring can't see."
           fg={theme.textDim}
         />
         <box style={{ height: 1 }} />

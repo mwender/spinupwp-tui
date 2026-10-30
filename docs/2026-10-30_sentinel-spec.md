@@ -247,7 +247,7 @@ Under `~/SpinupTUI` inside a git repository, Sentinel commits path-limited to `s
 
 Sentinel posts each new report to a team board. This is the operator's own record, not a client update. Agent output is allowed here because the audience is the team that owns the fleet. It's opt-in (`sentinel.reportTo`, a Beacon channel name).
 
-Beacon gains a channel type:
+Beacon gains boards, kept in `beacon.boards` rather than among `beacon.channels`, so a board can't be paged by accident:
 
 ```json
 { "board": { "type": "basecamp", "projectId": "…", "mention": "…", "audience": "team" } }
@@ -416,7 +416,7 @@ Sentinel can't ship without these, and each is a separate commit.
 
 - **`beaconSend` takes buttons.** Replies already have them. With no listener installed, a page goes out without them, since nothing could receive the tap.
 - **`storeButton` needs a lock.** Today only the listener writes `buttons.json`. Once the tick and the worker store buttons too, a read-modify-write can lose one. Its `takeButton` needs the same lock.
-- **The `basecamp` channel type**, sending through the new converter, used only by named sends rather than as a default.
+- **Boards** (`beacon add basecamp`), sending through the new converter, reachable only by a named post.
 
 ## Cutover from the existing watcher
 
