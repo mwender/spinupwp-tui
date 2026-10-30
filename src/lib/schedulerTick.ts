@@ -34,9 +34,9 @@ import {
   type TickRecord,
   type TickRun,
 } from "./schedulerJobs.ts"
-import { jobEnv, notify, runJob, runProcess, selfCommand } from "./schedulerRun.ts"
+import { BLOCKED_EXIT, jobEnv, notify, runJob, runProcess, selfCommand } from "./schedulerRun.ts"
 import { commitAndPush, decideClaim, gitPull, readClaim, stationName } from "./schedulerGit.ts"
-import { pagerProblem, sendHeartbeat, tickHeartbeat } from "./heartbeat.ts"
+import { pagerProblem, sendHeartbeat, stillRunningHeartbeat, tickHeartbeat } from "./heartbeat.ts"
 
 const LOG_MAX_BYTES = 1_000_000
 const MODULE_JOB_TIMEOUT_MS = 10 * 60_000
@@ -48,7 +48,7 @@ export type TickResult = ({ ok: true } & TickRecord) | { ok: true; skipped: "loc
 export interface ModuleJobState {
   last_run?: string
   last_scheduled?: string
-  last_status?: "ok" | "failed"
+  last_status?: "ok" | "failed" | "blocked"
   failing_since?: string
   last_output?: string
 }
@@ -56,7 +56,7 @@ export interface ModuleJobState {
 export interface ModuleJobDeps {
   stateDir: string
   now: Date
-  run(decl: ScheduledJobDecl): Promise<{ ok: boolean; output: string }>
+  run(decl: ScheduledJobDecl): Promise<{ ok: boolean; output: string; blocked?: boolean }>
   page(text: string): Promise<string>
 }
 
@@ -91,13 +91,14 @@ export async function runModuleJobs(decls: ScheduledJobDecl[], deps: ModuleJobDe
     // aligned to ticks instead of drifting by each run's duration.
     const started = deps.now
     const r = await deps.run(decl)
-    const status = r.ok ? "ok" : "failed"
+    const status = r.ok ? "ok" : r.blocked ? "blocked" : "failed"
     const tail = r.output.trim().split("\n").slice(-10).join("\n").slice(-600)
     let notified: string | undefined
-    if (status === "failed" && state.last_status !== "failed") {
-      notified = await deps.page(`⚠️ ${decl.id} failed (spinuptui ${decl.command.join(" ")})\n\n${tail || "(no output)"}`)
-      state.failing_since = fmt(started)
-    } else if (status === "ok" && state.last_status === "failed") {
+    const wasOk = !state.last_status || state.last_status === "ok"
+    if (status !== "ok" && status !== state.last_status) {
+      notified = await deps.page(`${status === "blocked" ? "🚧" : "⚠️"} ${decl.id} ${status} (spinuptui ${decl.command.join(" ")})\n\n${tail || "(no output)"}`)
+      if (wasOk) state.failing_since = fmt(started)
+    } else if (status === "ok" && !wasOk) {
       notified = await deps.page(`✅ ${decl.id} is working again (failing since ${state.failing_since ?? "?"})`)
       delete state.failing_since
     }
@@ -250,7 +251,12 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
   const dir = schedulerStateDir()
   mkdirSync(dir, { recursive: true })
   const lock = tryLock(join(dir, "tick.lock"))
-  if (!lock) return { ok: true, skipped: "locked", message: "A previous tick is still running." }
+  if (!lock) {
+    // The heartbeat can't wait for a long job to finish: Kuma would call a busy
+    // station dead. The holder is alive, so this tick says so.
+    if (opts.via === "dispatcher") await recordStillRunning()
+    return { ok: true, skipped: "locked", message: "A previous tick is still running." }
+  }
   const startedAt = Date.now()
   const now = opts.now ?? new Date()
   const ran: TickRun[] = []
@@ -265,7 +271,7 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
           now,
           run: async (decl) => {
             const p = await runProcess([...selfCommand(), ...decl.command], { cwd: dir, env: jobEnv(), timeoutMs: MODULE_JOB_TIMEOUT_MS })
-            return { ok: p.code === 0, output: p.output }
+            return { ok: p.code === 0, output: p.output, blocked: p.code === BLOCKED_EXIT }
           },
           page: (text) => notify(text),
         })
@@ -300,14 +306,30 @@ export async function tick(opts: TickOptions): Promise<TickResult> {
         record.heartbeat = { ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) }
         if (!r.ok) record.errors.push(`heartbeat: Kuma didn't take the ping (${r.error})`)
       }
-      writeFileSync(`${lastTickPath()}.tmp`, JSON.stringify(record, null, 2) + "\n")
-      renameSync(`${lastTickPath()}.tmp`, lastTickPath())
+      writeLastTick(record)
     }
     if (ran.length || errors.length) appendTickLog(record)
     return { ok: true, ...record }
   } finally {
     lock.release()
   }
+}
+
+function writeLastTick(record: TickRecord): void {
+  writeFileSync(`${lastTickPath()}.tmp`, JSON.stringify(record, null, 2) + "\n")
+  renameSync(`${lastTickPath()}.tmp`, lastTickPath())
+}
+
+async function recordStillRunning(): Promise<void> {
+  const record: TickRecord = { at: new Date().toISOString(), via: "dispatcher", durationMs: 0, ran: [], errors: [], stillRunning: true }
+  const hb = loadConfig().scheduler?.heartbeat
+  if (hb) {
+    const t = stillRunningHeartbeat(pagerProblem())
+    const r = await sendHeartbeat(hb.url, t.status, t.msg, 0)
+    record.heartbeat = { ok: r.ok, status: r.status, ...(r.error ? { error: r.error } : {}) }
+    if (!r.ok) record.errors.push(`heartbeat: Kuma didn't take the ping (${r.error})`)
+  }
+  writeLastTick(record)
 }
 
 function appendTickLog(record: TickRecord): void {

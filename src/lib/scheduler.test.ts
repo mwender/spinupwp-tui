@@ -7,7 +7,8 @@ import { agentOf, parseJobText, splitArgs, validateJob } from "./schedulerJobs.t
 import { quoteArg } from "./cliScheduler.ts"
 import { renderPlist, renderSystemd } from "./schedulerInstall.ts"
 import { runModuleJobs } from "./schedulerTick.ts"
-import { summaryOf } from "./schedulerRun.ts"
+import { agentCommand, BLOCKED_EXIT, outcomeOf, summaryOf } from "./schedulerRun.ts"
+import { stillRunningHeartbeat } from "./heartbeat.ts"
 import { tryLock } from "./flock.ts"
 
 const at = (s: string) => parseWhen(s)
@@ -450,5 +451,91 @@ describe("/jobs", () => {
     // The same button again (say, from an older /jobs reply) doesn't stack a second year.
     expect((await extendReply(r.buttons![0]![0]!.payload, now)).text).toMatch(/^Couldn't extend nightly: nightly already expires 2027-11-06/)
     delete process.env.SPINUPTUI_HOME
+  })
+})
+
+describe("blocked", () => {
+  test("an agent that exits 0 saying it's blocked did no work", () => {
+    expect(outcomeOf(true, 0, false, "SUMMARY: login lapsed.\nSTATUS: blocked\nNeeds a re-login.")).toBe("blocked")
+    expect(outcomeOf(true, 0, false, "SUMMARY: all fine.\n\nThe status: blocked queue is empty.")).toBe("ok")
+  })
+
+  test("a script says so with its exit code", () => {
+    expect(outcomeOf(false, BLOCKED_EXIT, false, "")).toBe("blocked")
+    expect(outcomeOf(false, 1, false, "")).toBe("failed")
+    expect(outcomeOf(false, 0, false, "STATUS: blocked")).toBe("ok")
+  })
+
+  test("a lapsed login and a timeout keep their own statuses", () => {
+    expect(outcomeOf(true, 1, false, "Please run /login")).toBe("auth")
+    expect(outcomeOf(true, null, true, "working")).toBe("timeout")
+    expect(outcomeOf(true, 1, false, "boom")).toBe("failed")
+  })
+
+  test("a blocked one-shot isn't done", () => {
+    const job = { when: "2026-10-20 08:00", expires: "2026-10-30" }
+    const now = at("2026-10-21 08:00")
+    expect(nextRunText(job, { last_scheduled: "2026-10-20 08:00", last_status: "blocked" }, now)).toBe("blocked")
+    expect(nextRunText(job, { last_scheduled: "2026-10-20 08:00", last_status: "ok" }, now)).toBe("done")
+    // It waits for the operator: a blocked run doesn't retry by itself.
+    expect(dueOccurrence(job, { last_scheduled: "2026-10-20 08:00", last_status: "blocked" }, now)).toBeNull()
+  })
+
+  test("a module job pages once when blocked, and again when it recovers", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "blocked-"))
+    const pages: string[] = []
+    const step = (result: { ok: boolean; output: string; blocked?: boolean }, minute: string) =>
+      runModuleJobs([{ id: "t", every: "5m", command: ["x"] }], { stateDir: dir, now: at(`2026-10-20 10:${minute}`), run: async () => result, page: async (t) => (pages.push(t), "sent") })
+    await step({ ok: false, output: "login", blocked: true }, "00")
+    await step({ ok: false, output: "login", blocked: true }, "05")
+    await step({ ok: true, output: "" }, "10")
+    expect(pages.length).toBe(2)
+    expect(pages[0]).toContain("blocked")
+    expect(pages[1]).toContain("working again")
+  })
+})
+
+describe("the agent adapter", () => {
+  test("carries the always-deny list and options, for any caller", () => {
+    const cmd = agentCommand({ agent: "claude", prompt: "p", workdir: "/w", allow: "Read", addDirs: "/a,/b", model: "m" }, { PATH: `/bin:${process.env.PATH}` })
+    if (typeof cmd === "string") return // no claude here; the string is the reason
+    expect(cmd).toContain("--disallowedTools")
+    expect(cmd.filter((a) => a === "--add-dir").length).toBe(2)
+  })
+
+  test("says why when the binary is missing", () => {
+    expect(agentCommand({ agent: "codex", prompt: "p", workdir: "/w" }, { PATH: "/nonexistent" })).toBe("codex not found on PATH")
+  })
+})
+
+describe("a dispatcher tick that finds the lock held", () => {
+  test("tells Kuma the station is alive, unless it can't page", () => {
+    expect(stillRunningHeartbeat(null)).toEqual({ status: "up", msg: "tick still running" })
+    expect(stillRunningHeartbeat("Beacon's last page failed").status).toBe("down")
+  })
+
+  test("pings and records itself; a manual one doesn't", async () => {
+    process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "stilltick-"))
+    const { schedulerStateDir, readLastTick } = await import("./schedulerJobs.ts")
+    const { saveConfig } = await import("../config.ts")
+    const { tick } = await import("./schedulerTick.ts")
+    const pings: string[] = []
+    const server = Bun.serve({ port: 0, fetch: (r) => (pings.push(r.url), Response.json({ ok: true })) })
+    try {
+      await saveConfig({
+        scheduler: { heartbeat: { url: `http://localhost:${server.port}/api/push/x`, setAt: "now" } },
+        beacon: { channels: { pager: { type: "telegram", botToken: "1:a", chatId: "2" } } },
+      })
+      const lock = tryLock(join(schedulerStateDir(), "tick.lock"))!
+      expect(await tick({ via: "manual" })).toMatchObject({ skipped: "locked" })
+      expect(pings.length).toBe(0)
+      expect(await tick({ via: "dispatcher" })).toMatchObject({ skipped: "locked" })
+      lock.release()
+      expect(pings.length).toBe(1)
+      expect(pings[0]).toContain("still")
+      expect(readLastTick()).toMatchObject({ stillRunning: true, via: "dispatcher", heartbeat: { ok: true } })
+    } finally {
+      server.stop(true)
+    }
   })
 })

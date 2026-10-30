@@ -21,9 +21,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSy
 import { randomBytes } from "node:crypto"
 import { dirname, join } from "node:path"
 import type { BeaconChannel } from "../config.ts"
-import { moduleStateDir, type BeaconActionDecl, type BeaconCommandDecl, type BeaconReply, type ModuleDefinition } from "../modules/contract.ts"
+import { moduleStateDir, type BeaconActionDecl, type BeaconButton, type BeaconCommandDecl, type BeaconReply, type ModuleDefinition } from "../modules/contract.ts"
 import { htmlToPlain, splitMessage, telegramCall, type Fetch } from "./beacon.ts"
-import { tryLock } from "./flock.ts"
+import { tryLock, type HeldLock } from "./flock.ts"
 
 export const POLL_SECONDS = 50
 // A /command older than this when it arrives (sent while the listener was down)
@@ -37,6 +37,7 @@ export const listenerStatePath = () => join(listenerDir(), "listener.json")
 export const listenerLockPath = () => join(listenerDir(), "listener.lock")
 export const listenerLogPath = () => join(listenerDir(), "listener.log")
 const buttonsPath = () => join(listenerDir(), "buttons.json")
+const buttonsLockPath = () => join(listenerDir(), "buttons.lock")
 
 export interface ListenerState {
   channel?: string
@@ -112,23 +113,47 @@ interface StoredButton {
   createdAt: string
 }
 
+// The tick and Sentinel's worker store buttons while the listener takes them, so
+// each read-modify-write holds this. It's held for a millisecond, and a button
+// is worth more than the lock: past the wait, go ahead without it.
+function withButtons<T>(fn: () => T): T {
+  let lock: HeldLock | null = null
+  for (let i = 0; i < 100 && !lock; i++) {
+    lock = tryLock(buttonsLockPath())
+    if (!lock) Bun.sleepSync(10)
+  }
+  try {
+    return fn()
+  } finally {
+    lock?.release()
+  }
+}
+
 export function storeButton(action: string, payload: Record<string, string>, now = new Date()): string {
-  const all = readJson<Record<string, StoredButton>>(buttonsPath(), {})
-  for (const [k, b] of Object.entries(all)) if (now.getTime() - Date.parse(b.createdAt) > BUTTON_TTL_MS) delete all[k]
-  const token = randomBytes(6).toString("base64url")
-  all[token] = { action, payload, createdAt: now.toISOString() }
-  writeJson(buttonsPath(), all)
-  return token
+  return withButtons(() => {
+    const all = readJson<Record<string, StoredButton>>(buttonsPath(), {})
+    for (const [k, b] of Object.entries(all)) if (now.getTime() - Date.parse(b.createdAt) > BUTTON_TTL_MS) delete all[k]
+    const token = randomBytes(6).toString("base64url")
+    all[token] = { action, payload, createdAt: now.toISOString() }
+    writeJson(buttonsPath(), all)
+    return token
+  })
+}
+
+export function buttonMarkup(buttons: BeaconButton[][], now = new Date()): string {
+  return JSON.stringify({ inline_keyboard: buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: `b:${storeButton(b.action, b.payload, now)}` }))) })
 }
 
 // The button for `token`, removed so it can't be used twice.
 export function takeButton(token: string): StoredButton | null {
-  const all = readJson<Record<string, StoredButton>>(buttonsPath(), {})
-  const b = all[token]
-  if (!b) return null
-  delete all[token]
-  writeJson(buttonsPath(), all)
-  return b
+  return withButtons(() => {
+    const all = readJson<Record<string, StoredButton>>(buttonsPath(), {})
+    const b = all[token]
+    if (!b) return null
+    delete all[token]
+    writeJson(buttonsPath(), all)
+    return b
+  })
 }
 
 // ---- Telegram -----------------------------------------------------------------
@@ -168,9 +193,7 @@ export async function sendReply(ctx: ListenContext, reply: BeaconReply): Promise
   for (let i = 0; i < parts.length; i++) {
     const params: Record<string, string> = { chat_id: ctx.channel.chatId, text: parts[i]!, disable_web_page_preview: "true" }
     if (i === parts.length - 1 && reply.buttons?.length) {
-      const now = ctx.now?.() ?? new Date()
-      const keyboard = reply.buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: `b:${storeButton(b.action, b.payload, now)}` })))
-      params.reply_markup = JSON.stringify({ inline_keyboard: keyboard })
+      params.reply_markup = buttonMarkup(reply.buttons, ctx.now?.() ?? new Date())
     }
     if (reply.html) params.parse_mode = "HTML"
     let r = await telegramCall(ctx.channel.botToken, "sendMessage", params, ctx.fetchImpl)

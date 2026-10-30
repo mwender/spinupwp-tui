@@ -191,7 +191,6 @@ export function agentOf(header: JobHeader): "claude" | "codex" | null {
 
 export interface JobState extends ScheduleState {
   runs?: number
-  last_status?: string
   last_report?: string
   auth_alerted_for?: string
   invalid?: string
@@ -222,7 +221,7 @@ export function saveState(s: Source, id: string, state: JobState): void {
 export interface TickRun {
   source: string
   id: string
-  status: "ok" | "failed" | "timeout" | "error" | "auth" | "invalid" | "skipped"
+  status: "ok" | "failed" | "blocked" | "timeout" | "error" | "auth" | "invalid" | "skipped"
   report?: string
   notified?: string
 }
@@ -235,6 +234,9 @@ export interface TickRecord {
   errors: string[]
   // Git sources another station runs (or released here): expected, not errors.
   notRunHere?: string[]
+  // This dispatcher tick found the previous one still running, so it did nothing
+  // but say the station is alive.
+  stillRunning?: boolean
   // The station heartbeat's ping at the end of this tick, when one is set.
   heartbeat?: { ok: boolean; status: "up" | "down"; error?: string }
 }

@@ -11,6 +11,7 @@ import { fmtDate, nextRunText, parseDate, parseWhen } from "../lib/schedule.ts"
 import { findSource, listSources, loadJobs, loadState, readLastTick, type Source } from "../lib/schedulerJobs.ts"
 import { gitPull, readClaim, stationName } from "../lib/schedulerGit.ts"
 import { addPeriod, extendJob } from "../lib/schedulerExtend.ts"
+import { jobEnv, runAgainButton, selfCommand, spawnDetached } from "../lib/schedulerRun.ts"
 import { moduleStateDir, moduleWorkDir, type BeaconButton, type BeaconReply, type ModuleCheck, type ModuleDefinition, type ModuleStatus } from "./contract.ts"
 
 // Three missed ticks.
@@ -53,7 +54,10 @@ export const schedulerModule: ModuleDefinition = {
   workDir: () => moduleWorkDir("scheduler"),
   jobs: [],
   commands: [{ command: "jobs", describe: "this station's scheduled jobs and when they expire", run: () => jobsReply() }],
-  actions: [{ action: "scheduler.extend", run: (payload) => extendReply(payload) }],
+  actions: [
+    { action: "scheduler.extend", run: (payload) => extendReply(payload) },
+    { action: "scheduler.run", run: (payload) => runAgainReply(payload) },
+  ],
   async status(): Promise<ModuleStatus> {
     const cfg = loadConfig()
     const d = cfg.scheduler?.dispatcher
@@ -211,7 +215,7 @@ export async function jobsReply(opts: { now?: Date; pull?: boolean } = {}): Prom
   const now = opts.now ?? new Date()
   const sources = listSources(loadConfig()).filter((s) => existsSync(s.path))
   const multi = sources.length > 1
-  const rows: { block: string; days: number; button?: BeaconButton }[] = []
+  const rows: { block: string; days: number; buttons: BeaconButton[] }[] = []
   let hidden = 0
   const problems: string[] = []
   for (const s of sources) {
@@ -244,11 +248,13 @@ export async function jobsReply(opts: { now?: Date; pull?: boolean } = {}): Prom
       const nextText = !h.when && /^\d{4}-/.test(next) ? ` · next ${shortTime(next, now)}` : ""
       const block = [`${soon ? "⚠️ " : ""}<b>${escapeHtml(name)}</b>`, expiry, escapeHtml(`${kind} · ${shortSchedule(h, now)}${nextText}`)].join("\n")
       const extendable = soon && !h.when
-      rows.push({
-        block,
-        days,
-        ...(extendable ? { button: { text: `Extend ${name} 1 year`, action: "scheduler.extend", payload: { source: s.name, id: h.id!, from: h.expires! } } } : {}),
-      })
+      const status = loadState(s, h.id!).last_status
+      const again = !!status && RUN_AGAIN_STATUSES.has(status) && next !== "expired"
+      const buttons = [
+        ...(extendable ? [{ text: `Extend ${name} 1 year`, action: "scheduler.extend", payload: { source: s.name, id: h.id!, from: h.expires! } }] : []),
+        ...(again ? [runAgainButton(s.name, h.id!)] : []),
+      ]
+      rows.push({ block: again ? `${block}\nLast run: ${escapeHtml(status!)}` : block, days, buttons })
     }
   }
   rows.sort((a, b) => a.days - b.days)
@@ -258,8 +264,25 @@ export async function jobsReply(opts: { now?: Date; pull?: boolean } = {}): Prom
   if (hidden) tail.push(`${hidden} finished or long-expired not shown.`)
   for (const p of problems) tail.push(`⚠️ ${escapeHtml(p)}`)
   const text = [head, ...rows.map((r) => r.block), ...(tail.length ? [tail.join("\n")] : [])].join("\n\n")
-  const buttons = rows.filter((r) => r.button).map((r) => [r.button!])
+  const buttons = rows.flatMap((r) => r.buttons.map((b) => [b]))
   return { text, html: true, ...(buttons.length ? { buttons } : {}) }
+}
+
+const RUN_AGAIN_STATUSES = new Set(["failed", "blocked", "timeout", "error"])
+
+// The Run again button. A job can take half an hour and the listener answers one
+// update at a time, so it's started apart and pages its result itself. It runs
+// through `scheduler run`, the same runner with the same allow list and sandbox.
+export async function runAgainReply(payload: Record<string, string>): Promise<BeaconReply> {
+  const { source, id } = payload
+  if (!source || !id) return { text: "That button is missing its job; send /jobs again." }
+  const s = findSource(loadConfig(), source)
+  if (!s) return { text: `There's no Scheduler source named "${source}" on this station any more.` }
+  if (!loadJobs(s).some((j) => j.header.id === id)) return { text: `Job ${id} isn't in ${source} any more.` }
+  // `scheduler run` needs the tick lock. Buttons work once, so offer a fresh one.
+  if (tickRunning()) return { text: `A tick is running, so ${id} can't start yet.`, buttons: [[runAgainButton(source, id)]] }
+  spawnDetached([...selfCommand(), "scheduler", "run", id, "--source", source], { cwd: moduleStateDir("scheduler"), env: jobEnv() })
+  return { text: `▶️ Running ${id} again. Its result will page here.` }
 }
 
 // The "Extend 1 year" button: a year past the expiry the reply showed, so a
