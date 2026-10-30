@@ -43,6 +43,7 @@ import { DnsRecords } from "./views/DnsRecords.tsx"
 import { KumaSite } from "./views/KumaSite.tsx"
 import { Accounts } from "./views/Accounts.tsx"
 import { Modules } from "./views/Modules.tsx"
+import { SentinelOverlay } from "./views/SentinelSetup.tsx"
 import { BeaconSetup } from "./views/BeaconSetup.tsx"
 import { SchedulerInstall } from "./views/SchedulerInstall.tsx"
 import { HomeSync } from "./views/HomeSync.tsx"
@@ -99,6 +100,7 @@ export function App() {
     store.kumaSite !== null ||
     store.beaconSetupOpen ||
     store.schedulerInstallOpen ||
+    store.sentinelOverlay !== null ||
     store.homeSyncOpen ||
     store.heartbeatSetupOpen ||
     store.listenerSetupOpen ||
@@ -224,6 +226,7 @@ export function App() {
     // Beacon's guided setup (Modules tab) owns the keyboard while open.
     if (store.beaconSetupOpen) return
     if (store.schedulerInstallOpen) return
+    if (store.sentinelOverlay) return
     if (store.homeSyncOpen) return
     if (store.heartbeatSetupOpen) return
     if (store.listenerSetupOpen) return
@@ -317,6 +320,7 @@ export function App() {
       {store.kumaSite && <KumaSite />}
       {store.beaconSetupOpen && <BeaconSetup />}
       {store.schedulerInstallOpen && <SchedulerInstall />}
+      {store.sentinelOverlay && <SentinelOverlay />}
       {store.homeSyncOpen && <HomeSync />}
       {store.heartbeatSetupOpen && <HeartbeatSetup />}
       {store.listenerSetupOpen && <ListenerSetup />}

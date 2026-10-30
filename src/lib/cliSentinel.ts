@@ -160,6 +160,12 @@ function setupText(plan: SetupPlan): string {
   ].join("\n")
 }
 
+// Saves the settings and proves them with one real tick. The TUI uses this too.
+export async function applySetup(next: SentinelStored) {
+  await saveConfig({ sentinel: next })
+  return tick(false)
+}
+
 async function setup(p: Parsed, json: boolean): Promise<number> {
   const plan = planSetup({ shadow: p.flags.has("--shadow"), agent: p.flags.get("--agent"), workspace: p.flags.get("--workspace"), reportTo: p.flags.get("--report-to") })
   if (!p.flags.has("--apply")) {
@@ -168,9 +174,8 @@ async function setup(p: Parsed, json: boolean): Promise<number> {
     return 0
   }
   if (plan.blockers.length) return fail(json, "not_ready", plan.blockers.join("\n"))
-  await saveConfig({ sentinel: plan.next })
   say("Running one real tick")
-  const r = await tick(false)
+  const r = await applySetup(plan.next)
   if (!r.ok) return fail(json, r.reason, r.message)
   out(json, r, r.firstRun ? "Sentinel is on: it read Kuma and starts from now." : `Sentinel is on: ${r.events} new event(s).`)
   return 0
@@ -186,27 +191,37 @@ function attachText(a: AttachPlan, includeLikely: boolean): string {
   return lines.join("\n")
 }
 
-async function attach(p: Parsed, json: boolean): Promise<number> {
+// What attach would do: reads Kuma and the fleet, changes nothing.
+export async function loadAttachPlan(): Promise<{ plan: AttachPlan; monitors: KumaMonitor[] }> {
   const cfg = loadConfig()
-  if (!cfg.uptimeKuma) return fail(json, "kuma_not_configured", "No Uptime Kuma connection configured in SpinupTUI.")
+  const monitors = (await withKuma(cfg.uptimeKuma!, (k) => k.getMonitors())).result
+  const sites = await new SpinupWPClient(cfg).listSites()
+  const domains = sites.flatMap((s) => [s.domain, ...(s.additional_domains ?? []).map((d) => d.domain)])
+  return { plan: planAttach(monitors, domains, cfg.kumaMonitors, sites.map((s) => s.domain)), monitors }
+}
+
+export async function saveAttach(plan: AttachPlan, monitors: KumaMonitor[], includeLikely: boolean): Promise<number> {
+  const matches = [...plan.exact, ...(includeLikely ? plan.likely : [])]
+  await saveConfig({ kumaMonitors: applyAttach(loadConfig().kumaMonitors, matches, monitors) })
+  return matches.length
+}
+
+async function attach(p: Parsed, json: boolean): Promise<number> {
+  if (!loadConfig().uptimeKuma) return fail(json, "kuma_not_configured", "No Uptime Kuma connection configured in SpinupTUI.")
   const includeLikely = p.flags.has("--include-likely")
-  const client = new SpinupWPClient(cfg)
-  let monitors: KumaMonitor[]
+  let loaded: Awaited<ReturnType<typeof loadAttachPlan>>
   try {
-    monitors = (await withKuma(cfg.uptimeKuma, (k) => k.getMonitors())).result
+    loaded = await loadAttachPlan()
   } catch (err) {
     return fail(json, "kuma_error", (err as Error).message)
   }
-  const sites = await client.listSites()
-  const domains = sites.flatMap((s) => [s.domain, ...(s.additional_domains ?? []).map((d) => d.domain)])
-  const plan = planAttach(monitors, domains, cfg.kumaMonitors)
+  const { plan, monitors } = loaded
   if (!p.flags.has("--apply")) {
     out(json, { ok: true, ...plan }, attachText(plan, includeLikely))
     return 0
   }
-  const matches = [...plan.exact, ...(includeLikely ? plan.likely : [])]
-  await saveConfig({ kumaMonitors: applyAttach(cfg.kumaMonitors, matches, monitors) })
-  out(json, { ok: true, attached: matches.length }, `Attached ${matches.length} monitor(s). Nothing was changed in Kuma.`)
+  const attached = await saveAttach(plan, monitors, includeLikely)
+  out(json, { ok: true, attached }, `Attached ${attached} monitor(s). Nothing was changed in Kuma.`)
   return 0
 }
 

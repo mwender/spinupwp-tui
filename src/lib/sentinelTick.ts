@@ -168,6 +168,9 @@ export async function sentinelTick(s: SentinelSettings, deps: TickDeps, opts: Ti
       logShadow(`would report blind: ${result.message}`)
       return { ok: true, events: 0, incidents: 0, started: false, shadow: true }
     }
+    // Diagnosis doesn't need Kuma, so being blind doesn't hold up what's queued.
+    const incidents = loadIncidents()
+    if (incidents.some((i) => i.state === "queued") && startedToday(incidents, now) < s.maxDiagnosesPerDay && !deps.workerRunning()) deps.startWorker()
     // Exiting non-zero is the page: Scheduler says so once, and again on recovery.
     return { ok: false, reason: result.reason, message: `Sentinel can't read Uptime Kuma, so it's blind: ${result.message}`, needsPerson: result.reason !== "kuma_error" }
   }

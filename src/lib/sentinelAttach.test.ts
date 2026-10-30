@@ -12,6 +12,11 @@ describe("planAttach", () => {
     expect(p.unmonitored).toEqual(["b.example.com", "c.example.com"])
   })
 
+  test("a site with extra domains counts once", () => {
+    const p = planAttach([], ["a.example.com", "www.a.example.com"], {}, ["a.example.com"])
+    expect(p.unmonitored).toEqual(["a.example.com"])
+  })
+
   test("a hand-made monitor on a fleet host is only likely", () => {
     const p = planAttach([m(1, "Client homepage", { url: "https://www.b.example.com/" })], sites, {})
     expect(p.exact).toEqual([])

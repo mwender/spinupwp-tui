@@ -98,6 +98,14 @@ describe("when Kuma can't be read", () => {
     expect(loadTickState().blindSince).toBeTruthy()
   })
 
+  test("what's already queued still starts", async () => {
+    begun()
+    saveIncident({ id: "q", key: "k", server: null, state: "queued", createdAt: now.toISOString(), events: [], down: [], lastDownAt: now.toISOString(), attempts: 0 })
+    const h = harness([bad])
+    await sentinelTick(settings(), h.deps)
+    expect(h.started.length).toBe(1)
+  })
+
   test("a configuration problem needs a person, and isn't retried", async () => {
     begun()
     const h = harness([{ ok: false, reason: "no_monitors_registered", message: "none" }])

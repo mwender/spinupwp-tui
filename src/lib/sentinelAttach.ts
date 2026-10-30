@@ -46,8 +46,10 @@ function urlHost(url: string | undefined): string | null {
   }
 }
 
-export function planAttach(monitors: KumaMonitor[], siteDomains: string[], registry: Record<string, KumaMonitorRef>): AttachPlan {
-  const sites = new Set(siteDomains)
+// `domains` is every name a monitor might use; `primary` is one per site, so a
+// site with extra domains counts once when listing what has no monitor.
+export function planAttach(monitors: KumaMonitor[], domains: string[], registry: Record<string, KumaMonitorRef>, primary: string[] = domains): AttachPlan {
+  const sites = new Set(domains)
   const has = (domain: string, field: keyof KumaMonitorRef) => typeof registry[domain]?.[field] === "number"
   const taken = new Set(Object.values(registry).flatMap((r) => Object.entries(r).filter(([k, v]) => k.endsWith("Id") && typeof v === "number").map(([, v]) => v as number)))
   const plan: AttachPlan = { exact: [], likely: [], unmonitored: [], strangers: [], already: 0 }
@@ -72,7 +74,7 @@ export function planAttach(monitors: KumaMonitor[], siteDomains: string[], regis
       covered.add(domain)
     } else plan.strangers.push(m.name)
   }
-  plan.unmonitored = siteDomains.filter((d) => !covered.has(d) && !registry[d]).sort()
+  plan.unmonitored = primary.filter((d) => !covered.has(d) && !registry[d]).sort()
   return plan
 }
 
