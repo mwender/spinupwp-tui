@@ -7,7 +7,7 @@ import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSy
 import { join, relative, resolve } from "node:path"
 import { loadConfig, saveConfig } from "../config.ts"
 import { schedulerModule } from "../modules/scheduler.ts"
-import { fmt, nextRunText } from "./schedule.ts"
+import { fmt, nextRunText, parseDate } from "./schedule.ts"
 import {
   defaultSourceName,
   expandHome,
@@ -29,6 +29,7 @@ import {
 } from "./schedulerJobs.ts"
 import { applyInstall, applyUninstall, binHasScheduler, NO_SCHEDULER, planInstall, planUninstall } from "./schedulerInstall.ts"
 import { tick } from "./schedulerTick.ts"
+import { extendJob, PERIOD_RE } from "./schedulerExtend.ts"
 import { prepareWorkDir, tilde } from "./home.ts"
 import { applyStationPlan, connectHeartbeat, loadStationPlan, pagerProblem, removeHeartbeat, sendHeartbeat, stationPlanText, tickHeartbeat } from "./heartbeat.ts"
 import { git, gitPull, readClaim, removeClaim, stationName, writeClaim } from "./schedulerGit.ts"
@@ -53,6 +54,7 @@ const VALUE_FLAGS = new Set([
   "--prompt-file",
   "--bin",
   "--late",
+  "--by",
 ])
 
 // Header keys `add` writes from flags, in file order.
@@ -76,6 +78,9 @@ const USAGE = `Usage:
   spinuptui scheduler add <id> --kind ${KINDS.join("|")} (--when "YYYY-MM-DD HH:MM" | --when now | --every <schedule>)
                           --expires YYYY-MM-DD --created-by <who> [--source <name>] [options]
                           [--body-file <path> | -- <body>]   (else stdin)
+  spinuptui scheduler extend <id> (--expires YYYY-MM-DD | --by 30d|2w|6m|1y) [--source <name>]
+                          move its expiry later; --by counts from the current expiry
+                          (or from today, if it has already expired)
   spinuptui scheduler cancel <id> [--source <name>]
   spinuptui scheduler run <id> [--source <name>]     run it now, on this machine
   spinuptui scheduler validate [--source <name>]
@@ -156,6 +161,8 @@ export async function runScheduler(argv: string[]): Promise<number> {
       return show(pos, p)
     case "add":
       return add(pos, p, json)
+    case "extend":
+      return extend(pos, p, json)
     case "cancel":
       return cancel(pos, p, json)
     case "run":
@@ -318,6 +325,28 @@ async function add(pos: string[], p: Parsed, json: boolean): Promise<number> {
   const result = { ok: true, source: s.name, id, path, pushed }
   if (json) console.log(JSON.stringify(result))
   else console.log(`Queued ${tilde(path)}${pushed ? " and pushed it" : ""}. The station runs it within 5 minutes of it falling due; reports go in ${tilde(join(runsDir(s), id))}/.`)
+  return 0
+}
+
+async function extend(pos: string[], p: Parsed, json: boolean): Promise<number> {
+  const id = pos[0]
+  const date = p.flags.get("--expires")
+  const by = p.flags.get("--by")
+  if (!id || !!date === !!by) return fail(json, "usage", `Give a job id and exactly one of --expires or --by.\n${USAGE}`)
+  if (by && !PERIOD_RE.test(by.toLowerCase())) return fail(json, "usage", `--by takes a period like 30d, 2w, 6m or 1y, got "${by}".`)
+  if (date) {
+    try {
+      parseDate(date)
+    } catch (err) {
+      return fail(json, "usage", (err as Error).message.replace(/^expires:/, "--expires"))
+    }
+  }
+  const s = sourceOrFail(p, json)
+  if (typeof s === "number") return s
+  const r = await extendJob(s, id, { date, by }, { push: !p.flags.has("--no-push") })
+  if (!r.ok) return fail(json, r.reason, r.message, r.remedy)
+  if (json) console.log(JSON.stringify(r))
+  else console.log(`Extended ${s.name}/${id}: expires ${r.to} (was ${r.from})${r.pushed ? ", pushed" : ""}.`)
   return 0
 }
 

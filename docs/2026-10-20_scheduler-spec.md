@@ -152,7 +152,7 @@ A **source** is a directory holding `jobs/` and `runs/`.
 
 This is also the public-framework/private-data split. The engine is in SpinupTUI; the jobs, which name client sites and servers, live in a folder or repository the user owns and SpinupTUI never sees on GitHub.
 
-`add`, `cancel`, `list` and `show` take `--source <name>`. The default is `scheduler.defaultSource` if set (`source add --default`), else `local`. In a git source, `add` and `cancel` commit and push, as the prior art does.
+`add`, `extend`, `cancel`, `list` and `show` take `--source <name>`. The default is `scheduler.defaultSource` if set (`source add --default`), else `local`. In a git source, `add`, `extend` and `cancel` commit and push, as the prior art does.
 
 **Each source has its own lock.** For a named source it's an `flock` on `<source>/.state/dispatch.lock`: the same file and the same lock call the existing runner uses, which is what makes the cutover below safe. `source add` lists `.state/` in the clone's `.git/info/exclude`, so the lock never shows up as an untracked file. The `local` source's lock lives in the state directory, so nothing but jobs and reports appears in `~/SpinupTUI/`.
 
@@ -204,6 +204,7 @@ spinuptui scheduler add <id> --kind <kind> (--when "YYYY-MM-DD HH:MM" | --when n
                         [--agent claude|codex] [--allow …] [--add-dirs …] [--model …] [--sandbox …]
                         [--body-file <path> | -- <body>]          (else stdin)
                         [--replace] [--no-push]
+spinuptui scheduler extend <id> (--expires YYYY-MM-DD | --by 30d|2w|6m|1y) [--source <name>] [--no-push]
 spinuptui scheduler cancel <id> [--source <name>]
 spinuptui scheduler run <id> [--source <name>]           run now, on this machine, through the real runner
 spinuptui scheduler validate [--source <name>]

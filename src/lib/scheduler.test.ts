@@ -351,3 +351,104 @@ describe("station claim", () => {
     expect(await decideClaim(b, "nas")).toEqual({ run: true, claimed: true })
   })
 })
+
+// ---- extend ----------------------------------------------------------------------
+
+import { mkdirSync } from "node:fs"
+import { addPeriod, extendJob, newExpiry, setHeaderValue } from "./schedulerExtend.ts"
+import { fmtDate, parseDate } from "./schedule.ts"
+
+describe("extend", () => {
+  const day = (s: string) => parseDate(s)
+
+  test("periods, clamped to the month's last day", () => {
+    expect(fmtDate(addPeriod(day("2026-10-29"), "1y"))).toBe("2027-10-29")
+    expect(fmtDate(addPeriod(day("2028-02-29"), "1y"))).toBe("2029-02-28")
+    expect(fmtDate(addPeriod(day("2026-01-31"), "1m"))).toBe("2026-02-28")
+    expect(fmtDate(addPeriod(day("2026-12-30"), "2w"))).toBe("2027-01-13")
+    expect(fmtDate(addPeriod(day("2026-10-29"), "30d"))).toBe("2026-11-28")
+    expect(() => addPeriod(day("2026-10-29"), "0d")).toThrow(/--by/)
+    expect(() => addPeriod(day("2026-10-29"), "1q")).toThrow(/--by/)
+  })
+
+  test("--by counts from the expiry, or from today once it has passed", () => {
+    expect(newExpiry("2026-11-06", { by: "1y" }, at("2026-10-29 09:00"))).toBe("2027-11-06")
+    expect(newExpiry("2026-10-01", { by: "1y" }, at("2026-10-29 09:00"))).toBe("2027-10-29")
+    expect(newExpiry("2026-11-06", { date: "2027-01-05" }, at("2026-10-29 09:00"))).toBe("2027-01-05")
+  })
+
+  test("only the expires: line changes, comment kept", () => {
+    const text = "---\nid: x\nexpires: 2026-10-28   # stop after the audit\nkind: script\n---\necho hi\n"
+    expect(setHeaderValue(text, "expires", "2027-10-28")).toBe("---\nid: x\nexpires: 2027-10-28   # stop after the audit\nkind: script\n---\necho hi\n")
+    expect(() => setHeaderValue("---\nid: x\n---\nbody", "expires", "2027-01-01")).toThrow(/no expires/)
+    // A body line that looks like a header isn't touched.
+    expect(setHeaderValue("---\nexpires: 2026-01-01\n---\nexpires: keep\n", "expires", "2027-01-01")).toBe("---\nexpires: 2027-01-01\n---\nexpires: keep\n")
+  })
+
+  const job = "---\nid: nightly\nkind: script\nevery: daily 22:00\nexpires: 2026-11-06\ncreated: 2026-10-20 09:00\ncreated_by: test\n---\necho hi\n"
+
+  test("a local source: rewritten in place, and an earlier date is refused", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "extend-"))
+    mkdirSync(join(dir, "jobs"))
+    writeFile(join(dir, "jobs", "nightly.md"), job)
+    const s: Source = { name: "local", path: dir, gitRoot: null, git: false, queueOnly: false }
+    const r = await extendJob(s, "nightly", { by: "1y" }, { now: at("2026-10-29 09:00") })
+    expect(r).toMatchObject({ ok: true, from: "2026-11-06", to: "2027-11-06", pushed: null })
+    expect(readFile(join(dir, "jobs", "nightly.md"), "utf8")).toBe(job.replace("2026-11-06", "2027-11-06"))
+    expect(await extendJob(s, "nightly", { date: "2027-01-01" })).toMatchObject({ ok: false, reason: "not_later" })
+    expect(await extendJob(s, "nope", { by: "1y" })).toMatchObject({ ok: false, reason: "unknown_job" })
+  })
+
+  test("a git source: one commit, pushed, seen by the other clone", async () => {
+    const { a, b } = await twoStations()
+    mkdirSync(join(a.path, "jobs"))
+    writeFile(join(a.path, "jobs", "nightly.md"), job)
+    await sh(a.path, "git", "add", "jobs")
+    await sh(a.path, "git", "commit", "-q", "-m", "add")
+    await sh(a.path, "git", "push", "-q")
+    // Queued from the other clone, which hasn't pulled the job yet.
+    const r = await extendJob(b, "nightly", { by: "1y" }, { now: at("2026-10-29 09:00") })
+    expect(r).toMatchObject({ ok: true, to: "2027-11-06", pushed: true })
+    expect(await sh(b.path, "git", "log", "-1", "--format=%s")).toBe("job: extend nightly to 2027-11-06")
+    await sh(a.path, "git", "pull", "-q")
+    expect(readFile(join(a.path, "jobs", "nightly.md"), "utf8")).toContain("expires: 2027-11-06")
+  })
+})
+
+// ---- /jobs on the pager ------------------------------------------------------------
+
+import { extendReply, jobsReply } from "../modules/scheduler.ts"
+
+describe("/jobs", () => {
+  const write = (dir: string, id: string, schedule: string, expires: string) =>
+    writeFile(join(dir, `${id}.md`), `---\nid: ${id}\nkind: script\n${schedule}\nexpires: ${expires}\ncreated: 2026-10-01 09:00\ncreated_by: test\n---\necho hi\n`)
+
+  test("lists jobs by expiry, flags the soon ones, and offers Extend on recurring ones", async () => {
+    process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "jobs-cfg-"))
+    process.env.SPINUPTUI_HOME = mkdtempSync(join(tmpdir(), "jobs-home-"))
+    const jobs = join(process.env.SPINUPTUI_HOME, "scheduler", "jobs")
+    mkdirSync(jobs, { recursive: true })
+    write(jobs, "nightly", "every: daily 22:00", "2026-11-06")
+    write(jobs, "audit", "when: 2026-10-30 09:00", "2026-11-02")
+    write(jobs, "longterm", "every: weekdays 08:00", "2028-10-29")
+    write(jobs, "ancient", "every: daily 08:00", "2026-01-01")
+    const now = at("2026-10-29 12:00")
+    const r = await jobsReply({ now, pull: false })
+    expect(r.html).toBe(true)
+    expect(r.text).toContain("</b> (3)")
+    const order = ["audit", "nightly", "longterm"].map((id) => r.text.indexOf(`<b>${id}</b>`))
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+    expect(r.text).toContain("⚠️ <b>nightly</b>\nExpires Nov 6 (in 8 days)\nscript · daily 22:00 · next tonight 22:00")
+    expect(r.text).toContain("⚠️ <b>audit</b>\nExpires Nov 2 (in 4 days)\nscript · once, tomorrow 09:00")
+    expect(r.text).toContain("<b>longterm</b>\nExpires Oct 29, 2028\nscript · weekdays 08:00 · next tomorrow 08:00")
+    expect(r.text).toContain("1 finished or long-expired not shown.")
+    // A one-shot isn't offered a year of nothing.
+    expect(r.buttons).toEqual([[{ text: "Extend nightly 1 year", action: "scheduler.extend", payload: { source: "local", id: "nightly", from: "2026-11-06" } }]])
+
+    const done = await extendReply(r.buttons![0]![0]!.payload, now)
+    expect(done.text).toBe("✅ Extended nightly: it now expires 2027-11-06 (was 2026-11-06).")
+    // The same button again (say, from an older /jobs reply) doesn't stack a second year.
+    expect((await extendReply(r.buttons![0]![0]!.payload, now)).text).toMatch(/^Couldn't extend nightly: nightly already expires 2027-11-06/)
+    delete process.env.SPINUPTUI_HOME
+  })
+})

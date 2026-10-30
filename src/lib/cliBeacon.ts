@@ -21,11 +21,23 @@ import {
   verifyBotToken,
 } from "./beaconSetup.ts"
 import { confirm, PromptCancelled, readLine } from "./prompt.ts"
+import { listen, routesFrom } from "./beaconListen.ts"
+import {
+  applyListenerInstall,
+  applyListenerUninstall,
+  binHasListener,
+  listenerHealth,
+  NO_LISTENER,
+  pauseListener,
+  planListenerInstall,
+  planListenerUninstall,
+} from "./beaconListenInstall.ts"
+import { MODULES } from "../modules/index.ts"
 import { beaconModule } from "../modules/beacon.ts"
 import { allModuleStatuses, UPCOMING_MODULES } from "../modules/index.ts"
 import type { ModuleStatus } from "../modules/contract.ts"
 
-const VALUE_FLAGS = new Set(["--to", "--env-file"])
+const VALUE_FLAGS = new Set(["--to", "--env-file", "--bin"])
 
 function parse(list: string[]): { positionals: string[]; flags: Map<string, string>; rest: string | null } {
   const dash = list.indexOf("--")
@@ -61,7 +73,10 @@ const USAGE = `Usage:
   spinuptui beacon add telegram <name> [--env-file <path>] [--default] [--no-test]
   spinuptui beacon remove <name>
   spinuptui beacon test [--to <channel>] [--json]
-  spinuptui beacon status [--json]`
+  spinuptui beacon status [--json]
+  spinuptui beacon listen [--to <channel>]   answer the operator: /jobs, button taps (foreground)
+  spinuptui beacon listener install | uninstall --plan | --apply [--to <channel>] [--bin <path>]
+  spinuptui beacon listener status | check   is it running? (check exits 1 when it isn't)`
 
 function badValue(flags: Map<string, string>, name: string): boolean {
   if (!flags.has(name)) return false
@@ -81,6 +96,8 @@ export async function runBeacon(argv: string[]): Promise<number> {
   if (sub === "add") return add(positionals.slice(1), flags, json)
   if (sub === "remove") return remove(positionals.slice(1), json)
   if (sub === "status") return status(json)
+  if (sub === "listen") return listenCmd(flags)
+  if (sub === "listener") return listener(positionals.slice(1), flags, json)
   return fail(json, "usage", USAGE)
 }
 
@@ -215,7 +232,9 @@ async function setup(pos: string[]): Promise<number> {
       say(`3. In Telegram, send any message to ${username ? `@${username} (${botLink(username)})` : "your bot"}.`)
       say("   To page a group instead, add the bot to the group and send /start there.")
       say("   Waiting up to 5 minutes… (Ctrl-C to cancel)")
-      const found = await discoverChat(token)
+      // Telegram gives a bot's messages to one reader: stop the listener meanwhile.
+      const resume = await pauseListener()
+      const found = await discoverChat(token).finally(resume)
       if (!found.ok) {
         say(`   ✗ ${found.message}`)
         if (found.reason === "timeout" && (await confirm("   Keep waiting?", true))) continue
@@ -285,6 +304,75 @@ export async function runModules(argv: string[]): Promise<number> {
   else {
     for (const s of statuses) printStatus(s)
     console.log(`Coming soon: ${upcoming.map((u) => u.name).join(", ")}`)
+  }
+  return 0
+}
+
+// ---- the listener ----------------------------------------------------------------
+
+async function listenCmd(flags: Map<string, string>): Promise<number> {
+  const picked = pickChannel(beaconFromConfig(loadConfig()), flags.get("--to") ?? null)
+  if ("ok" in picked) return fail(false, picked.reason, picked.message, picked.remedy)
+  const ctrl = new AbortController()
+  for (const sig of ["SIGTERM", "SIGINT"] as const) process.on(sig, () => ctrl.abort())
+  if (process.env.SPINUPTUI_BEACON_LISTENER !== "1") process.stderr.write(`Listening on "${picked.name}" for /commands and button taps (Ctrl-C to stop)…\n`)
+  const r = await listen({ channel: picked.channel, channelName: picked.name, routes: routesFrom(MODULES), signal: ctrl.signal })
+  if (!r.ok) return fail(false, r.reason, r.message)
+  return 0
+}
+
+async function listener(pos: string[], flags: Map<string, string>, json: boolean): Promise<number> {
+  const sub = pos[0]
+  if (sub === "status" || sub === "check") {
+    const h = listenerHealth()
+    if (json) console.log(JSON.stringify({ ok: h?.ok ?? true, installed: h !== null, ...(h ? { detail: h.detail } : {}) }))
+    else if (!h) console.log("Beacon's listener isn't installed on this machine.")
+    else console.log(`${h.ok ? "✓" : "✗"} Beacon's listener ${h.detail}`)
+    if (sub === "check" && h && !h.ok && !json) console.log("Reinstall it with `spinuptui beacon listener install --apply`, or from the Modules tab.")
+    return sub === "check" && h && !h.ok ? 1 : 0
+  }
+  const apply = flags.has("--apply")
+  if ((sub !== "install" && sub !== "uninstall") || apply === flags.has("--plan")) {
+    return fail(json, "usage", "Usage: spinuptui beacon listener install | uninstall --plan | --apply, or listener status | check")
+  }
+  if (sub === "uninstall") {
+    const plan = planListenerUninstall()
+    if (!apply) {
+      if (json) console.log(JSON.stringify({ ok: true, ...plan }))
+      else {
+        if (!plan.installed) console.log("Beacon's listener isn't installed; nothing to remove.")
+        for (const c of plan.commands) console.log(`  · ${c}`)
+      }
+      return 0
+    }
+    const r = await applyListenerUninstall(plan)
+    if (json) console.log(JSON.stringify(r))
+    else console.log(`Removed ${plan.label}. The pager still sends; it just won't answer.`)
+    return 0
+  }
+  const plan = planListenerInstall({ bin: flags.get("--bin") ?? null, to: flags.get("--to") ?? null })
+  if (!plan.ok) return fail(json, plan.reason, plan.message, plan.remedy)
+  // Refuse at --plan too, so a plan that can't work is never shown as one.
+  if (!(await binHasListener(plan))) return fail(json, NO_LISTENER.reason, NO_LISTENER.message, NO_LISTENER.remedy)
+  if (!apply) {
+    if (json) console.log(JSON.stringify(plan))
+    else {
+      console.log(`Would install Beacon's listener (${plan.label}), kept running by launchd:\n`)
+      console.log(`  ${plan.programArguments.join(" ")}\n`)
+      console.log(`Unit: ${plan.unitPath}\n`)
+      console.log("Steps:")
+      for (const c of plan.commands) console.log(`  · ${c}`)
+      for (const n of plan.notes) console.log(`Note: ${n}`)
+      console.log(`\nRun with --apply to install it.`)
+    }
+    return 0
+  }
+  const r = await applyListenerInstall(plan, (line) => process.stderr.write(`→ ${line}\n`))
+  if (!r.ok) return fail(json, r.reason, r.message, r.remedy)
+  if (json) console.log(JSON.stringify(r))
+  else {
+    console.log(`Installed ${r.label}; it's listening on "${r.channel}". Send /jobs to the bot to try it.`)
+    for (const n of r.notes) console.log(`Note: ${n}`)
   }
   return 0
 }

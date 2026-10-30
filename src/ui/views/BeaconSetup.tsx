@@ -10,6 +10,7 @@ import { Panel, Centered, Spinner, SecretInput } from "../components.tsx"
 import { StatusBar } from "../StatusBar.tsx"
 import { useStore } from "../store.tsx"
 import { openUrl } from "../../lib/open.ts"
+import { pauseListener } from "../../lib/beaconListenInstall.ts"
 import {
   BOTFATHER_STEPS,
   BOTFATHER_URL,
@@ -65,13 +66,16 @@ export function BeaconSetup() {
     abort.current = ctrl
     setChat(null)
     setPhase("waiting")
-    void discoverChat(tok, { signal: ctrl.signal }).then((r) => {
-      if (ctrl.signal.aborted) return
-      if (r.ok) {
-        setChat(r.chat)
-        setPhase("found")
-      } else fail(r.message, "waiting")
-    })
+    // Telegram gives a bot's messages to one reader: stop the listener meanwhile.
+    void pauseListener()
+      .then((resume) => discoverChat(tok, { signal: ctrl.signal }).finally(resume))
+      .then((r) => {
+        if (ctrl.signal.aborted) return
+        if (r.ok) {
+          setChat(r.chat)
+          setPhase("found")
+        } else fail(r.message, "waiting")
+      })
   }
 
   const submitToken = () => {

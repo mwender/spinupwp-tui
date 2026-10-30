@@ -104,6 +104,16 @@ export function splitMessage(text: string, budget = PART_BUDGET, maxParts = MAX_
   return parts.map((p, i) => `(${i + 1}/${parts.length}) ${p}`)
 }
 
+// For replies sent as Telegram HTML, where only these three are special. Pages
+// stay plain text, so a markup mistake can never cost an alert.
+export function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+export function htmlToPlain(html: string): string {
+  return html.replace(/<[^>]*>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+}
+
 // Parse a KEY=VALUE env file the way the existing shell senders write them:
 // `export ` prefixes, quotes and # comments allowed.
 export function parseEnvFile(text: string): Record<string, string> {

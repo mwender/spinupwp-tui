@@ -107,6 +107,9 @@ Usage:
                        Add a channel from a file holding TELEGRAM_BOT_TOKEN and
                        TELEGRAM_CHAT_ID; sends a test message before saving.
   spinuptui beacon test | status | remove <name>
+  spinuptui beacon listen | listener install --plan|--apply
+                       Let the pager answer: /jobs lists this station's scheduled
+                       jobs, with a button to extend any that expire soon
   spinuptui scheduler add <id> --kind spinuptui|script|agent --when <time> | --every <schedule>
                        --expires <date> --created-by <who> -- <body>
                        Queue a follow-up for this station to run later and report

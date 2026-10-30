@@ -81,7 +81,9 @@
   each set up from the same screen. First up, **Beacon**: `spinuptui beacon send`
   pages you on Telegram from any cron job, watcher or agent, with retries, long
   messages split instead of dropped, and a send log. A guided setup creates the
-  bot connection for you. → [docs/beacon.md](docs/beacon.md)
+  bot connection for you. The pager also answers back: with the listener on
+  (`l`), send `/jobs` to your bot to see the station's jobs and extend the ones
+  expiring soon with a tap. → [docs/beacon.md](docs/beacon.md)
   Then **Scheduler**: follow-ups that run themselves. Queue "check this
   tomorrow at 8" from any session, and the result arrives through Beacon. Jobs
   and reports live in `~/SpinupTUI/scheduler/`; `spinuptui home sync` (or `f`)
@@ -385,6 +387,7 @@ These can be set in `config.json` or via an environment variable:
 | `A` | Accounts — switch, add, rename, or remove SpinupWP accounts (from anywhere) |
 | `⏎` / `s` | Set up the selected module — Beacon opens its guided Telegram setup, Scheduler its install plan (Modules tab) |
 | `t` | Send a test page through Beacon (Modules tab, once Beacon is set up) |
+| `l` | Beacon's listener: install it so the pager answers `/jobs`, see whether it's running, or remove it (Modules tab, Beacon) |
 | `f` | Your SpinupTUI folder: where jobs and reports live, and sharing it across machines (Modules tab, Scheduler) |
 | `h` | Station heartbeat: set up the Uptime Kuma push monitor, see the last ping, test or remove it (Modules tab, Scheduler) |
 | `r` | Refresh data from the API |

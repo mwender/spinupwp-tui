@@ -2,6 +2,7 @@
 
 import { loadConfig } from "../config.ts"
 import { beaconFromConfig, lastSendLogEntry, maskChatId, maskToken } from "../lib/beacon.ts"
+import { listenerHealth } from "../lib/beaconListenInstall.ts"
 import { moduleStateDir, moduleWorkDir, type ModuleCheck, type ModuleDefinition, type ModuleStatus } from "./contract.ts"
 
 export const beaconModule: ModuleDefinition = {
@@ -12,7 +13,9 @@ export const beaconModule: ModuleDefinition = {
   configKey: "beacon",
   stateDir: () => moduleStateDir("beacon"),
   workDir: () => moduleWorkDir("beacon"),
-  jobs: [],
+  // The listener's alive check: exits 1 while an installed listener isn't
+  // polling, so Scheduler pages once when it stops and once when it's back.
+  jobs: [{ id: "beacon.listener", every: "5m", command: ["beacon", "listener", "check"] }],
   async status(): Promise<ModuleStatus> {
     const beacon = beaconFromConfig(loadConfig())
     if (beacon.channels.length === 0) {
@@ -34,6 +37,8 @@ export const beaconModule: ModuleDefinition = {
       ok: beacon.defaultChannel !== null,
       detail: beacon.defaultChannel ?? "none — senders must pass --to",
     })
+    const listener = listenerHealth()
+    checks.push(listener ? { name: "listener", ...listener } : { name: "listener", ok: true, detail: "not installed: the pager sends but doesn't answer" })
     const last = lastSendLogEntry()
     checks.push({
       name: "last send",

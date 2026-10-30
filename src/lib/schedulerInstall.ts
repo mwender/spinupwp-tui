@@ -110,10 +110,21 @@ export function renderSystemd(p: { label: string; programArguments: string[]; en
   }
 }
 
-export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
+// The release binary a station unit runs, and the PATH it runs with. Shared by
+// Scheduler's dispatcher and Beacon's listener so both run the same install.
+export interface Runner {
+  bin: string
+  checkout: string | null
+  // The command line up to the subcommand: [bun, bin] or [bin].
+  prefix: string[]
+  env: Record<string, string>
+  missingTools: string[]
+}
+
+export function resolveRunner(opts: { bin?: string | null } = {}): ({ ok: true } & Runner) | { ok: false; reason: string; message: string; remedy?: string } {
   const platform = process.platform
   if (platform !== "darwin" && platform !== "linux") {
-    return { ok: false, reason: "unsupported_platform", message: `Scheduler's dispatcher supports macOS and Linux, not ${platform}.` }
+    return { ok: false, reason: "unsupported_platform", message: `SpinupTUI's station units support macOS and Linux, not ${platform}.` }
   }
   const searchPath = [process.env.PATH ?? "", join(homedir(), ".bun/bin")].join(":")
   const bin = opts.bin ?? Bun.which("spinuptui", { PATH: searchPath })
@@ -121,7 +132,7 @@ export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
     return {
       ok: false,
       reason: "spinuptui_not_found",
-      message: opts.bin ? `--bin ${opts.bin} does not exist.` : "No global `spinuptui` on the PATH for the dispatcher to run.",
+      message: opts.bin ? `--bin ${opts.bin} does not exist.` : "No global `spinuptui` on the PATH for the unit to run.",
       remedy: "Install it globally first: bun add -g spinuptui",
     }
   }
@@ -136,13 +147,13 @@ export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
     return {
       ok: false,
       reason: "checkout_bin",
-      message: `The \`spinuptui\` on the PATH (${bin}) runs a development checkout (${checkout}). The dispatcher must run a release, so an unattended tick never runs whatever is checked out.`,
+      message: `The \`spinuptui\` on the PATH (${bin}) runs a development checkout (${checkout}). A station unit must run a release, so nothing unattended ever runs whatever is checked out.`,
       remedy: "Install a release globally (bun add -g spinuptui), or pass --bin <path> to override deliberately.",
     }
   }
   const shebang = shebangOf(real)
   const bun = /\bbun(\.exe)?$/.test(process.execPath) ? process.execPath : (Bun.which("bun", { PATH: searchPath }) ?? "bun")
-  const programArguments = shebang?.includes("bun") ? [bun, bin, "scheduler", "tick"] : [bin, "scheduler", "tick"]
+  const prefix = shebang?.includes("bun") ? [bun, bin] : [bin]
 
   const dirs: string[] = [dirname(bun), dirname(bin)]
   for (const t of TOOLS) {
@@ -152,12 +163,19 @@ export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
     if (p && !SYSTEM_PATH.includes(dirname(p))) dirs.push(dirname(p))
   }
   for (const d of SYSTEM_PATH) if (existsSync(d)) dirs.push(d)
-  const env: Record<string, string> = {
-    PATH: [...new Set(dirs)].join(":"),
-    SPINUPTUI_SCHEDULER_DISPATCHER: "1",
-  }
+  const env: Record<string, string> = { PATH: [...new Set(dirs)].join(":") }
   if (process.env.XDG_CONFIG_HOME) env.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME
   if (process.env.SPINUPTUI_HOME) env.SPINUPTUI_HOME = process.env.SPINUPTUI_HOME
+  return { ok: true, bin, checkout, prefix, env, missingTools: TOOLS.filter((t) => !Bun.which(t, { PATH: env.PATH })) }
+}
+
+export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
+  const runner = resolveRunner(opts)
+  if (!runner.ok) return runner
+  const platform = process.platform as "darwin" | "linux"
+  const { bin, checkout } = runner
+  const programArguments = [...runner.prefix, "scheduler", "tick"]
+  const env: Record<string, string> = { ...runner.env, SPINUPTUI_SCHEDULER_DISPATCHER: "1" }
   const label = schedulerLabel()
   // One clock per machine: a dispatcher installed under another label would
   // tick the same jobs alongside this one.
@@ -172,8 +190,7 @@ export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
   }
   const notes: string[] = [`Jobs and reports live in ${moduleWorkDir("scheduler")} (created on first use).`]
   if (checkout) notes.push(`--bin points into a checkout (${checkout}); fine for testing, never for a station.`)
-  const missing = TOOLS.filter((t) => !Bun.which(t, { PATH: env.PATH }))
-  if (missing.length) notes.push(`Not found, so jobs that need them will fail: ${missing.join(", ")}.`)
+  if (runner.missingTools.length) notes.push(`Not found, so jobs that need them will fail: ${runner.missingTools.join(", ")}.`)
 
   if (platform === "darwin") {
     const unitPath = join(homedir(), "Library/LaunchAgents", `${label}.plist`)
@@ -216,18 +233,22 @@ export function planInstall(opts: { bin?: string | null } = {}): PlanResult {
 // treats `scheduler tick` as an unknown subcommand and would launch the TUI
 // under launchd every 5 minutes.
 export async function binHasScheduler(plan: Pick<InstallPlan, "programArguments" | "env">): Promise<boolean> {
+  return helpIncludes(plan.programArguments.slice(0, -2), plan.env.PATH ?? "", "spinuptui scheduler")
+}
+
+export async function helpIncludes(prefix: string[], path: string, needle: string): Promise<boolean> {
   try {
-    const p = spawn([...plan.programArguments.slice(0, -2), "--help"], {
+    const p = spawn([...prefix, "--help"], {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "ignore",
-      env: { ...process.env, PATH: plan.env.PATH ?? "" },
+      env: { ...process.env, PATH: path },
     })
     const timer = setTimeout(() => p.kill(), 30_000)
     const out = await new Response(p.stdout).text()
     await p.exited
     clearTimeout(timer)
-    return out.includes("spinuptui scheduler")
+    return out.includes(needle)
   } catch {
     return false
   }
@@ -240,7 +261,7 @@ export const NO_SCHEDULER = {
   remedy: "Install a release that has it first: bun add -g spinuptui@next --no-cache",
 }
 
-async function launchctl(...args: string[]): Promise<{ code: number; out: string }> {
+export async function launchctl(...args: string[]): Promise<{ code: number; out: string }> {
   const p = spawn(["launchctl", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" })
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
   return { code: await p.exited, out: (out + err).trim() }

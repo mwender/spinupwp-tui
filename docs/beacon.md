@@ -80,6 +80,28 @@ notify() {
 }
 ```
 
+## Let the pager answer you
+
+Beacon can listen as well as page. With the listener running, you can message your bot from Telegram and the station answers:
+
+- `/jobs` lists the station's scheduled jobs, soonest expiry first, and flags any that expire within 14 days. Recurring jobs that are about to expire (or expired in the last 14 days) get an **Extend 1 year** button. Tapping it does what `spinuptui scheduler extend <id> --by 1y` does, committed and pushed the same way.
+- `/help` (or anything else) lists what the station answers.
+
+Turn it on from the **Modules** tab: select Beacon and press `l`. It shows exactly what it installs, and `y` installs it. Or in a terminal:
+
+```sh
+spinuptui beacon listener install --plan    # what it would write and run
+spinuptui beacon listener install --apply   # install it; it says hello on the pager when it's up
+spinuptui beacon listener status            # is it answering?
+spinuptui beacon listener uninstall --apply
+```
+
+On macOS the listener is a LaunchAgent that launchd restarts if it stops. It long-polls Telegram, about one request a minute when idle, and restarts itself after you upgrade SpinupTUI, so it never keeps running old code. Scheduler's tick checks every 5 minutes that it's still polling, and pages you once when it stops and once when it's back. To run it in the foreground instead, for testing, use `spinuptui beacon listen`.
+
+**Only you can talk to it.** The listener answers only a private chat with the bot, and only when the message or tap comes from that chat's own user. Anything else is logged and ignored, without a reply, so someone who finds the bot learns nothing. It won't install on a channel that pages a group. Each update is acted on once: the listener records the update before acting on it, and every button works once, so a double tap can't extend a job twice. A command sent more than 10 minutes before the listener sees it (say, while the station was asleep) is dropped rather than answered late.
+
+Telegram gives a bot's messages to one reader at a time, so Beacon setup stops the listener while it waits for your message and starts it again afterwards. The listener's log is `modules/beacon/listener.log` in the config directory.
+
 ## Check on it
 
 ```sh
