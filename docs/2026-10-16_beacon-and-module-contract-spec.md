@@ -15,7 +15,7 @@ Promoted from `docs/2026-10-15_ideas.md` (ideas 1, 4 and 5) on 2026-10-16. This 
 **Not in this round** (designed enough below that nothing built now blocks them):
 
 - The client channel (Basecamp). Its shape is sketched under "Later", but it is not built until a module needs to post to a client, which is Sentinel.
-- Two-way Beacon (inline approval buttons and the inbound listener). That arrives with Samurai.
+- Two-way Beacon (the inbound listener, `/jobs`, then Samurai's approval buttons). It arrives before Samurai, with `/jobs` as its first command.
 - More operator transports (Slack, ntfy, Pushover, email, webhook). The channel type is a union so each is an additive change.
 - `station setup`. It is a view over the contract and comes after the four modules exist.
 
@@ -139,7 +139,7 @@ Reading updates acknowledges them on Telegram's side. That's harmless for a bot 
 Sketched here so the operator channel doesn't paint them into a corner:
 
 - **Client channel.** A channel type `basecamp` with a project and a thread, sending through the `basecamp` CLI (the existing Markdown→Basecamp converter moves into Beacon with it). It differs from the pager by rule, not just transport. It only sends **templated or reviewed text**, it is confirm-gated unless the template is pre-approved, and a send is idempotent per (template, subject, thread), so a re-run can't double-post to a client. It's built with Sentinel, its first user.
-- **Two-way.** Telegram inline buttons for approvals, received by long-polling (no open port), so a station can ask "Ban 203.0.113.0/24 on site X for 24h? [Approve] [Refine] [Ignore]". The buttons and their rules are in the Samurai section of `docs/2026-10-15_ideas.md`. Long-polling needs a resident process, which is a Scheduler question as much as a Beacon one. It's built with Samurai.
+- **Two-way.** Telegram inline buttons for approvals, received by long-polling (no open port), so a station can ask "Ban 203.0.113.0/24 on site X for 24h? [Approve] [Refine] [Ignore]". The buttons and their rules are in the Samurai section of `docs/2026-10-15_ideas.md`. The listener is an always-on part of Beacon with its own LaunchAgent, and Scheduler's `/jobs` is its first command, ahead of Samurai. The design is under "Two-way Beacon" in `docs/2026-10-15_ideas.md`.
 
 ## Cutover: switching the existing senders without a gap
 
