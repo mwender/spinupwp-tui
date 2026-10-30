@@ -139,7 +139,7 @@ Reading updates acknowledges them on Telegram's side. That's harmless for a bot 
 Sketched here so the operator channel doesn't paint them into a corner:
 
 - **Client channel.** A channel type `basecamp` with a project and a thread, sending through the `basecamp` CLI (the existing Markdown→Basecamp converter moves into Beacon with it). It differs from the pager by rule, not just transport. It only sends **templated or reviewed text**, it is confirm-gated unless the template is pre-approved, and a send is idempotent per (template, subject, thread), so a re-run can't double-post to a client. It's built with Sentinel, its first user.
-- **Two-way.** Telegram inline buttons for approvals, received by long-polling (no open port), so a station can ask "Ban 203.0.113.0/24 on site X for 24h? [Approve] [Ignore]". Long-polling needs a resident process, which is a Scheduler question as much as a Beacon one. It's built with Samurai.
+- **Two-way.** Telegram inline buttons for approvals, received by long-polling (no open port), so a station can ask "Ban 203.0.113.0/24 on site X for 24h? [Approve] [Refine] [Ignore]". The buttons and their rules are in the Samurai section of `docs/2026-10-15_ideas.md`. Long-polling needs a resident process, which is a Scheduler question as much as a Beacon one. It's built with Samurai.
 
 ## Cutover: switching the existing senders without a gap
 
