@@ -115,6 +115,9 @@ Usage:
                        Queue a follow-up for this station to run later and report
                        on through Beacon (\`spinuptui scheduler\` for the rest)
   spinuptui scheduler list | status | install --plan|--apply
+  spinuptui sentinel setup | attach | status | list | pause | expect
+                       Watch the fleet, work out what broke, write it up
+                       (runs as Scheduler jobs; see docs/sentinel.md)
   spinuptui home       Where the SpinupTUI folder (your jobs and reports) is
   spinuptui home sync --plan|--apply --github <name> | --remote <url> | --clone <url>
                        Share that folder across machines through a private git
@@ -326,6 +329,11 @@ if (command === "home") {
 
 if (command === "scheduler") {
   process.exit(await runScheduler(args.slice(args.indexOf("scheduler") + 1)))
+}
+
+if (command === "sentinel") {
+  const { runSentinel } = await import("./lib/cliSentinel.ts")
+  process.exit(await runSentinel(args.slice(args.indexOf("sentinel") + 1)))
 }
 
 // `spinuptui login` forces the onboarding wizard even when a token already exists,

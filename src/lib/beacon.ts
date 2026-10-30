@@ -227,6 +227,8 @@ export type SendResult =
 export interface SendOptions {
   to?: string | null
   silent?: boolean
+  // Telegram's reply_markup for the last part. Build it with pageMarkup().
+  replyMarkup?: string
   fetchImpl?: Fetch
   wait?: (ms: number) => Promise<unknown>
   log?: boolean
@@ -271,7 +273,7 @@ export async function beaconSend(beacon: ResolvedBeacon, text: string, opts: Sen
   const wait = opts.wait ?? sleep
   let sent = 0
   let failure: string | undefined
-  for (const part of parts) {
+  for (const [i, part] of parts.entries()) {
     const r = await telegramWithRetry(
       channel.botToken,
       "sendMessage",
@@ -280,6 +282,7 @@ export async function beaconSend(beacon: ResolvedBeacon, text: string, opts: Sen
         text: part,
         disable_web_page_preview: "true",
         ...(opts.silent ? { disable_notification: "true" } : {}),
+        ...(opts.replyMarkup && i === parts.length - 1 ? { reply_markup: opts.replyMarkup } : {}),
       },
       fetchImpl,
       wait,

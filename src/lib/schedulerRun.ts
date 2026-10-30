@@ -6,11 +6,13 @@
 // rather than counted as a run) carry over from the git-backed job runner; see
 // docs/2026-10-20_scheduler-spec.md.
 
-import { existsSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { hostname, homedir } from "node:os"
 import { join } from "node:path"
 import { loadConfig } from "../config.ts"
 import { beaconFromConfig, beaconSend } from "./beacon.ts"
+import { pageMarkup } from "./beaconListenInstall.ts"
+import type { BeaconButton } from "../modules/contract.ts"
 import { spawn } from "./spawn.ts"
 import { prepareWorkDir } from "./home.ts"
 import { fmt } from "./schedule.ts"
@@ -19,19 +21,24 @@ import { agentOf, DEFAULT_TIMEOUT_MIN, expandHome, loadState, runsDir, saveState
 export const DEFAULT_ALLOW = "Read,Grep,Glob"
 // Never allowed in a claude job, whatever its allow: line says.
 export const ALWAYS_DENY = "Bash(git push *),Bash(git reset *),Bash(git clean *),Bash(rm -rf *),Bash(sudo *)"
-const AUTH_FAIL_RE =
+// A script (or a `spinuptui` job) that exits with this ran but couldn't do its
+// work because of something outside it: EX_TEMPFAIL. An agent says so in text.
+export const BLOCKED_EXIT = 75
+export const BLOCKED_RE = /^\s*STATUS:\s*blocked\b/im
+export const AUTH_FAIL_RE =
   /Failed to authenticate|OAuth (session|token)|could not be refreshed|Invalid API key|API key.*(expired|invalid)|Please run .?\/login|not (logged in|authenticated)/i
 const REPORT_CAP = 200_000
 // Tools a launchd PATH doesn't include by default.
 const EXTRA_PATH = [join(homedir(), ".local/bin"), join(homedir(), ".bun/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
 
-export type RunStatus = "ok" | "failed" | "timeout" | "error" | "auth"
+export type RunStatus = "ok" | "failed" | "blocked" | "timeout" | "error" | "auth"
 
 function preamble(id: string, kind: string, createdBy: string, runs: string): string {
   return `You are running unattended on ${hostname().split(".")[0]} as scheduled job \`${id}\` (kind: ${kind}), queued by: ${createdBy}.
 Nobody is watching this run and nobody can answer questions. Do the task below, then stop.
 Rules: report, don't act. Do not modify files outside ${runs}, do not push, deploy, post to clients or email anyone, unless the task explicitly says to.
 Your final message is the report. Start it with a line \`SUMMARY:\` followed by one short paragraph (under 600 characters, plain text) that stands on its own in a chat message. Then give the details in Markdown.
+If you couldn't do the work because of something outside this job that a person has to fix (a lapsed login, a missing permission, a service refusing you), put a line \`STATUS: blocked\` straight after the summary and say what's needed. Don't use it for a finding, however bad.
 
 --- TASK ---
 `
@@ -53,6 +60,15 @@ export function jobEnv(): Record<string, string> {
   // A job is not a dispatcher: a nested `scheduler tick` must refuse.
   delete env.SPINUPTUI_SCHEDULER_DISPATCHER
   return env
+}
+
+// Starts a process that outlives this one: its own session (launchd reaps a
+// job's process group, not this), and no inherited pipes, since whoever reads
+// this process's stdout would otherwise wait for the child to finish too.
+export function spawnDetached(cmd: string[], opts: { cwd: string; env: Record<string, string> }): void {
+  mkdirSync(opts.cwd, { recursive: true })
+  const proc = spawn(cmd, { cwd: opts.cwd, env: opts.env, stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true } as Parameters<typeof spawn>[1])
+  proc.unref()
 }
 
 export interface ProcResult {
@@ -112,6 +128,28 @@ export function summaryOf(job: Job, output: string): string {
   return text.split("\n").slice(-15).join("\n").slice(-900)
 }
 
+export interface AgentRun {
+  agent: "claude" | "codex"
+  prompt: string
+  workdir: string
+  allow?: string
+  addDirs?: string
+  model?: string
+  sandbox?: string
+}
+
+// The adapters: a binary name and how to build its argv. Scheduler's agent jobs
+// and Sentinel's worker share them. Returns why it can't run, as a string.
+export function agentCommand(run: AgentRun, env: Record<string, string>): string[] | string {
+  const bin = Bun.which(run.agent, { PATH: env.PATH })
+  if (!bin) return `${run.agent} not found on PATH`
+  if (run.agent === "codex") return [bin, "exec", "-s", run.sandbox || "read-only", "-C", run.workdir, "--skip-git-repo-check", run.prompt]
+  const cmd = [bin, "-p", run.prompt, "--output-format", "text", "--permission-mode", "default", "--allowedTools", run.allow || DEFAULT_ALLOW, "--disallowedTools", ALWAYS_DENY]
+  for (const d of (run.addDirs ?? "").split(",")) if (d.trim()) cmd.push("--add-dir", expandHome(d.trim()))
+  if (run.model) cmd.push("--model", run.model)
+  return cmd
+}
+
 function buildCommand(job: Job, workdir: string, env: Record<string, string>, runs: string): string[] | string {
   const h = job.header
   const kind = h.kind!
@@ -119,13 +157,16 @@ function buildCommand(job: Job, workdir: string, env: Record<string, string>, ru
   if (kind === "spinuptui") return [...selfCommand(), ...splitArgs(job.body)]
   const agent = agentOf(h)!
   const prompt = preamble(h.id!, agent === "codex" ? "agent/codex" : "agent/claude", h.created_by!, runs) + job.body
-  const bin = Bun.which(agent, { PATH: env.PATH })
-  if (!bin) return `${agent} not found on PATH`
-  if (agent === "codex") return [bin, "exec", "-s", h.sandbox || "read-only", "-C", workdir, "--skip-git-repo-check", prompt]
-  const cmd = [bin, "-p", prompt, "--output-format", "text", "--permission-mode", "default", "--allowedTools", h.allow || DEFAULT_ALLOW, "--disallowedTools", ALWAYS_DENY]
-  for (const d of (h.add_dirs ?? "").split(",")) if (d.trim()) cmd.push("--add-dir", expandHome(d.trim()))
-  if (h.model) cmd.push("--model", h.model)
-  return cmd
+  return agentCommand({ agent, prompt, workdir, allow: h.allow, addDirs: h.add_dirs, model: h.model, sandbox: h.sandbox }, env)
+}
+
+// What a finished process means. An agent that exits 0 after saying it's blocked
+// did no work, whatever its exit code says.
+export function outcomeOf(agent: boolean, code: number | null, timedOut: boolean, output: string): RunStatus {
+  if (agent && code !== 0 && AUTH_FAIL_RE.test(output)) return "auth"
+  if (timedOut) return "timeout"
+  if (code === 0) return agent && BLOCKED_RE.test(output) ? "blocked" : "ok"
+  return !agent && code === BLOCKED_EXIT ? "blocked" : "failed"
 }
 
 export interface RunOutcome {
@@ -161,14 +202,13 @@ export async function runJob(source: Source, job: Job, occurrence: Date, now = n
       const r = await runProcess(cmd, { cwd: workdir, env, timeoutMs })
       code = r.code
       output = r.output
-      status = r.timedOut ? "timeout" : r.code === 0 ? "ok" : "failed"
+      status = outcomeOf(!!agentOf(h), r.code, r.timedOut, r.output)
       if (r.timedOut) output += `\n\n[scheduler] killed after ${timeoutMs / 60_000} minutes`
     } catch (err) {
       status = "error"
       output = `could not start: ${(err as Error).message}`
     }
   }
-  if (agentOf(h) && status !== "ok" && AUTH_FAIL_RE.test(output)) status = "auth"
   return finish(source, job, occurrence, started, new Date(), status, code, output, reportRel)
 }
 
@@ -227,19 +267,25 @@ async function finish(
 
   let notified: RunOutcome["notified"] = "skipped"
   if ((h.notify || "beacon") !== "none") {
-    const icon = { ok: "✅", failed: "❌", timeout: "⏱️", error: "❌" }[status as Exclude<RunStatus, "auth">] ?? "•"
+    const icon = { ok: "✅", failed: "❌", blocked: "🚧", timeout: "⏱️", error: "❌" }[status as Exclude<RunStatus, "auth">] ?? "•"
     notified = await notify(
       `${icon} Job ${id} (${status}, ${duration(seconds)})\n\n${summaryOf(job, output) || "(no output)"}\n\nReport: ${source.name}/${reportRel}\nQueued by: ${h.created_by}`,
       h.to,
+      status === "ok" ? undefined : [[runAgainButton(source.name, id)]],
     )
   }
   return { status, report: reportRel, notified }
 }
 
+// A tap re-runs the job exactly as written: it can't add permissions.
+export function runAgainButton(source: string, id: string): BeaconButton {
+  return { text: `Run ${id} again`, action: "scheduler.run", payload: { source, id } }
+}
+
 // In-process Beacon send. Never throws; returns "sent" or why it wasn't.
-export async function notify(text: string, to?: string): Promise<string> {
+export async function notify(text: string, to?: string, buttons?: BeaconButton[][], silent = false): Promise<string> {
   try {
-    const r = await beaconSend(beaconFromConfig(loadConfig()), text, { to: to || null, silent: false })
+    const r = await beaconSend(beaconFromConfig(loadConfig()), text, { to: to || null, silent, ...(buttons ? { replyMarkup: pageMarkup(buttons) } : {}) })
     return r.ok ? "sent" : `${r.reason}: ${r.message}`
   } catch (err) {
     return `error: ${(err as Error).message}`

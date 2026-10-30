@@ -9,8 +9,9 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { loadConfig, saveConfig } from "../config.ts"
 import { beaconFromConfig, beaconSend, pickChannel } from "./beacon.ts"
-import { channelProblem, listenerDir, listenerLogPath, readListenerState } from "./beaconListen.ts"
+import { buttonMarkup, channelProblem, listenerDir, listenerLogPath, readListenerState } from "./beaconListen.ts"
 import { helpIncludes, launchctl, resolveRunner } from "./schedulerInstall.ts"
+import type { BeaconButton } from "../modules/contract.ts"
 
 export const DEFAULT_LISTENER_LABEL = "com.spinuptui.beacon-listener"
 // Three missed polls, with room for a restart.
@@ -208,6 +209,12 @@ export function listenerInstalled(): boolean {
 }
 
 // Is the installed listener answering? null when none is installed.
+// Inline buttons for a page. Only the listener can receive a tap, so with none
+// installed a page goes out without them.
+export function pageMarkup(buttons: BeaconButton[][]): string | undefined {
+  return listenerInstalled() ? buttonMarkup(buttons) : undefined
+}
+
 export function listenerHealth(now = Date.now()): { ok: boolean; detail: string } | null {
   if (!listenerInstalled()) return null
   try {

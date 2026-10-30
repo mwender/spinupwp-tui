@@ -102,6 +102,14 @@ On macOS the listener is a LaunchAgent that launchd restarts if it stops. It lon
 
 Telegram gives a bot's messages to one reader at a time, so Beacon setup stops the listener while it waits for your message and starts it again afterwards. The listener's log is `modules/beacon/listener.log` in the config directory.
 
+## Team boards
+
+A board is a Basecamp project's message board, for your own team's record. Sentinel posts incident reports there. It isn't a pager channel: it's never paged, and `beacon send` can't reach it. It needs the `basecamp` CLI, logged in.
+
+```sh
+spinuptui beacon add basecamp board --project <id> --mention "Your Name"
+```
+
 ## Check on it
 
 ```sh

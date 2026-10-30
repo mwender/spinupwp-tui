@@ -112,6 +112,7 @@ export interface AppConfig {
   // Scheduler's sources and installed dispatcher (lib/scheduler*.ts,
   // docs/2026-10-20_scheduler-spec.md). Machine-level: a station runs one clock.
   scheduler: SchedulerStored | null
+  sentinel: SentinelStored | null
   // Where modules put the user's work (Scheduler's jobs and reports…); null =
   // the default, ~/SpinupTUI. SPINUPTUI_HOME overrides. See modules/contract.ts.
   homeDir: string | null
@@ -127,12 +128,38 @@ export interface BeaconTelegramChannel {
 // are additive.
 export type BeaconChannel = BeaconTelegramChannel
 
+// A Basecamp project's message board, for the team's own record. Not a channel:
+// it's never paged, and only a named post reaches it. `audience` exists so a
+// client-facing board can't be reached by accident: only "team" is accepted
+// until the client channel's gate is built.
+export interface BeaconBoard {
+  type: "basecamp"
+  projectId: string
+  mention?: string // the person @-mentioned on a new post
+  audience: "team"
+}
+
 export interface BeaconStored {
   defaultChannel?: string
   channels?: Record<string, BeaconChannel>
+  boards?: Record<string, BeaconBoard>
   // Written by `beacon listener install --apply`, cleared by uninstall: the
   // resident process that answers the operator (lib/beaconListen.ts).
   listener?: { label: string; unitPath: string; bin: string; channel: string; installedAt: string }
+}
+
+// Sentinel's settings (docs/2026-10-30_sentinel-spec.md). Machine-level, and
+// written only by setup: everything it does while running lives in its state
+// directory.
+export interface SentinelStored {
+  enabled?: boolean
+  mode?: "live" | "shadow"
+  channel?: string | null // Beacon channel for pages; default Beacon's default
+  reportTo?: string | null // a Beacon board's name
+  workspace?: string
+  recurrenceHours?: number
+  maxDiagnosesPerDay?: number
+  diagnosis?: { agent?: "claude" | "codex" | null; model?: string | null; timeoutMin?: number; allow?: string | null }
 }
 
 export interface SchedulerStored {
@@ -249,6 +276,7 @@ export interface StoredConfig {
   lastSeenVersion?: string
   beacon?: BeaconStored
   scheduler?: SchedulerStored
+  sentinel?: SentinelStored
   homeDir?: string
 }
 
@@ -537,6 +565,7 @@ export function loadConfig(): AppConfig {
     lastSeenVersion: stored.lastSeenVersion?.trim() || null,
     beacon: stored.beacon ?? null,
     scheduler: stored.scheduler ?? null,
+    sentinel: stored.sentinel ?? null,
     homeDir: stored.homeDir?.trim() || null,
   }
 }

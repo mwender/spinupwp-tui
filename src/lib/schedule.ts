@@ -80,6 +80,7 @@ export function declSchedule(decl: { every?: string; at?: string }): Schedule {
 }
 
 export interface ScheduleState {
+  last_status?: string
   last_run?: string
   last_scheduled?: string
   retry_after?: string
@@ -143,7 +144,9 @@ export function nextRunText(job: DueInput, state: ScheduleState, now: Date): str
   if (job.expires && dayStart(now) > parseDate(job.expires).getTime()) return "expired"
   if (job.when) {
     const when = parseWhen(job.when)
-    return state.last_scheduled === fmt(when) ? "done" : fmt(when)
+    if (state.last_scheduled !== fmt(when)) return fmt(when)
+    // It ran but couldn't do its work, so it stays visibly unfinished.
+    return state.last_status === "blocked" ? "blocked" : "done"
   }
   const sched = job.schedule ?? parseEvery(job.every!)
   if (sched.type === "interval") return `every ${sched.minutes} min`

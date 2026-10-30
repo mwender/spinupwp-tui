@@ -751,6 +751,8 @@ interface StoreValue extends DataState {
   // Scheduler's install plan + confirm overlay, opened from the Modules tab.
   schedulerInstallOpen: boolean
   setSchedulerInstallOpen: (v: boolean) => void
+  sentinelOverlay: "setup" | "digest" | null
+  setSentinelOverlay: (v: "setup" | "digest" | null) => void
   // The SpinupTUI folder: where it is, and sharing it across machines (Modules tab).
   homeSyncOpen: boolean
   setHomeSyncOpen: (v: boolean) => void
@@ -1157,6 +1159,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [discoverOpen, setDiscoverOpen] = useState(false)
   const [beaconSetupOpen, setBeaconSetupOpen] = useState(false)
   const [schedulerInstallOpen, setSchedulerInstallOpen] = useState(false)
+  const [sentinelOverlay, setSentinelOverlay] = useState<"setup" | "digest" | null>(null)
   const [homeSyncOpen, setHomeSyncOpen] = useState(false)
   const [heartbeatSetupOpen, setHeartbeatSetupOpen] = useState(false)
   const [listenerSetupOpen, setListenerSetupOpen] = useState(false)
@@ -4620,6 +4623,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setBeaconSetupOpen,
     schedulerInstallOpen,
     setSchedulerInstallOpen,
+    sentinelOverlay,
+    setSentinelOverlay,
     homeSyncOpen,
     setHomeSyncOpen,
     heartbeatSetupOpen,

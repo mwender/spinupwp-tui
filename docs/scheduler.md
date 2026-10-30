@@ -64,6 +64,12 @@ A skipped job is paged ("Skipped job post-numbers: it was due at 08:00, and this
 
 Other options: `--timeout <minutes>` (default 30), `--notify none` to skip the page, `--to <channel>` for a Beacon channel other than the default, `--workdir`, `--add-dirs` and `--model` for agent jobs, `--body-file <path>` instead of `-- …`, and `--replace` to overwrite a job with the same id.
 
+### When a job can't do its work
+
+If a job ran but something outside it stopped it (a lapsed login, a missing permission, a service refusing it), it's `blocked`, not `ok`. An agent says so with a line `STATUS: blocked` in its report, and Scheduler tells every agent job how. A script exits with code `75`. A blocked one-shot stays visibly unfinished instead of counting as done.
+
+The page for a failed or blocked job has a **Run again** button, and `/jobs` shows the same button on those jobs, so you can fix the cause and retry from your phone. A tap re-runs the job exactly as written, with the same allow list and sandbox. With no listener installed, pages go out without buttons, and `spinuptui scheduler run <id>` does the same thing.
+
 ## See what's queued and what happened
 
 ```sh

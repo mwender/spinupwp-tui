@@ -80,6 +80,11 @@ export function tickHeartbeat(ranCount: number, errors: string[], pager: string 
   return { status: "up", msg: errors.length ? `tick ok, ${what}; ${errors.length} problem${errors.length === 1 ? "" : "s"}: ${errors[0]}` : `tick ok, ${what}` }
 }
 
+// What a tick that found the previous one still running tells Kuma.
+export function stillRunningHeartbeat(pager: string | null): { status: "up" | "down"; msg: string } {
+  return pager ? { status: "down", msg: `Station is up, but ${pager}` } : { status: "up", msg: "tick still running" }
+}
+
 // ---- setup through SpinupTUI's own Kuma login --------------------------------------
 //
 // With a Kuma login saved (the one site monitoring uses), SpinupTUI creates the

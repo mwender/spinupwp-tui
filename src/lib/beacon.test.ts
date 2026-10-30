@@ -138,3 +138,17 @@ describe("beaconSend", () => {
     expect(f.calls.length).toBe(2)
   })
 })
+
+describe("buttons on a page", () => {
+  test("go on the last part only", async () => {
+    const bodies: URLSearchParams[] = []
+    const beacon: ResolvedBeacon = { channels: [{ name: "pager", channel: { type: "telegram", botToken: "1:a", chatId: "2" }, env: false }], defaultChannel: "pager" }
+    const fetchImpl = (async (_u: string, init?: RequestInit) => (bodies.push(init!.body as URLSearchParams), Response.json({ ok: true, result: {} }))) as never
+    const long = Array.from({ length: 300 }, (_, i) => `line ${i} ${"x".repeat(40)}`).join("\n")
+    const r = await beaconSend(beacon, long, { replyMarkup: '{"inline_keyboard":[]}', fetchImpl, log: false })
+    expect(r.ok).toBe(true)
+    expect(bodies.length).toBeGreaterThan(1)
+    expect(bodies.slice(0, -1).some((b) => b.has("reply_markup"))).toBe(false)
+    expect(bodies[bodies.length - 1]!.get("reply_markup")).toBe('{"inline_keyboard":[]}')
+  })
+})

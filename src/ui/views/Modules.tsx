@@ -18,6 +18,8 @@ import { beaconFromConfig, beaconSend, testMessage } from "../../lib/beacon.ts"
 import { loadConfig } from "../../config.ts"
 import { listenerInstalled } from "../../lib/beaconListenInstall.ts"
 import { upcomingRuns } from "../../modules/scheduler.ts"
+import { clearPause, isWaiting, loadIncidents, loadPause, savePause } from "../../lib/sentinelState.ts"
+import { describeIncident } from "../../lib/sentinelReply.ts"
 import { describeShare, homeStatus, tilde, type HomeStatus } from "../../lib/home.ts"
 
 interface Card {
@@ -45,7 +47,7 @@ function stateLabel(card: Card, status: ModuleStatus | undefined): { dot: string
 
 export function Modules({ rows }: { rows: number }) {
   const store = useStore()
-  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen, schedulerInstallOpen, setSchedulerInstallOpen, homeSyncOpen, setHomeSyncOpen, heartbeatSetupOpen, setHeartbeatSetupOpen, listenerSetupOpen, setListenerSetupOpen } = store
+  const { route, inputMode, overlayOpen, beaconSetupOpen, setBeaconSetupOpen, schedulerInstallOpen, setSchedulerInstallOpen, homeSyncOpen, setHomeSyncOpen, heartbeatSetupOpen, setHeartbeatSetupOpen, listenerSetupOpen, setListenerSetupOpen, sentinelOverlay, setSentinelOverlay } = store
   const [selected, setSelected] = useState(0)
   const [statuses, setStatuses] = useState<Map<ModuleId, ModuleStatus>>(new Map())
   const [testing, setTesting] = useState(false)
@@ -54,7 +56,7 @@ export function Modules({ rows }: { rows: number }) {
   // the config). status() is cheap and never sends anything.
   const [tick, setTick] = useState(0)
   useEffect(() => {
-    if (beaconSetupOpen || schedulerInstallOpen || homeSyncOpen || heartbeatSetupOpen || listenerSetupOpen) return
+    if (beaconSetupOpen || schedulerInstallOpen || homeSyncOpen || heartbeatSetupOpen || listenerSetupOpen || sentinelOverlay) return
     let live = true
     void Promise.all(MODULES.map((m) => m.status())).then((list) => {
       if (live) setStatuses(new Map(list.map((s) => [s.id, s])))
@@ -62,7 +64,7 @@ export function Modules({ rows }: { rows: number }) {
     return () => {
       live = false
     }
-  }, [beaconSetupOpen, schedulerInstallOpen, homeSyncOpen, heartbeatSetupOpen, listenerSetupOpen, tick])
+  }, [beaconSetupOpen, schedulerInstallOpen, homeSyncOpen, heartbeatSetupOpen, listenerSetupOpen, sentinelOverlay, tick])
 
   const isActive = route === "modules" && !inputMode && !overlayOpen
   const card = CARDS[selected]!
@@ -79,6 +81,19 @@ export function Modules({ rows }: { rows: number }) {
     })
   }
 
+  const sentinelReady = card.id === "sentinel" && status !== undefined && status.state !== "not_configured"
+
+  const togglePause = () => {
+    if (loadPause()) {
+      clearPause()
+      toast.success("Sentinel is watching again")
+    } else {
+      savePause({ until: new Date(Date.now() + 2 * 3_600_000).toISOString() })
+      toast.success("Sentinel paused for 2 hours")
+    }
+    setTick((t) => t + 1)
+  }
+
   useKeyboard((key) => {
     if (!isActive) return
     switch (key.name) {
@@ -92,6 +107,7 @@ export function Modules({ rows }: { rows: number }) {
       case "s":
         if (card.id === "beacon") return setBeaconSetupOpen(true)
         if (card.id === "scheduler") return setSchedulerInstallOpen(true)
+        if (card.id === "sentinel") return setSentinelOverlay("setup")
         return
       case "f":
         if (card.id === "scheduler") return setHomeSyncOpen(true)
@@ -104,6 +120,10 @@ export function Modules({ rows }: { rows: number }) {
         return
       case "t":
         if (card.id === "beacon" && status && status.state !== "not_configured") return sendTest()
+        if (sentinelReady) return setSentinelOverlay("digest")
+        return
+      case "p":
+        if (sentinelReady) return togglePause()
         return
     }
   })
@@ -161,6 +181,12 @@ export function Modules({ rows }: { rows: number }) {
               ]
             : []),
           ...(beaconReady ? [{ key: "t", label: testing ? "sending…" : "test page" }, { key: "l", label: "listener" }] : []),
+          ...(card.id === "sentinel"
+            ? [
+                { key: "⏎", label: sentinelReady ? "reconfigure" : "set up" },
+                ...(sentinelReady ? [{ key: "t", label: "preview digest" }, { key: "p", label: loadPause() ? "resume" : "pause 2h" }] : []),
+              ]
+            : []),
         ]}
       />
     </box>
@@ -219,8 +245,35 @@ function ModuleDetail({ card, status }: { card: Card; status: ModuleStatus | und
           <text content="⏎ reconfigure the pager  ·  t send a test page  ·  CLI: spinuptui beacon status" fg={theme.textFaint} />
         </>
       )}
+      {card.id === "sentinel" && <SentinelDetail ready={status.state !== "not_configured"} />}
       {card.id === "scheduler" && <SchedulerDetail installed={status.state !== "not_configured"} refreshKey={status} />}
     </box>
+  )
+}
+
+function SentinelDetail({ ready }: { ready: boolean }) {
+  if (!ready) {
+    return (
+      <>
+        <text
+          content="When something goes down, it finds the site that really caused it and pages you the reason. A morning digest covers what monitoring can't see."
+          fg={theme.textDim}
+        />
+        <box style={{ height: 1 }} />
+        <text content="Press ⏎ to see what it would do, then confirm." fg={theme.accent} />
+      </>
+    )
+  }
+  const open = loadIncidents().filter((i) => !i.closedAt || isWaiting(i)).slice(-5)
+  return (
+    <>
+      <text content={open.length ? "Open:" : "No open incidents."} fg={theme.textDim} />
+      {open.map((i) => (
+        <text key={i.id} content={`  ${truncate(describeIncident(i), 90)}`} fg={theme.text} wrapMode="none" />
+      ))}
+      <box style={{ height: 1 }} />
+      <text content="⏎ reconfigure  ·  t preview digest  ·  p pause  ·  CLI: spinuptui sentinel status" fg={theme.textFaint} />
+    </>
   )
 }
 

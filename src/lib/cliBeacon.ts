@@ -20,6 +20,7 @@ import {
   setupChannelName,
   verifyBotToken,
 } from "./beaconSetup.ts"
+import { boardLogin } from "./beaconBoard.ts"
 import { confirm, PromptCancelled, readLine } from "./prompt.ts"
 import { listen, routesFrom } from "./beaconListen.ts"
 import {
@@ -37,7 +38,7 @@ import { beaconModule } from "../modules/beacon.ts"
 import { allModuleStatuses, UPCOMING_MODULES } from "../modules/index.ts"
 import type { ModuleStatus } from "../modules/contract.ts"
 
-const VALUE_FLAGS = new Set(["--to", "--env-file", "--bin"])
+const VALUE_FLAGS = new Set(["--to", "--env-file", "--bin", "--project", "--mention"])
 
 function parse(list: string[]): { positionals: string[]; flags: Map<string, string>; rest: string | null } {
   const dash = list.indexOf("--")
@@ -71,6 +72,8 @@ const USAGE = `Usage:
   spinuptui beacon setup [<name>]   (guided, in a terminal)
   spinuptui beacon send [--to <channel>] [--silent] [--json] [<message> | -]
   spinuptui beacon add telegram <name> [--env-file <path>] [--default] [--no-test]
+  spinuptui beacon add basecamp <name> --project <id> [--mention "<person>"]
+                          a team message board: the \`basecamp\` CLI must be logged in
   spinuptui beacon remove <name>
   spinuptui beacon test [--to <channel>] [--json]
   spinuptui beacon status [--json]
@@ -138,8 +141,22 @@ async function test(flags: Map<string, string>, json: boolean): Promise<number> 
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
 
+async function addBoard(name: string, flags: Map<string, string>, json: boolean): Promise<number> {
+  const projectId = flags.get("--project") ?? ""
+  if (!/^\d+$/.test(projectId)) return fail(json, "usage", `--project needs the Basecamp project's numeric id.\n${USAGE}`)
+  const login = await boardLogin()
+  if (!login.ok) return fail(json, "basecamp_login", `Can't reach Basecamp: ${login.detail}.`)
+  const mention = flags.get("--mention")
+  const stored: BeaconStored = loadConfig().beacon ?? {}
+  await saveConfig({ beacon: { ...stored, boards: { ...(stored.boards ?? {}), [name]: { type: "basecamp", projectId, audience: "team", ...(mention ? { mention } : {}) } } } })
+  if (json) console.log(JSON.stringify({ ok: true, board: name, projectId }))
+  else console.log(`Added team board "${name}" (Basecamp project ${projectId}), posting as ${login.detail}.`)
+  return 0
+}
+
 async function add(pos: string[], flags: Map<string, string>, json: boolean): Promise<number> {
   const [type, name] = pos
+  if (type === "basecamp" && name && NAME_RE.test(name)) return addBoard(name, flags, json)
   if (type !== "telegram" || !name) return fail(json, "usage", USAGE)
   if (!NAME_RE.test(name)) return fail(json, "usage", `Channel names are lowercase letters, digits and dashes (got "${name}").`)
   if (name === "env") return fail(json, "usage", `"env" is reserved for the channel defined by SPINUPTUI_BEACON_* environment variables.`)
@@ -267,6 +284,13 @@ async function remove(pos: string[], json: boolean): Promise<number> {
   const name = pos[0]
   if (!name) return fail(json, "usage", USAGE)
   const stored: BeaconStored = loadConfig().beacon ?? {}
+  if (stored.boards?.[name]) {
+    const { [name]: _board, ...boards } = stored.boards
+    await saveConfig({ beacon: { ...stored, boards } })
+    if (json) console.log(JSON.stringify({ ok: true, removed: name }))
+    else console.log(`Removed board "${name}".`)
+    return 0
+  }
   if (!stored.channels?.[name]) {
     const resolved = pickChannel(beaconFromConfig(loadConfig()), name)
     if (!("ok" in resolved) && resolved.env) {
