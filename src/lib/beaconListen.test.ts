@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { handleUpdate, listen, readListenerState, routesFrom, storeButton, takeButton, type TgUpdate } from "./beaconListen.ts"
+import { handleUpdate, listen, readListenerState, routesFrom, sendReply, storeButton, takeButton, type TgUpdate } from "./beaconListen.ts"
 import type { BeaconReply } from "../modules/contract.ts"
 
 const TOKEN = "123456789:AAEabcdefghijklmnopqrstuvwxyz0123456"
@@ -106,6 +106,22 @@ describe("handleUpdate", () => {
     const r = routesFrom([{ commands: [{ command: "boom", describe: "x", run: async () => Promise.reject(new Error("disk full")) }] }])
     await handleUpdate(message(1, "/boom"), { channel, routes: r, fetchImpl: tg.impl, now: () => NOW })
     expect(tg.sent()).toEqual(["/boom failed: disk full"])
+  })
+})
+
+describe("sendReply", () => {
+  test("sends HTML, and falls back to plain text if Telegram refuses it", async () => {
+    const calls: URLSearchParams[] = []
+    const impl = async (_url: string, init?: RequestInit) => {
+      const p = init?.body as URLSearchParams
+      calls.push(p)
+      if (p.get("parse_mode")) return new Response(JSON.stringify({ ok: false, description: "can't parse entities" }), { status: 400 })
+      return new Response(JSON.stringify({ ok: true, result: {} }))
+    }
+    expect(await sendReply({ channel, routes: routes(), fetchImpl: impl }, { text: "<b>a &amp; b</b>", html: true })).toBeNull()
+    expect(calls[0]!.get("parse_mode")).toBe("HTML")
+    expect(calls[1]!.get("parse_mode")).toBeNull()
+    expect(calls[1]!.get("text")).toBe("a & b")
   })
 })
 

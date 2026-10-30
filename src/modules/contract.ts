@@ -35,12 +35,14 @@ export interface ScheduledJobDecl {
   command: string[]
 }
 
-// A reply on the operator channel. Plain text (no markup), with optional rows
-// of inline buttons. A button names one of the module's own actions and the
+// A reply on the operator channel: plain text, or Telegram HTML when `html` is
+// set (escape anything variable with escapeHtml), with optional rows of inline
+// buttons. A button names one of the module's own actions and the
 // payload to hand it; Beacon stores the payload and gives Telegram a short
 // one-use token instead, so a button works once, whatever its payload's size.
 export interface BeaconReply {
   text: string
+  html?: boolean
   buttons?: BeaconButton[][]
 }
 

@@ -22,7 +22,7 @@ import { randomBytes } from "node:crypto"
 import { dirname, join } from "node:path"
 import type { BeaconChannel } from "../config.ts"
 import { moduleStateDir, type BeaconActionDecl, type BeaconCommandDecl, type BeaconReply, type ModuleDefinition } from "../modules/contract.ts"
-import { splitMessage, telegramCall, type Fetch } from "./beacon.ts"
+import { htmlToPlain, splitMessage, telegramCall, type Fetch } from "./beacon.ts"
 import { tryLock } from "./flock.ts"
 
 export const POLL_SECONDS = 50
@@ -160,8 +160,9 @@ export interface ListenContext {
   now?: () => Date
 }
 
-// Plain text, link previews off. Buttons go on the last part when a reply is
-// long enough to be split.
+// Link previews off. Buttons go on the last part when a reply is long enough to
+// be split. If Telegram refuses a part's HTML, it goes again as plain text: a
+// reply that looks plainer beats no reply.
 export async function sendReply(ctx: ListenContext, reply: BeaconReply): Promise<string | null> {
   const parts = splitMessage(reply.text)
   for (let i = 0; i < parts.length; i++) {
@@ -171,7 +172,12 @@ export async function sendReply(ctx: ListenContext, reply: BeaconReply): Promise
       const keyboard = reply.buttons.map((row) => row.map((b) => ({ text: b.text, callback_data: `b:${storeButton(b.action, b.payload, now)}` })))
       params.reply_markup = JSON.stringify({ inline_keyboard: keyboard })
     }
-    const r = await telegramCall(ctx.channel.botToken, "sendMessage", params, ctx.fetchImpl)
+    if (reply.html) params.parse_mode = "HTML"
+    let r = await telegramCall(ctx.channel.botToken, "sendMessage", params, ctx.fetchImpl)
+    if (!r.ok && reply.html && r.status === 400) {
+      const { parse_mode: _html, ...plain } = params
+      r = await telegramCall(ctx.channel.botToken, "sendMessage", { ...plain, text: htmlToPlain(parts[i]!) }, ctx.fetchImpl)
+    }
     if (!r.ok) return r.error ?? "send failed"
   }
   return null

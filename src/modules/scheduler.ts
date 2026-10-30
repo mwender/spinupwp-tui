@@ -6,7 +6,7 @@ import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { tryLock } from "../lib/flock.ts"
 import { loadConfig } from "../config.ts"
-import { beaconFromConfig } from "../lib/beacon.ts"
+import { beaconFromConfig, escapeHtml } from "../lib/beacon.ts"
 import { fmtDate, nextRunText, parseDate, parseWhen } from "../lib/schedule.ts"
 import { findSource, listSources, loadJobs, loadState, readLastTick, type Source } from "../lib/schedulerJobs.ts"
 import { gitPull, readClaim, stationName } from "../lib/schedulerGit.ts"
@@ -179,13 +179,39 @@ function inDays(n: number): string {
   return n === -1 ? "yesterday" : `${-n} days ago`
 }
 
-// The station's jobs, soonest expiry first. Finished one-shots and long-expired
-// jobs are counted, not listed, so the reply stays short as history builds up.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+// "Nov 6", with the year only when it isn't this year's.
+export function shortDate(d: Date, now: Date): string {
+  const md = `${MONTHS[d.getMonth()]} ${d.getDate()}`
+  return d.getFullYear() === now.getFullYear() ? md : `${md}, ${d.getFullYear()}`
+}
+
+// "tonight 22:00", "tomorrow 08:00", "Nov 6 08:00".
+export function shortTime(value: string, now: Date): string {
+  const d = parseWhen(value)
+  const time = value.trim().split(" ")[1]!
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / DAY_MS)
+  if (days === 0) return `${d.getHours() >= 18 ? "tonight" : "today"} ${time}`
+  if (days === 1) return `tomorrow ${time}`
+  return `${shortDate(d, now)} ${time}`
+}
+
+// The schedule as it reads aloud: "daily 22:00", "every 30m", "once, Nov 6 09:00".
+function shortSchedule(h: Record<string, string>, now: Date): string {
+  if (h.when) return `once, ${shortTime(h.when, now)}`
+  return /^\d/.test(h.every!) ? `every ${h.every}` : h.every!
+}
+
+// The station's jobs, soonest expiry first, in short lines that fit a phone:
+// the name alone in bold, then when it expires, then how it runs. Finished
+// one-shots and long-expired jobs are counted, not listed, so the reply stays
+// short as history builds up.
 export async function jobsReply(opts: { now?: Date; pull?: boolean } = {}): Promise<BeaconReply> {
   const now = opts.now ?? new Date()
   const sources = listSources(loadConfig()).filter((s) => existsSync(s.path))
   const multi = sources.length > 1
-  const rows: { line: string; days: number; button?: BeaconButton }[] = []
+  const rows: { block: string; days: number; button?: BeaconButton }[] = []
   let hidden = 0
   const problems: string[] = []
   for (const s of sources) {
@@ -212,27 +238,28 @@ export async function jobsReply(opts: { now?: Date; pull?: boolean } = {}): Prom
       }
       const name = multi ? `${s.name}/${h.id}` : h.id!
       const soon = days <= EXPIRING_SOON_DAYS
-      const kind = h.kind === "agent" ? `agent/${h.agent || "claude"}` : h.kind
-      const schedule = h.when ? `once at ${h.when}` : `every ${h.every}`
-      const when = next === "expired" ? "expired" : `expires ${h.expires} (${inDays(days)})`
-      const line = `${soon ? "⚠️ " : ""}${name}: ${when}\n   ${kind}, ${schedule}${next !== "expired" && !h.when ? `, next ${next}` : ""}`
+      const kind = h.kind === "agent" ? `agent/${h.agent || "claude"}` : h.kind!
+      const date = shortDate(parseDate(h.expires!), now)
+      const expiry = next === "expired" ? `Expired ${date} (${inDays(days)})` : `Expires ${date}${soon ? ` (${inDays(days)})` : ""}`
+      const nextText = !h.when && /^\d{4}-/.test(next) ? ` · next ${shortTime(next, now)}` : ""
+      const block = [`${soon ? "⚠️ " : ""}<b>${escapeHtml(name)}</b>`, expiry, escapeHtml(`${kind} · ${shortSchedule(h, now)}${nextText}`)].join("\n")
       const extendable = soon && !h.when
       rows.push({
-        line,
+        block,
         days,
         ...(extendable ? { button: { text: `Extend ${name} 1 year`, action: "scheduler.extend", payload: { source: s.name, id: h.id!, from: h.expires! } } } : {}),
       })
     }
   }
   rows.sort((a, b) => a.days - b.days)
-  const station = stationName()
-  const head = rows.length ? `Scheduled jobs on ${station} (${rows.length}):` : `No scheduled jobs on ${station}.`
+  const station = escapeHtml(stationName())
+  const head = rows.length ? `<b>Scheduled jobs on ${station}</b> (${rows.length})` : `No scheduled jobs on ${station}.`
   const tail: string[] = []
-  if (hidden) tail.push(`${hidden} finished or long-expired not shown (spinuptui scheduler list).`)
-  for (const p of problems) tail.push(`⚠️ ${p}`)
-  const text = [head, ...rows.map((r) => r.line), ...(tail.length ? ["", ...tail] : [])].join("\n")
+  if (hidden) tail.push(`${hidden} finished or long-expired not shown.`)
+  for (const p of problems) tail.push(`⚠️ ${escapeHtml(p)}`)
+  const text = [head, ...rows.map((r) => r.block), ...(tail.length ? [tail.join("\n")] : [])].join("\n\n")
   const buttons = rows.filter((r) => r.button).map((r) => [r.button!])
-  return { text, ...(buttons.length ? { buttons } : {}) }
+  return { text, html: true, ...(buttons.length ? { buttons } : {}) }
 }
 
 // The "Extend 1 year" button: a year past the expiry the reply showed, so a
