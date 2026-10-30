@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test"
-import { mkdtempSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { handleUpdate, listen, readListenerState, routesFrom, sendReply, storeButton, takeButton, type TgUpdate } from "./beaconListen.ts"
+import { listenerHealth } from "./beaconListenInstall.ts"
 import type { BeaconReply } from "../modules/contract.ts"
 
 const TOKEN = "123456789:AAEabcdefghijklmnopqrstuvwxyz0123456"
@@ -157,5 +158,33 @@ describe("listen", () => {
     expect(await listen({ channel, channelName: "pager", routes: routes() })).toMatchObject({ ok: false, reason: "locked" })
     ctrl.abort()
     await first
+  })
+})
+
+describe("listenerHealth", () => {
+  const install = (state: Record<string, string>) => {
+    const dir = join(process.env.XDG_CONFIG_HOME!, "spinupwp-tui")
+    mkdirSync(join(dir, "modules", "beacon"), { recursive: true })
+    const unitPath = join(dir, "unit.plist")
+    writeFileSync(unitPath, "")
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ beacon: { listener: { label: "t", unitPath, bin: "x", channel: "pager", installedAt: "2026-10-30T12:00:00Z" } } }))
+    writeFileSync(join(dir, "modules", "beacon", "listener.json"), JSON.stringify(state))
+  }
+  const now = Date.parse("2026-10-30T12:00:00Z")
+
+  test("a listener whose first poll is still out is alive, until that takes too long", () => {
+    install({ startedAt: "2026-10-30T11:59:40Z" })
+    expect(listenerHealth(now)?.ok).toBe(true)
+    install({ startedAt: "2026-10-30T11:50:00Z" })
+    expect(listenerHealth(now)?.ok).toBe(false)
+  })
+
+  test("stale polls and polls that keep failing are down", () => {
+    install({ startedAt: "2026-10-29T00:00:00Z", lastPollAt: "2026-10-30T11:59:30Z" })
+    expect(listenerHealth(now)?.ok).toBe(true)
+    install({ startedAt: "2026-10-29T00:00:00Z", lastPollAt: "2026-10-30T11:50:00Z" })
+    expect(listenerHealth(now)?.ok).toBe(false)
+    install({ startedAt: "2026-10-29T00:00:00Z", lastPollAt: "2026-10-30T11:59:30Z", failingSince: "2026-10-30T11:45:00Z", lastError: "Conflict" })
+    expect(listenerHealth(now)?.detail).toContain("Conflict")
   })
 })

@@ -217,14 +217,16 @@ export function listenerHealth(now = Date.now()): { ok: boolean; detail: string 
     // Not paused.
   }
   const st = readListenerState()
-  const last = st.lastPollAt ? Date.parse(st.lastPollAt) : NaN
-  if (!Number.isFinite(last) || now - last > LISTENER_STALE_MS) {
+  // A listener that just started has a first poll still out (up to 50 seconds),
+  // so its start counts as a sign of life too.
+  const last = Math.max(...[st.lastPollAt, st.startedAt].map((t) => (t ? Date.parse(t) : 0)))
+  if (now - last > LISTENER_STALE_MS) {
     return { ok: false, detail: `hasn't polled Telegram since ${st.lastPollAt ?? "it was installed"}; see ${listenerLogPath()}` }
   }
   if (st.failingSince && now - Date.parse(st.failingSince) > LISTENER_FAILING_MS) {
     return { ok: false, detail: `polls failing since ${st.failingSince}: ${st.lastError ?? "unknown error"}` }
   }
-  return { ok: true, detail: `listening on ${st.channel ?? "?"} (pid ${st.pid ?? "?"}, ${st.version ?? "?"}), last poll ${st.lastPollAt}` }
+  return { ok: true, detail: `listening on ${st.channel ?? "?"} (pid ${st.pid ?? "?"}, ${st.version ?? "?"}), ${st.lastPollAt ? `last poll ${st.lastPollAt}` : `started ${st.startedAt}`}` }
 }
 
 // Telegram hands a bot's updates to one reader at a time, so Beacon setup's chat
