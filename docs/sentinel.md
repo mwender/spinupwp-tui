@@ -77,11 +77,30 @@ spinuptui beacon setup basecamp
 spinuptui sentinel setup --report-to board --apply
 ```
 
-It finds the [Basecamp CLI](https://github.com/basecamp/basecamp-cli) and tells you how to install it if it's missing, checks your login, and lets you pick the project and who to @-mention. It can post a test message first, which is a real post that the project's people may be notified of.
-
-Over SSH, or in an agent's shell, the login often can't be confirmed even when it's fine, because those sessions may not be able to read the Keychain. So you can still save the board by giving its project ID or any URL from the project, and the morning digest's Board line tells you whether it works. On a machine with no browser, log in with `basecamp auth login --remote`.
+It finds the [Basecamp CLI](https://github.com/basecamp/basecamp-cli) and tells you how to install it if it's missing, shows who reports will post as, and lets you pick the project and who to @-mention. It can post a test message first, which is a real post that the project's people may be notified of.
 
 This is for your own team's record. Agent output is never sent to a client. If a post fails, the page says so and the report is safe on disk; retry with `spinuptui sentinel post <incident>`. A post is never retried automatically, because Basecamp can't tell a retry from a second post.
+
+### Who reports post as
+
+Reports post as whichever Basecamp account the CLI is logged in to. If that's you, it works, but every report looks like you wrote it, and an @-mention may not notify its own author. Most teams use a separate Basecamp user. Posting as yourself is fine if you'd rather, and a separate user may take a seat on your plan.
+
+To log the CLI in as a separate user:
+
+```sh
+basecamp auth login --no-browser      # over SSH: --remote
+```
+
+1. Open the link it prints in a private window (Incognito). In a normal window, you're probably already signed in as yourself, and you'd connect your own account.
+2. Sign in as the separate user.
+3. The last page shows a connection error. That's expected: copy its URL and paste it back into the terminal.
+
+Setup shows the account before you choose a project, so you'll see if the wrong one connected. To change it, run `basecamp auth logout` and log in again.
+
+### If the login can't be confirmed
+
+Over SSH, or in an agent's shell, the login often can't be confirmed even when it's fine, because those sessions may not be able to read the Keychain. So you can still save the board by giving its project ID or any URL from the project, and the morning digest's Board line tells you whether it works. 
+
 
 ## The daily digest
 

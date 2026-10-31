@@ -20,7 +20,7 @@ import {
   setupChannelName,
   verifyBotToken,
 } from "./beaconSetup.ts"
-import { checkLogin, listPeople, listProjects, makeBoard, parseProjectId, postTest, saveBoard, setupBoardName } from "./boardSetup.ts"
+import { ACCOUNT_INTRO, checkLogin, listPeople, listProjects, makeBoard, overSsh, parseProjectId, postTest, saveBoard, separateUserSteps, setupBoardName } from "./boardSetup.ts"
 import { confirm, PromptCancelled, readLine } from "./prompt.ts"
 import { listen, routesFrom } from "./beaconListen.ts"
 import {
@@ -229,18 +229,26 @@ async function setupBoard(pos: string[]): Promise<number> {
   try {
     say("Connect a Basecamp message board, for your own team's record. Nothing here reaches a client.")
     say()
+    say(ACCOUNT_INTRO)
+    say()
     let login = await checkLogin()
-    while (login.state !== "confirmed") {
-      for (const s of login.steps) say(`  ${s}`)
-      if (login.state === "unconfirmed") {
-        if (!(await confirm("Check again?", true))) break
-      } else if (!(await confirm("Installed it? Check again?", true))) return 1
+    for (;;) {
+      if (login.state === "confirmed") {
+        say(`Reports will post as ${login.who}.`)
+        if (await confirm(`Post as ${login.who}?`, true)) break
+        for (const s of separateUserSteps(overSsh(), true)) say(`  ${s}`)
+        if (!(await confirm("Done? Check again?", true))) return 1
+      } else {
+        for (const s of login.steps) say(`  ${s}`)
+        if (login.state === "unconfirmed") {
+          if (!(await confirm("Check again?", true))) break
+        } else if (!(await confirm("Installed it? Check again?", true))) return 1
+      }
       login = await checkLogin()
     }
     let projectId: string | null = null
     let mention: string | null = null
     if (login.state === "confirmed") {
-      say(`✓ Logged in as ${login.who}`)
       const projects = await listProjects()
       if (projects.length) {
         say()
