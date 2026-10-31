@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.3.0-alpha.7] - 2026-10-31
+
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1. It includes the fixes below in 1.3.0-alpha.6, which was never published to npm.
+
 ### Added
 - **Guided Basecamp setup.** `spinuptui beacon setup basecamp`, or `b` in Sentinel's setup, walks you through connecting a team board: it finds the Basecamp CLI and says how to install it if it's missing, checks your login, lists your projects, asks who to @-mention, and can post a test message first.
 
@@ -1576,7 +1580,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.6...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.7...HEAD
+[1.3.0-alpha.7]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.6...v1.3.0-alpha.7
 [1.3.0-alpha.6]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.5...v1.3.0-alpha.6
 [1.3.0-alpha.5]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.4...v1.3.0-alpha.5
 [1.3.0-alpha.4]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.3...v1.3.0-alpha.4
