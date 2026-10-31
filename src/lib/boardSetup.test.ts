@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadConfig } from "../config.ts"
 import type { BasecampRun } from "./beaconBoard.ts"
-import { checkLogin, listPeople, listProjects, makeBoard, overSsh, parseProjectId, postTest, saveBoard, setupBoardName } from "./boardSetup.ts"
+import { checkLogin, listPeople, listProjects, makeBoard, overSsh, parseProjectId, postTest, saveBoard, separateUserSteps, setupBoardName } from "./boardSetup.ts"
 
 const ok = (data: unknown) => ({ code: 0, out: JSON.stringify({ ok: true, data }) })
 const answering = (routes: Record<string, { code: number; out: string }>): BasecampRun => async (args) => routes[args[0]!] ?? { code: 1, out: "" }
@@ -33,6 +33,27 @@ describe("checkLogin", () => {
     const steps = ((await checkLogin(answering({}), true)) as { steps: string[] }).steps.join(" ")
     expect(steps).toContain("SSH session")
     expect(steps).toContain("basecamp auth login --remote")
+  })
+
+  test("an unconfirmed login recommends a separate user, in a private window", async () => {
+    const steps = ((await checkLogin(answering({}), false)) as { steps: string[] }).steps.join(" ")
+    expect(steps).toContain("basecamp auth login --no-browser")
+    expect(steps).toContain("private window (Incognito)")
+    expect(steps).toContain("post as yourself: basecamp auth login")
+  })
+
+  test("the separate-user login never opens the default browser", () => {
+    expect(separateUserSteps(false)[0]).toContain("basecamp auth login --no-browser")
+    expect(separateUserSteps(true)[0]).toContain("basecamp auth login --remote")
+  })
+
+  test("it warns about the error page, which otherwise looks like a failure", () => {
+    expect(separateUserSteps(false).join(" ")).toContain("connection error. That's expected")
+  })
+
+  test("changing accounts logs out first", () => {
+    expect(separateUserSteps(false, true)[0]).toContain("basecamp auth logout, then basecamp auth login --no-browser")
+    expect(separateUserSteps(false)[0]).not.toContain("logout")
   })
 
   test("overSsh", () => {

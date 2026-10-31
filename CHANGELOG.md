@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Changed
+- **Basecamp setup now shows who reports will post as, and recommends a separate user.** It's whichever account the CLI is logged in to, which is easy to miss when that's your own. Setup shows the account before you choose a project, lets you change it, and gives the login that keeps you out of your own session: open its link in a private window. See [docs/sentinel.md](docs/sentinel.md#who-reports-post-as).
+
 ## [1.3.0-alpha.7] - 2026-10-31
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1. It includes the fixes below in 1.3.0-alpha.6, which was never published to npm.

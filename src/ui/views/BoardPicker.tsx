@@ -9,9 +9,9 @@ import { theme } from "../../lib/theme.ts"
 import { Panel, Spinner } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { useStore } from "../store.tsx"
-import { checkLogin, listPeople, listProjects, makeBoard, parseProjectId, postTest, saveBoard, setupBoardName, type BoardProject, type LoginCheck } from "../../lib/boardSetup.ts"
+import { ACCOUNT_INTRO, checkLogin, listPeople, listProjects, makeBoard, overSsh, parseProjectId, postTest, saveBoard, separateUserSteps, setupBoardName, type BoardProject, type LoginCheck } from "../../lib/boardSetup.ts"
 
-type Phase = "checking" | "blocked" | "manual" | "project" | "person" | "test" | "posting" | "failed"
+type Phase = "checking" | "blocked" | "account" | "switching" | "manual" | "project" | "person" | "test" | "posting" | "failed"
 
 const NOBODY = "Nobody"
 const ROWS = 10
@@ -40,7 +40,7 @@ export function BoardPicker({ onDone, onCancel }: { onDone: (name: string) => vo
       setPeople([NOBODY, ...q])
       setSelected(0)
       if (!p.length) setMessage(`Logged in as ${l.who}, but no projects with a message board came back.`)
-      setPhase(p.length ? "project" : "manual")
+      setPhase("account")
     })()
   }
   useEffect(check, [])
@@ -72,6 +72,15 @@ export function BoardPicker({ onDone, onCancel }: { onDone: (name: string) => vo
     if (phase === "blocked") {
       if (name === "r") return check()
       if (name === "m" && login?.state === "unconfirmed") return setPhase("manual")
+      return
+    }
+    if (phase === "account") {
+      if (name === "c") return setPhase("switching")
+      if (name === "return") return setPhase(projects.length ? "project" : "manual")
+      return
+    }
+    if (phase === "switching") {
+      if (name === "r") return check()
       return
     }
     if (phase === "project" || phase === "person") {
@@ -111,6 +120,24 @@ export function BoardPicker({ onDone, onCancel }: { onDone: (name: string) => vo
             ))}
             <box style={{ height: 1 }} />
             {line(login.state === "unconfirmed" ? "r check again · m enter the project anyway · Esc cancel" : "r check again · Esc cancel", theme.accent)}
+          </>
+        )}
+        {phase === "account" && login?.state === "confirmed" && (
+          <>
+            {line(`Reports will post as ${login.who}.`, theme.text)}
+            <box style={{ height: 1 }} />
+            {line(ACCOUNT_INTRO)}
+            <box style={{ height: 1 }} />
+            {line(`⏎ post as ${login.who} · c use a different account · Esc cancel`, theme.accent)}
+          </>
+        )}
+        {phase === "switching" && (
+          <>
+            {separateUserSteps(overSsh(), true).map((s) => (
+              <text key={s} content={s} fg={theme.text} />
+            ))}
+            <box style={{ height: 1 }} />
+            {line("r check again · Esc cancel", theme.accent)}
           </>
         )}
         {phase === "manual" && (

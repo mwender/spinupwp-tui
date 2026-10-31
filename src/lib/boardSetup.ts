@@ -14,6 +14,23 @@ import { boardLogin, cliJson, postToBoard, realRun, type BasecampRun, type Board
 export const BASECAMP_CLI_URL = "https://github.com/basecamp/basecamp-cli"
 export const BASECAMP_INSTALL = "curl -fsSL https://basecamp.com/install-cli | bash"
 
+// Who a board posts as isn't obvious: it's whichever account the CLI is logged in
+// to, and that's often the person doing the setup. It works, and every report then
+// looks like they wrote it.
+export const ACCOUNT_INTRO = "Reports post as whichever Basecamp account the CLI is logged in to. Most teams use a separate Basecamp user for this, so reports don't look like they came from you."
+
+// The CLI's plain login opens the default browser, usually already signed in as the
+// person at the keyboard, so it can connect the wrong account before they've thought
+// about it. These forms stop at a link they can open in a private window instead.
+export function separateUserSteps(ssh: boolean, switching = false): string[] {
+  const login = `basecamp auth login ${ssh ? "--remote" : "--no-browser"}`
+  return [
+    `To use a separate user, run this in a terminal on this machine: ${switching ? "basecamp auth logout, then " : ""}${login}`,
+    "Open its link in a private window (Incognito). If you're signed in to Basecamp as yourself, a normal window connects your own account.",
+    "The last page shows a connection error. That's expected: copy its URL and paste it back into the terminal.",
+  ]
+}
+
 export type LoginCheck =
   | { state: "confirmed"; who: string }
   | { state: "missing"; steps: string[] }
@@ -30,14 +47,7 @@ export async function checkLogin(run: BasecampRun = realRun, ssh = overSsh()): P
   const why = ssh
     ? "This is an SSH session, which often can't read the login keychain even when the login is fine."
     : "A sandboxed shell, such as an agent's, can't read the login keychain even when the login is fine."
-  return {
-    state: "unconfirmed",
-    steps: [
-      "Couldn't confirm the Basecamp login from this session.",
-      `If you've never logged in, run this in a terminal on this machine: basecamp auth login${ssh ? " --remote" : ""}`,
-      why,
-    ],
-  }
+  return { state: "unconfirmed", steps: ["Couldn't confirm the Basecamp login from this session.", why, ...separateUserSteps(ssh), `Or post as yourself: basecamp auth login${ssh ? " --remote" : ""}`] }
 }
 
 export interface BoardProject {
