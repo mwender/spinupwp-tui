@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.3.0-alpha.8] - 2026-10-31
+
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
+
 ### Changed
 - **Basecamp setup now shows who reports will post as, and recommends a separate user.** It's whichever account the CLI is logged in to, which is easy to miss when that's your own. Setup shows the account before you choose a project, lets you change it, and gives the login that keeps you out of your own session: open its link in a private window. See [docs/sentinel.md](docs/sentinel.md#who-reports-post-as).
 
@@ -1583,7 +1587,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.7...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.8...HEAD
+[1.3.0-alpha.8]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.7...v1.3.0-alpha.8
 [1.3.0-alpha.7]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.6...v1.3.0-alpha.7
 [1.3.0-alpha.6]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.5...v1.3.0-alpha.6
 [1.3.0-alpha.5]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.4...v1.3.0-alpha.5
