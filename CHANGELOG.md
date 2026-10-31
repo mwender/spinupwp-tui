@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.3.0-alpha.6] - 2026-10-31
+
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
+
 ### Fixed
 - **Sentinel's digest no longer reads healthy servers as unverified.** Each update check looked the fleet up through the API, so a large fleet hit the rate limit and probes ran out of time before they connected. A digest now looks the fleet up once. A domain that exists on two servers no longer fails the check either.
 
@@ -1566,7 +1570,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.5...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.6...HEAD
+[1.3.0-alpha.6]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.5...v1.3.0-alpha.6
 [1.3.0-alpha.5]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.4...v1.3.0-alpha.5
 [1.3.0-alpha.4]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.3...v1.3.0-alpha.4
 [1.3.0-alpha.3]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.2...v1.3.0-alpha.3
