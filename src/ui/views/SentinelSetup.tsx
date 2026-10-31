@@ -15,6 +15,7 @@ import { SpinupWPClient } from "../../api/client.ts"
 import { applySetup, loadAttachPlan, planSetup, saveAttach } from "../../lib/cliSentinel.ts"
 import { composeDigest, gatherDigest } from "../../lib/sentinelDigest.ts"
 import { loadFlags, sentinelSettings } from "../../lib/sentinelState.ts"
+import { BoardPicker } from "./BoardPicker.tsx"
 import type { AttachPlan } from "../../lib/sentinelAttach.ts"
 import type { KumaMonitor } from "../../lib/uptimeKuma.ts"
 
@@ -80,7 +81,9 @@ function Setup({ close }: { close: () => void }) {
   const [likely, setLikely] = useState(false)
   const [phase, setPhase] = useState<"confirm" | "applying" | "done" | "error">("confirm")
   const [message, setMessage] = useState("")
-  const plan = planSetup({ agent })
+  const [reportTo, setReportTo] = useState(loadConfig().sentinel?.reportTo ?? "")
+  const [choosingBoard, setChoosingBoard] = useState(false)
+  const plan = planSetup({ agent, reportTo: reportTo || undefined })
 
   useEffect(() => {
     if (!loadConfig().uptimeKuma) return
@@ -97,7 +100,7 @@ function Setup({ close }: { close: () => void }) {
     setPhase("applying")
     void (async () => {
       const attached = attach ? await saveAttach(attach.plan, attach.monitors, likely) : 0
-      const r = await applySetup(planSetup({ agent }).next)
+      const r = await applySetup(planSetup({ agent, reportTo: reportTo || undefined }).next)
       setMessage(r.ok ? `${attached ? `Attached ${attached} monitor(s). ` : ""}Sentinel read Kuma and is watching from now.` : r.message)
       setPhase(r.ok ? "done" : "error")
     })().catch((err: Error) => {
@@ -107,15 +110,33 @@ function Setup({ close }: { close: () => void }) {
   }
 
   useKeyboard((key) => {
+    if (choosingBoard) return
     const name = key.name ?? ""
     if (name === "escape" || name === "q") return close()
     if (phase !== "confirm") return
+    if (name === "b") return setChoosingBoard(true)
     if (name === "a") return setAgent((a) => (a === "claude" ? "codex" : a === "codex" ? "none" : "claude"))
     if (name === "l" && attach?.plan.likely.length) return setLikely((v) => !v)
     if (name === "y" && plan.blockers.length === 0) apply()
   })
 
   const a = attach?.plan
+  if (choosingBoard) {
+    return (
+      <>
+        <Centered>
+          <BoardPicker
+            onDone={(name) => {
+              setReportTo(name)
+              setChoosingBoard(false)
+            }}
+            onCancel={() => setChoosingBoard(false)}
+          />
+        </Centered>
+        <StatusBar hints={[{ key: "esc", label: "back" }]} showGlobal={false} />
+      </>
+    )
+  }
   return (
     <>
       <Centered>
@@ -139,6 +160,7 @@ function Setup({ close }: { close: () => void }) {
               <box style={{ height: 1 }} />
               <text content={`Agent: ${agent}`} fg={theme.accent} wrapMode="none" />
               <text content={`Workspace: ${truncate(plan.next.workspace ?? "~/SpinupTUI/sentinel", 62)}`} fg={theme.textDim} wrapMode="none" />
+              <text content={`Team board: ${reportTo || "none"} (optional, b to ${reportTo ? "change" : "connect Basecamp"})`} fg={theme.textDim} wrapMode="none" />
               <box style={{ height: 1 }} />
               {!a && !attachError && loadConfig().uptimeKuma && <text content="Reading your Kuma monitors…" fg={theme.textDim} wrapMode="none" />}
               {attachError && <text content={`Couldn't read Kuma: ${truncate(attachError, 58)}`} fg={theme.warn} wrapMode="none" />}
@@ -163,7 +185,7 @@ function Setup({ close }: { close: () => void }) {
         )}
       </Centered>
       <StatusBar
-        hints={phase === "confirm" && !plan.blockers.length ? [{ key: "y", label: "turn on" }, { key: "a", label: "agent" }, { key: "esc", label: "cancel" }] : [{ key: "esc", label: "close" }]}
+        hints={phase === "confirm" && !plan.blockers.length ? [{ key: "y", label: "turn on" }, { key: "a", label: "agent" }, { key: "b", label: "team board" }, { key: "esc", label: "cancel" }] : [{ key: "esc", label: "close" }]}
         showGlobal={false}
       />
     </>

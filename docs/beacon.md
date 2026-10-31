@@ -104,11 +104,14 @@ Telegram gives a bot's messages to one reader at a time, so Beacon setup stops t
 
 ## Team boards
 
-A board is a Basecamp project's message board, for your own team's record. Sentinel posts incident reports there. It isn't a pager channel: it's never paged, and `beacon send` can't reach it. It needs the `basecamp` CLI, logged in.
+A board is a Basecamp project's message board, for your own team's record. Sentinel posts incident reports there. It isn't a pager channel: it's never paged, and `beacon send` can't reach it. It needs the [Basecamp CLI](https://github.com/basecamp/basecamp-cli), logged in.
 
 ```sh
-spinuptui beacon add basecamp board --project <id> --mention "Your Name"
+spinuptui beacon setup basecamp     # guided: login, project, who to mention, a test post
+spinuptui beacon add basecamp board --project <id> --mention "Your Name"     # for scripts
 ```
+
+`add` saves the board even if the login can't be confirmed from your session, and says so. Over SSH or in an agent's shell that check often can't tell. Only a missing CLI stops it.
 
 ## Check on it
 

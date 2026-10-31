@@ -11,6 +11,12 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Guided Basecamp setup.** `spinuptui beacon setup basecamp`, or `b` in Sentinel's setup, walks you through connecting a team board: it finds the Basecamp CLI and says how to install it if it's missing, checks your login, lists your projects, asks who to @-mention, and can post a test message first.
+
+### Changed
+- **`beacon add basecamp` no longer refuses when the login can't be confirmed.** Over SSH or in an agent's shell, that check often can't tell, even when the login is fine. The board is saved with a note, and the morning digest confirms it. A missing CLI still stops it.
+
 ## [1.3.0-alpha.6] - 2026-10-31
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.

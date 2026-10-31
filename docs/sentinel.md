@@ -70,10 +70,16 @@ To use an existing playbook, set `--workspace <dir>`. The agent works from there
 
 ## Post reports to a team board
 
+Press `b` in Sentinel's setup, or run:
+
 ```sh
-spinuptui beacon add basecamp board --project <id> --mention "Your Name"
+spinuptui beacon setup basecamp
 spinuptui sentinel setup --report-to board --apply
 ```
+
+It finds the [Basecamp CLI](https://github.com/basecamp/basecamp-cli) and tells you how to install it if it's missing, checks your login, and lets you pick the project and who to @-mention. It can post a test message first, which is a real post that the project's people may be notified of.
+
+Over SSH, or in an agent's shell, the login often can't be confirmed even when it's fine, because those sessions may not be able to read the Keychain. So you can still save the board by giving its project ID or any URL from the project, and the morning digest's Board line tells you whether it works. On a machine with no browser, log in with `basecamp auth login --remote`.
 
 This is for your own team's record. Agent output is never sent to a client. If a post fails, the page says so and the report is safe on disk; retry with `spinuptui sentinel post <incident>`. A post is never retried automatically, because Basecamp can't tell a retry from a second post.
 
