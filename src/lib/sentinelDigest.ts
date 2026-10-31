@@ -227,7 +227,7 @@ export async function gatherDigest(s: SentinelSettings, cfg: AppConfig, apiClien
   health.push({ name: "Station", ok: !bad, detail: bad ? `${bad.name}: ${bad.detail}` : "ticking" })
   if (s.agent) health.push(await probeAgent(s))
   if (s.reportTo) {
-    const b = await bounded(() => boardLogin(), { ok: false, detail: "timed out" })
+    const b = await bounded(() => boardLogin(), { ok: false, state: "no" as const, detail: "timed out" })
     health.push({ name: "Board", ok: b.ok, detail: b.ok ? "OK" : b.detail })
   }
   const listener = listenerHealth()

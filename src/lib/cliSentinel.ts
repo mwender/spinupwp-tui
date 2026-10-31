@@ -137,7 +137,7 @@ export function planSetup(p: { shadow?: boolean; agent?: string; workspace?: str
   if (agent === "codex") notes.push("Codex is unproven here: its read-only sandbox blocks the network that ssh-exec needs.")
   if (!agent) notes.push("No agent: incidents get a write-up of the evidence, not a diagnosis.")
   const reportTo = p.reportTo ?? cfg.sentinel?.reportTo ?? null
-  if (reportTo && !cfg.beacon?.boards?.[reportTo]) blockers.push(`No Beacon board named "${reportTo}": spinuptui beacon add basecamp ${reportTo} --project <id>`)
+  if (reportTo && !cfg.beacon?.boards?.[reportTo]) blockers.push(`No Beacon board named "${reportTo}": spinuptui beacon setup basecamp ${reportTo}`)
   const next: SentinelStored = {
     ...cfg.sentinel,
     enabled: true,

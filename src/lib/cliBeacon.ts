@@ -20,7 +20,7 @@ import {
   setupChannelName,
   verifyBotToken,
 } from "./beaconSetup.ts"
-import { boardLogin } from "./beaconBoard.ts"
+import { checkLogin, listPeople, listProjects, makeBoard, parseProjectId, postTest, saveBoard, setupBoardName } from "./boardSetup.ts"
 import { confirm, PromptCancelled, readLine } from "./prompt.ts"
 import { listen, routesFrom } from "./beaconListen.ts"
 import {
@@ -72,8 +72,8 @@ const USAGE = `Usage:
   spinuptui beacon setup [<name>]   (guided, in a terminal)
   spinuptui beacon send [--to <channel>] [--silent] [--json] [<message> | -]
   spinuptui beacon add telegram <name> [--env-file <path>] [--default] [--no-test]
+  spinuptui beacon setup basecamp [<name>]   (guided: a team message board)
   spinuptui beacon add basecamp <name> --project <id> [--mention "<person>"]
-                          a team message board: the \`basecamp\` CLI must be logged in
   spinuptui beacon remove <name>
   spinuptui beacon test [--to <channel>] [--json]
   spinuptui beacon status [--json]
@@ -93,6 +93,7 @@ export async function runBeacon(argv: string[]): Promise<number> {
   const sub = positionals[0]
   for (const f of VALUE_FLAGS) if (badValue(flags, f)) return fail(json, "usage", `${f} needs a value.\n${USAGE}`)
 
+  if (sub === "setup" && positionals[1] === "basecamp") return setupBoard(positionals.slice(2))
   if (sub === "setup") return setup(positionals.slice(1))
   if (sub === "send") return send(positionals.slice(1), flags, rest, json)
   if (sub === "test") return test(flags, json)
@@ -144,13 +145,15 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
 async function addBoard(name: string, flags: Map<string, string>, json: boolean): Promise<number> {
   const projectId = flags.get("--project") ?? ""
   if (!/^\d+$/.test(projectId)) return fail(json, "usage", `--project needs the Basecamp project's numeric id.\n${USAGE}`)
-  const login = await boardLogin()
-  if (!login.ok) return fail(json, "basecamp_login", `Can't reach Basecamp: ${login.detail}.`)
-  const mention = flags.get("--mention")
-  const stored: BeaconStored = loadConfig().beacon ?? {}
-  await saveConfig({ beacon: { ...stored, boards: { ...(stored.boards ?? {}), [name]: { type: "basecamp", projectId, audience: "team", ...(mention ? { mention } : {}) } } } })
-  if (json) console.log(JSON.stringify({ ok: true, board: name, projectId }))
-  else console.log(`Added team board "${name}" (Basecamp project ${projectId}), posting as ${login.detail}.`)
+  const login = await checkLogin()
+  if (login.state === "missing") return fail(json, "basecamp_cli_missing", login.steps[0]!, login.steps[1])
+  await saveBoard(name, makeBoard(projectId, flags.get("--mention")))
+  const confirmed = login.state === "confirmed"
+  if (json) console.log(JSON.stringify({ ok: true, board: name, projectId, loginConfirmed: confirmed }))
+  else {
+    console.log(`Added team board "${name}" (Basecamp project ${projectId})${confirmed ? `, posting as ${login.who}` : ""}.`)
+    if (!confirmed) console.log(`${login.steps.join("\n")}\nSaved anyway: the morning digest's Board line will confirm it.`)
+  }
   return 0
 }
 
@@ -216,6 +219,72 @@ async function add(pos: string[], flags: Map<string, string>, json: boolean): Pr
 
 // The guided path for someone without a bot yet. Interactive only: scripts and
 // provisioning use `add --env-file`.
+async function setupBoard(pos: string[]): Promise<number> {
+  if (!process.stdin.isTTY || !process.stderr.isTTY) {
+    return fail(false, "needs_terminal", "`beacon setup basecamp` is interactive and needs a terminal.", "For scripts, use `spinuptui beacon add basecamp <name> --project <id>`.")
+  }
+  const name = pos[0] ?? setupBoardName()
+  if (!NAME_RE.test(name)) return fail(false, "usage", `"${name}" can't be a board name (lowercase letters, digits and dashes).`)
+  const say = (line = "") => process.stderr.write(line + "\n")
+  try {
+    say("Connect a Basecamp message board, for your own team's record. Nothing here reaches a client.")
+    say()
+    let login = await checkLogin()
+    while (login.state !== "confirmed") {
+      for (const s of login.steps) say(`  ${s}`)
+      if (login.state === "unconfirmed") {
+        if (!(await confirm("Check again?", true))) break
+      } else if (!(await confirm("Installed it? Check again?", true))) return 1
+      login = await checkLogin()
+    }
+    let projectId: string | null = null
+    let mention: string | null = null
+    if (login.state === "confirmed") {
+      say(`✓ Logged in as ${login.who}`)
+      const projects = await listProjects()
+      if (projects.length) {
+        say()
+        projects.forEach((p, i) => say(`  ${String(i + 1).padStart(3)}. ${p.name}`))
+        for (;;) {
+          const n = Number((await readLine("Post to which project? (number) ")).trim())
+          if (projects[n - 1]) {
+            projectId = projects[n - 1]!.id
+            break
+          }
+          say("  Pick a number from the list.")
+        }
+      }
+      const people = await listPeople()
+      if (people.length) {
+        const typed = (await readLine("Who should be @-mentioned on a new report? (part of a name, Enter for nobody) ")).trim().toLowerCase()
+        const hits = typed ? people.filter((p) => p.toLowerCase().includes(typed)) : []
+        if (hits.length === 1) mention = hits[0]!
+        else if (typed) say(`  ${hits.length ? `That matches ${hits.length} people` : "Nobody matches that"}, so no one will be mentioned. Re-run this to change it.`)
+      }
+    }
+    while (!projectId) {
+      projectId = parseProjectId(await readLine("Project ID, or any URL from the project: "))
+      if (!projectId) say("  That has no project ID in it.")
+    }
+    const board = makeBoard(projectId, mention)
+    if (await confirm("Post a test message now? It's a real post, and the project's people may be notified.", false)) {
+      const r = await postTest(board)
+      if (r.ok) say(`✓ Posted: ${r.url}`)
+      else {
+        say(`✗ ${r.message}`)
+        if (!(await confirm("Save the board anyway?", login.state !== "confirmed"))) return 2
+      }
+    }
+    await saveBoard(name, board)
+    say(`✓ Saved board "${name}".${login.state === "confirmed" ? "" : " The morning digest's Board line will confirm the login."}`)
+    say(`Use it for Sentinel's reports: spinuptui sentinel setup --report-to ${name} --apply`)
+    return 0
+  } catch (err) {
+    if (err instanceof PromptCancelled) return 1
+    throw err
+  }
+}
+
 async function setup(pos: string[]): Promise<number> {
   if (!process.stdin.isTTY || !process.stderr.isTTY) {
     return fail(false, "needs_terminal", "`beacon setup` is interactive and needs a terminal.", "For scripts, use `spinuptui beacon add telegram <name> --env-file <path>`.")

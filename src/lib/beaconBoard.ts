@@ -131,7 +131,7 @@ export function splitTitle(md: string): { title: string; body: string } {
 
 export type BasecampRun = (args: string[]) => Promise<{ code: number; out: string }>
 
-const realRun: BasecampRun = async (args) => {
+export const realRun: BasecampRun = async (args) => {
   const p = spawn(["basecamp", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: jobEnv() })
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
   const code = await p.exited
@@ -145,7 +145,7 @@ interface CliEnvelope<T> {
   data?: T
 }
 
-async function cliJson<T>(run: BasecampRun, args: string[]): Promise<T | null> {
+export async function cliJson<T>(run: BasecampRun, args: string[]): Promise<T | null> {
   const r = await run([...args, "--json"])
   if (r.code !== 0) return null
   try {
@@ -156,16 +156,16 @@ async function cliJson<T>(run: BasecampRun, args: string[]): Promise<T | null> {
   }
 }
 
-// Is the CLI logged in? Only meaningful from the real login session (the
-// dispatcher): a sandboxed shell can't read the Keychain, so a "no" there proves
-// nothing. A digest runs under the dispatcher, which is why it can ask.
-export async function boardLogin(run: BasecampRun = realRun): Promise<{ ok: boolean; detail: string }> {
+// Is the CLI logged in? A "yes" is real. A "no" is only meaningful from the login
+// session (the dispatcher): a sandboxed shell, and maybe an SSH session, can't read
+// the Keychain, so a "no" there proves nothing. See boardSetup.ts.
+export async function boardLogin(run: BasecampRun = realRun): Promise<{ ok: boolean; state: "ok" | "no" | "missing"; detail: string }> {
   try {
     const me = await cliJson<{ identity?: { first_name?: string; last_name?: string } }>(run, ["me"])
-    if (!me) return { ok: false, detail: "not logged in: run `basecamp auth login` in a real terminal" }
-    return { ok: true, detail: [me.identity?.first_name, me.identity?.last_name].filter(Boolean).join(" ") || "logged in" }
+    if (!me) return { ok: false, state: "no", detail: "not logged in: run `basecamp auth login` in a terminal on this machine" }
+    return { ok: true, state: "ok", detail: [me.identity?.first_name, me.identity?.last_name].filter(Boolean).join(" ") || "logged in" }
   } catch {
-    return { ok: false, detail: "the basecamp CLI isn't on the PATH" }
+    return { ok: false, state: "missing", detail: "the basecamp CLI isn't on the PATH" }
   }
 }
 
