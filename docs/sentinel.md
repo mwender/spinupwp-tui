@@ -64,7 +64,7 @@ expectations.json
 trends.csv
 ```
 
-If that folder is in a git repository, Sentinel commits only its own folder and pushes. Reports can quote logs, so treat them as private.
+If that folder is in a git repository, Sentinel commits only its own folder and pushes, after each report and each digest. Reports can quote logs, so treat them as private.
 
 To use an existing playbook, set `--workspace <dir>`. The agent works from there, and an `AGENTS.md` in it is read first. A workspace elsewhere is never committed for you.
 

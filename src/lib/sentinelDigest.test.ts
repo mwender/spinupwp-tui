@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { aptTargets, composeDigest, type DigestData } from "./sentinelDigest.ts"
+import type { SpinupWPClientLike } from "../api/client.ts"
+import { aptTargets, cachedClient, composeDigest, type DigestData } from "./sentinelDigest.ts"
 import type { ExpectResult } from "./sentinelExpect.ts"
 import type { Flags, Incident } from "./sentinelState.ts"
 
@@ -79,4 +80,15 @@ test("server updates collapse to a count, naming only the exceptions", () => {
 test("the update check tries one site per server, the one that worked last", () => {
   const fleet = { domains: { "a.example.com": { server: "w1", site: "a.example.com" }, "b.example.com": { server: "w1", site: "b.example.com" }, "www.b.example.com": { server: "w1", site: "b.example.com" }, "w2.example.com": { server: "w2", site: "w2.example.com", vanity: true }, "c.example.com": { server: "w2", site: "c.example.com" } } }
   expect(aptTargets(fleet, { w1: "b.example.com" }, new Set(["c.example.com"]))).toEqual([{ server: "w1", domain: "b.example.com" }, { server: "w2", domain: "c.example.com" }])
+})
+
+test("one digest asks the API about the fleet once", async () => {
+  let calls = 0
+  const client = { listSites: async (id?: number) => (calls++, [{ id }]), listServers: async () => (calls++, []), getSite: async () => (calls++, {}) } as unknown as SpinupWPClientLike
+  const c = cachedClient(client)
+  await Promise.all([c.listSites(), c.listSites(), c.listSites(1), c.listSites(1), c.listServers(), c.listServers()])
+  expect(calls).toBe(3)
+  await c.getSite(1)
+  await c.getSite(1)
+  expect(calls).toBe(5)
 })
