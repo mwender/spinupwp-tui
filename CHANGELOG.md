@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.3.0-alpha.9] - 2026-11-02
+
+A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
+
 ### Changed
 - **A repeat now gets a follow-up instead of being skipped.** When the same site and monitor go down again within 6 hours, Sentinel gives the agent the earlier report and asks what changed and whether its conclusion still holds. The answer is added to that report as a dated update, and posted as a comment on the original board post, so one problem stays one report. In real incidents, the second look revised the first one's conclusion. **Diagnose anyway** is gone, since repeats are always diagnosed now. See [docs/sentinel.md](docs/sentinel.md#repeats-get-a-follow-up-not-a-new-report).
 
@@ -1590,7 +1594,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.8...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.9...HEAD
+[1.3.0-alpha.9]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.8...v1.3.0-alpha.9
 [1.3.0-alpha.8]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.7...v1.3.0-alpha.8
 [1.3.0-alpha.7]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.6...v1.3.0-alpha.7
 [1.3.0-alpha.6]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.5...v1.3.0-alpha.6
