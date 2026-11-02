@@ -6,12 +6,12 @@
 // permission can't lose a report, and nothing the agent read can make it publish
 // (docs/2026-10-30_sentinel-spec.md, "Diagnosis").
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import type { AppConfig } from "../config.ts"
 import { SpinupWPClient, type SpinupWPClientLike } from "../api/client.ts"
 import { moduleWorkDir } from "../modules/contract.ts"
-import { postToBoard } from "./beaconBoard.ts"
+import { commentOnBoard, postToBoard } from "./beaconBoard.ts"
 import { resolveSiblings } from "./cliSiblings.ts"
 import { tryLock } from "./flock.ts"
 import { prepareWorkDir } from "./home.ts"
@@ -19,7 +19,7 @@ import { commitAndPush } from "./schedulerGit.ts"
 import { gitRootOf } from "./schedulerJobs.ts"
 import { agentCommand, jobEnv, outcomeOf, runProcess, type ProcResult } from "./schedulerRun.ts"
 import { diagnoseButton, startedToday, type Page } from "./sentinelIncidents.ts"
-import { diagnosisPrompt, parseAgentReport } from "./sentinelPrompt.ts"
+import { diagnosisPrompt, followUpPrompt, parseAgentReport } from "./sentinelPrompt.ts"
 import { loadIncident, loadIncidents, loadTickState, saveIncident, saveTickState, transcriptsDir, workerLockPath, type Incident, type SentinelSettings } from "./sentinelState.ts"
 import { MAX_ATTEMPTS, nextRetryAt, sendPage } from "./sentinelTick.ts"
 import { runSiteDoctor } from "./siteDoctor.ts"
@@ -31,7 +31,8 @@ export interface WorkerDeps {
   triage(i: Incident): Promise<string>
   agent(prompt: string, s: SentinelSettings): Promise<ProcResult | string>
   page(p: Page): Promise<string>
-  post(report: string, s: SentinelSettings): Promise<{ ok: true; id: string; url: string } | { ok: false; message: string }>
+  // With `commentOn`, a comment on that earlier post rather than a new one.
+  post(report: string, s: SentinelSettings, commentOn?: string): Promise<{ ok: true; id: string; url: string } | { ok: false; message: string }>
   commit(s: SentinelSettings, message: string): Promise<void>
   now(): Date
 }
@@ -126,11 +127,17 @@ function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, report: stri
   return { text: `🧾 ${paged}: ${summary}\n\nReport: ${path}`, silent: false }
 }
 
-export async function postReport(i: Incident, report: string, s: SentinelSettings, deps: WorkerDeps): Promise<string | null> {
+// An update goes into the original report, under a dated heading.
+export function appendUpdate(workspace: string, path: string, body: string, now: Date): void {
+  const at = now.toISOString().slice(0, 16).replace("T", " ")
+  appendFileSync(join(workspace, path), `\n## Update, ${at} UTC\n\n${body.trim()}\n`)
+}
+
+export async function postReport(i: Incident, report: string, s: SentinelSettings, deps: WorkerDeps, commentOn?: string): Promise<string | null> {
   if (!s.reportTo) return null
   i.post = "posting"
   saveIncident(i)
-  const r = await deps.post(report, s)
+  const r = await deps.post(report, s, commentOn)
   if (r.ok) {
     i.post = "posted"
     i.postId = r.id
@@ -158,11 +165,17 @@ async function diagnose(i: Incident, s: SentinelSettings, deps: WorkerDeps): Pro
   saveIncident(i)
 
   const paged = i.events[0]!.domain
-  const deliver = async (page: Page, report: string) => {
-    const failed = await postReport(i, report, s, deps)
+  const deliver = async (page: Page, report: string, commentOn?: string) => {
+    const failed = await postReport(i, report, s, deps, commentOn)
     await deps.commit(s, `sentinel: ${i.id}`)
     await deps.page(failed ? { ...page, text: `${page.text}\n\n⚠️ Couldn't post it to the board: ${failed}\nRetry with: spinuptui sentinel post ${i.id}` } : page)
   }
+
+  // A follow-up needs its original's report. If the original never produced one,
+  // this is diagnosed from scratch instead.
+  const original = i.refersTo ? loadIncident(i.refersTo) : null
+  const prior = original?.reportPath && existsSync(join(s.workspace, original.reportPath)) ? original : null
+  if (prior) return followUp(i, prior, s, deps, deliver)
 
   if (!s.agent) {
     const report = templateReport(i, i.evidence)
@@ -185,7 +198,14 @@ async function diagnose(i: Incident, s: SentinelSettings, deps: WorkerDeps): Pro
   }
   const status = outcomeOf(true, r.code, r.timedOut, r.output)
 
-  if (status === "auth") {
+  if (status === "auth") return lapsedLogin(i, s, deps)
+  loginBack()
+  return afterRun(i, s, deps, r, status, transcript, deliver)
+}
+
+// The agent's login lapsed: nothing ran. Wait, page once per lapse, stop the loop.
+async function lapsedLogin(i: Incident, s: SentinelSettings, deps: WorkerDeps): Promise<Step> {
+  {
     i.state = "waiting_agent"
     i.attempts--
     i.retryAfter = nextRetryAt(deps.now())
@@ -200,9 +220,23 @@ async function diagnose(i: Incident, s: SentinelSettings, deps: WorkerDeps): Pro
     }
     return "stop"
   }
+}
+
+function loginBack(): void {
   const ts = loadTickState()
   if (ts.authPagedAt) saveTickState({ ...ts, authPagedAt: undefined })
+}
 
+async function afterRun(
+  i: Incident,
+  s: SentinelSettings,
+  deps: WorkerDeps,
+  r: ProcResult,
+  status: ReturnType<typeof outcomeOf>,
+  transcript: () => void,
+  deliver: (page: Page, report: string) => Promise<void>,
+): Promise<Step> {
+  const paged = i.events[0]!.domain
   const parsed = status === "ok" || status === "blocked" ? parseAgentReport(r.output) : null
   if (!parsed) {
     transcript()
@@ -238,6 +272,68 @@ async function diagnose(i: Incident, s: SentinelSettings, deps: WorkerDeps): Pro
   return "next"
 }
 
+async function followUp(i: Incident, original: Incident, s: SentinelSettings, deps: WorkerDeps, deliver: (page: Page, report: string, commentOn?: string) => Promise<void>): Promise<Step> {
+  const paged = i.events[0]!.domain
+  const path = original.reportPath!
+  const finishUpdate = async (body: string, summary: string) => {
+    appendUpdate(s.workspace, path, body, deps.now())
+    i.state = "reported"
+    i.site = original.site
+    i.reportPath = path
+    i.reportedAt = deps.now().toISOString()
+    i.summary = summary
+    i.update = body
+    saveIncident(i)
+    const page = { text: `🔁 ${paged}: ${summary}\n\nUpdated: ${path}`, silent: false }
+    // Only a thread that exists can take a comment; otherwise the update stays in the file.
+    if (original.postId) await deliver(page, body, original.postId)
+    else {
+      await deps.commit(s, `sentinel: ${i.id}`)
+      await deps.page(page)
+    }
+  }
+
+  if (!s.agent) {
+    await finishUpdate(i.evidence ?? "", `${i.events[0]!.kind} is down again; the evidence is added to the report.`)
+    return "next"
+  }
+  const r = await deps.agent(followUpPrompt(i, original, readFileSync(join(s.workspace, path), "utf8"), s.workspace, deps.now()), s)
+  if (typeof r === "string") {
+    i.state = "blocked"
+    i.why = r
+    saveIncident(i)
+    await deps.page({ text: `🚧 ${paged} wasn't followed up: ${r}.`, silent: false, buttons: [[diagnoseButton(i.id, "Run again")]] })
+    return "stop"
+  }
+  const status = outcomeOf(true, r.code, r.timedOut, r.output)
+  if (status === "auth") return lapsedLogin(i, s, deps)
+  loginBack()
+  const parsed = status === "ok" || status === "blocked" ? parseAgentReport(r.output, { followUp: true }) : null
+  if (!parsed) {
+    mkdirSync(transcriptsDir(), { recursive: true })
+    writeFileSync(join(transcriptsDir(), `${i.id}-${i.attempts}.log`), r.output, { mode: 0o600 })
+    const why = status === "timeout" ? `timed out after ${s.timeoutMin} minutes` : status === "failed" ? `the agent exited ${r.code}` : "its answer wasn't in the update format"
+    i.state = i.attempts < MAX_ATTEMPTS ? "queued" : "failed"
+    i.why = why
+    saveIncident(i)
+    if (i.state === "failed") await deps.page({ text: `❌ ${paged} wasn't followed up: ${why}. The transcript is in Sentinel's state folder.`, silent: false, buttons: [[diagnoseButton(i.id, "Run again")]] })
+    return "next"
+  }
+  if (parsed.status === "blocked") {
+    i.state = "blocked"
+    i.why = parsed.why
+    saveIncident(i)
+    await deps.page({ text: `🚧 ${paged} couldn't be followed up: ${parsed.why}`, silent: false, buttons: [[diagnoseButton(i.id, "Run again")]] })
+    return "next"
+  }
+  if (parsed.status === "duplicate") {
+    await finishUpdate(`Came back; ${parsed.summary}`, parsed.summary)
+    return "next"
+  }
+  await finishUpdate(parsed.body, parsed.summary)
+  return "next"
+}
+
 // ---- the loop ---------------------------------------------------------------------------------
 
 export function realWorkerDeps(cfg: AppConfig, s: SentinelSettings): WorkerDeps {
@@ -251,10 +347,10 @@ export function realWorkerDeps(cfg: AppConfig, s: SentinelSettings): WorkerDeps 
       return runProcess(cmd, { cwd: set.workspace, env, timeoutMs: set.timeoutMin * 60_000 })
     },
     page: (p) => sendPage(cfg, p, s.channel),
-    post: async (report) => {
+    post: async (report, _set, commentOn) => {
       const board = cfg.beacon?.boards?.[s.reportTo!]
       if (!board) return { ok: false, message: `there's no Beacon board named "${s.reportTo}"` }
-      return postToBoard(board, report)
+      return commentOn ? commentOnBoard(board, commentOn, report) : postToBoard(board, report)
     },
     commit: async (set, message) => {
       // Only Sentinel's own folder. A workspace elsewhere belongs to its owner.

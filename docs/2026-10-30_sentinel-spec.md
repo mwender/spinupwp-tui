@@ -459,7 +459,7 @@ Sentinel can't ship without these, and each is a separate commit.
 All seven approved on 2026-10-30.
 
 1. **Diagnosis runs in a worker outside the tick.** The numbers above leave little choice, and this is the largest departure from a plain tick and digest.
-2. **Recurrence: 6 hours, no re-diagnosis, sound on the third in 24h.** It could have skipped up to 45% of past runs. The risk is a new cause in the window, and Diagnose anyway is the mitigation.
+2. **Recurrence: 6 hours, no re-diagnosis, sound on the third in 24h.** It could have skipped up to 45% of past runs. The risk is a new cause in the window, and Diagnose anyway is the mitigation. **Revised 2026-11-02, after the shadow review:** both repeats seen in shadow had their conclusions revised by the old watcher's second run (one changed the cause, the other found what the first couldn't). A repeat is now a follow-up: the agent gets the earlier report and is asked what changed and whether the conclusion holds, and its answer is appended to that report and commented on the original board post.
 3. **`sentinel.tick` every 5 minutes,** up from 15. Kuma sees 288 logins a day instead of 96.
 4. **Keep the existing diagnostics repository as the workspace,** rather than moving its 187 report files into `~/SpinupTUI/sentinel`. It's the smallest cutover. The known cost is that `sites/` stays gitignored there, so those reports have no backup. Moving them into the private home repository later would fix that.
 5. **Expectations in `~/SpinupTUI/sentinel/expectations.json`,** not profile keys as the contract spec anticipated. They'd be versioned and backed up with the operator's work, and easy for an agent to add to. This supersedes the contract spec's plan, and the file isn't account-aware.

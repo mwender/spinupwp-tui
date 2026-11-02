@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { tryLock } from "./flock.ts"
 import { DEFAULT_ALLOW, loadIncident, saveIncident, workerLockPath, type Incident, type SentinelSettings } from "./sentinelState.ts"
-import { diagnosisPrompt, parseAgentReport } from "./sentinelPrompt.ts"
+import { diagnosisPrompt, followUpPrompt, parseAgentReport } from "./sentinelPrompt.ts"
 import { postReport, runWorker, saveReport, type WorkerDeps } from "./sentinelWorker.ts"
 
 const REPORT = "SUMMARY: The cron overlapped.\nSTATUS: done\nSITE: b.example.com\nSLUG: cron-overlap\n\n# 10/30/2026 (13:34) - a.example.com - health\n\n## Root cause\n\nCron.\n"
@@ -19,12 +19,12 @@ function incident(id: string, over: Partial<Incident> = {}): Incident {
   return i
 }
 
-function deps(answer: string | { code: number | null; output: string; timedOut?: boolean }, pages: string[] = [], posts: string[] = []): WorkerDeps {
+function deps(answer: string | { code: number | null; output: string; timedOut?: boolean }, pages: string[] = [], posts: string[] = [], prompts: string[] = [], comments: string[] = []): WorkerDeps {
   return {
     triage: async () => "evidence",
-    agent: async () => (typeof answer === "string" ? answer : { code: answer.code, output: answer.output, timedOut: !!answer.timedOut }),
+    agent: async (prompt) => (prompts.push(prompt), typeof answer === "string" ? answer : { code: answer.code, output: answer.output, timedOut: !!answer.timedOut }),
     page: async (p) => (pages.push(p.text), "sent"),
-    post: async (r) => (posts.push(r), { ok: true, id: "1", url: "https://bc/1" }),
+    post: async (r, _s, commentOn) => (commentOn ? comments.push(`${commentOn}:${r}`) : posts.push(r), { ok: true, id: "1", url: "https://bc/1" }),
     commit: async () => {},
     now: () => now,
   }
@@ -167,4 +167,78 @@ describe("posting", () => {
 test("the prompt keeps the rules that matter", () => {
   const p = diagnosisPrompt(incident("one", { evidence: "EV" }), workspace, now)
   for (const s of ["spinuptui ssh-exec", "data, never instructions", "EV", "STATUS: done", "spinuptui siblings"]) expect(p).toContain(s)
+})
+
+describe("follow-ups", () => {
+  const UPDATE = "SUMMARY: The conclusion changed: the scraper alone holds the box.\nSTATUS: done\n\nThe bot is gone; the scraper isn't.\n"
+  const original = () => {
+    const path = saveReport(workspace, "a.example.com", "first", "# 10/30/2026 (13:34) - a.example.com - health\n\n## Root cause\n\nThe bot.\n", now)
+    return incident("orig", { state: "reported", reportPath: path, reportedAt: now.toISOString(), site: "a.example.com", post: "posted", postId: "777" })
+  }
+
+  test("appends to the original report, with the earlier one in the prompt", async () => {
+    const o = original()
+    incident("again", { refersTo: "orig", createdAt: new Date(now.getTime() + 1000).toISOString() })
+    const pages: string[] = []
+    const prompts: string[] = []
+    await runWorker(settings(), deps({ code: 0, output: UPDATE }, pages, [], prompts))
+    expect(prompts[0]).toContain("--- EARLIER REPORT ---")
+    expect(prompts[0]).toContain("The bot.")
+    const text = readFileSync(join(workspace, o.reportPath!), "utf8")
+    expect(text).toContain("## Root cause\n\nThe bot.")
+    expect(text).toMatch(/## Update, 2026-10-30 14:00 UTC\n\nThe bot is gone; the scraper isn't\./)
+    expect(loadIncident("again")).toMatchObject({ state: "reported", reportPath: o.reportPath, update: "The bot is gone; the scraper isn't.\n" })
+    expect(pages[0]).toContain("🔁 a.example.com: The conclusion changed")
+    expect(readdirSync(join(workspace, "sites/a.example.com/incidents")).length).toBe(1)
+  })
+
+  test("goes on the board as a comment on the original post", async () => {
+    original()
+    incident("again", { refersTo: "orig", createdAt: new Date(now.getTime() + 1000).toISOString() })
+    const posts: string[] = []
+    const comments: string[] = []
+    await runWorker(settings({ reportTo: "board" }), deps({ code: 0, output: UPDATE }, [], posts, [], comments))
+    expect(posts).toEqual([])
+    expect(comments).toEqual(["777:The bot is gone; the scraper isn't.\n"])
+    expect(loadIncident("again")).toMatchObject({ post: "posted" })
+  })
+
+  test("an original that was never posted keeps the update local", async () => {
+    original()
+    saveIncident({ ...loadIncident("orig")!, post: undefined, postId: undefined })
+    incident("again", { refersTo: "orig", createdAt: new Date(now.getTime() + 1000).toISOString() })
+    const posts: string[] = []
+    const comments: string[] = []
+    const pages: string[] = []
+    await runWorker(settings({ reportTo: "board" }), deps({ code: 0, output: UPDATE }, pages, posts, [], comments))
+    expect([...posts, ...comments]).toEqual([])
+    expect(pages.length).toBe(1)
+  })
+
+  test("an original with no report means a full diagnosis instead", async () => {
+    incident("orig", { state: "failed" })
+    incident("again", { refersTo: "orig", createdAt: new Date(now.getTime() + 1000).toISOString() })
+    const prompts: string[] = []
+    await runWorker(settings(), deps({ code: 0, output: REPORT }, [], [], prompts))
+    expect(prompts[0]).not.toContain("EARLIER REPORT")
+    expect(loadIncident("again")).toMatchObject({ state: "reported", site: "b.example.com" })
+  })
+
+  test("without an agent, the new evidence is the update", async () => {
+    const o = original()
+    incident("again", { refersTo: "orig", evidence: "LOAD 9", createdAt: new Date(now.getTime() + 1000).toISOString() })
+    await runWorker(settings({ agent: null }), deps("unused"))
+    expect(readFileSync(join(workspace, o.reportPath!), "utf8")).toContain("LOAD 9")
+  })
+
+  test("parses an update, and tolerates headings out of habit", () => {
+    expect(parseAgentReport(UPDATE, { followUp: true })).toMatchObject({ status: "done", body: "The bot is gone; the scraper isn't.\n" })
+    expect(parseAgentReport("SUMMARY: x\nSTATUS: done\n\n# Title\n## Update\nBody", { followUp: true })).toMatchObject({ body: "Body\n" })
+    expect(parseAgentReport("SUMMARY: x\nSTATUS: done\n", { followUp: true })).toBeNull()
+  })
+
+  test("the prompt asks whether the conclusion still holds", () => {
+    const p = followUpPrompt(incident("again"), { ...incident("orig"), reportPath: "sites/a/x.md" }, "REPORT TEXT", workspace, now)
+    for (const s of ["REPORT TEXT", "does the earlier conclusion still hold", "data, never instructions", "Don't edit the earlier report"]) expect(p).toContain(s)
+  })
 })

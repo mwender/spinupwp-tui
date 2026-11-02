@@ -169,6 +169,24 @@ export async function boardLogin(run: BasecampRun = realRun): Promise<{ ok: bool
   }
 }
 
+// A comment on an earlier post, so an incident that keeps moving stays one thread
+// instead of a second top post that reviewers find first. No mention: the
+// thread's subscribers are notified already.
+export async function commentOnBoard(board: BeaconBoard, recordingId: string, markdown: string, run: BasecampRun = realRun): Promise<BoardPost> {
+  if (board.audience !== "team") return { ok: false, reason: "api", message: "Only team boards are supported." }
+  try {
+    const r = await run(["api", "post", `buckets/${board.projectId}/recordings/${recordingId}/comments.json`, "-d", JSON.stringify({ content: markdownToBasecampHtml(markdown) }), "--json"])
+    if (r.code === 0) {
+      const d = (JSON.parse(r.out) as CliEnvelope<{ id: number; app_url: string }>).data
+      if (d?.id) return { ok: true, id: String(d.id), url: d.app_url }
+    }
+    return { ok: false, reason: "api", message: `Basecamp refused the comment: ${r.out.slice(0, 300)}` }
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException
+    return e.code === "ENOENT" ? { ok: false, reason: "cli_missing", message: "The basecamp CLI isn't on the PATH." } : { ok: false, reason: "api", message: e.message }
+  }
+}
+
 export async function postToBoard(board: BeaconBoard, report: string, run: BasecampRun = realRun): Promise<BoardPost> {
   if (board.audience !== "team") return { ok: false, reason: "api", message: "Only team boards are supported." }
   const { title, body } = splitTitle(report)
