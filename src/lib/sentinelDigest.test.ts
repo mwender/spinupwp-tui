@@ -63,10 +63,10 @@ test("a stuck incident is named", () => {
   expect(d.text).toContain("old: waiting_agent")
 })
 
-test("activity counts, and recurrences by site", () => {
+test("activity counts, and follow-ups by site", () => {
   const base: Incident = { id: "x", key: "k", server: null, state: "reported", createdAt: when.toISOString(), events: [{ domain: "a.example.com", kind: "health", time: "t", message: "", monitorId: 1 }], down: [], lastDownAt: "", attempts: 1 }
-  const d = composeDigest(data({ incidents: [base, { ...base, id: "y", state: "recurrence" }, { ...base, id: "z", state: "recurrence" }], ticks: [{ at: "", ok: true, events: 0, incidents: 0, retries: 1 }, { at: "", ok: false, events: 0, incidents: 0, retries: 2 }] }), {})
-  expect(d.text).toContain("2 checks · 1 incident · 1 report · 2 recurrences · 1 blind · 1 cold start")
+  const d = composeDigest(data({ incidents: [base, { ...base, id: "y", refersTo: "x" }, { ...base, id: "z", state: "recurrence" }], ticks: [{ at: "", ok: true, events: 0, incidents: 0, retries: 1 }, { at: "", ok: false, events: 0, incidents: 0, retries: 2 }] }), {})
+  expect(d.text).toContain("2 checks · 1 incident · 2 reports · 2 follow-ups · 1 blind · 1 cold start")
   expect(d.text).toContain("a.example.com ×2")
 })
 

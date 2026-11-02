@@ -22,7 +22,7 @@ const WORDS: Record<string, string> = {
 
 export function describeIncident(i: Incident): string {
   const domains = [...new Set(i.events.map((e) => e.domain))].join(", ")
-  return `${domains} (${[...new Set(i.events.map((e) => e.kind))].join(", ")}): ${WORDS[i.state] ?? i.state}${i.why ? `: ${i.why}` : ""}${i.closedAt ? "" : i.down.length ? ", still down" : ""}`
+  return `${i.refersTo ? "follow-up: " : ""}${domains} (${[...new Set(i.events.map((e) => e.kind))].join(", ")}): ${WORDS[i.state] ?? i.state}${i.why ? `: ${i.why}` : ""}${i.closedAt ? "" : i.down.length ? ", still down" : ""}`
 }
 
 export function waitingRows(incidents: Incident[]): WaitingRow[] {

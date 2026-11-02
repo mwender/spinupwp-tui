@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { BeaconBoard } from "../config.ts"
-import { markdownToBasecampHtml, postToBoard, splitTitle, type BasecampRun } from "./beaconBoard.ts"
+import { commentOnBoard, markdownToBasecampHtml, postToBoard, splitTitle, type BasecampRun } from "./beaconBoard.ts"
 
 const board: BeaconBoard = { type: "basecamp", projectId: "123", mention: "Pat Doe", audience: "team" }
 
@@ -66,4 +66,12 @@ describe("postToBoard", () => {
     expect(splitTitle("# T\nbody")).toEqual({ title: "T", body: "body" })
     expect(splitTitle("body").title).toBe("")
   })
+})
+
+test("a comment goes on the earlier post, as HTML, with no mention", async () => {
+  const { run, calls } = fakeCli({ code: 0, out: JSON.stringify({ ok: true, data: { id: 5, app_url: "https://bc/5" } }) })
+  expect(await commentOnBoard(board, "777", "The **scraper**.", run)).toEqual({ ok: true, id: "5", url: "https://bc/5" })
+  expect(calls[0]![2]).toBe("buckets/123/recordings/777/comments.json")
+  expect(JSON.parse(calls[0]![4]!)).toEqual({ content: "<p>The <strong>scraper</strong>.</p>" })
+  expect(calls.some((c) => c[0] === "people")).toBe(false)
 })

@@ -77,7 +77,7 @@ export type IncidentState =
   | "waiting_agent" // the login lapsed: pages once, retries, drains when it's back
   | "blocked" // the agent couldn't do the work
   | "failed" // after two attempts
-  | "recurrence" // covered by an earlier report; no diagnosis
+  | "recurrence" // before alpha.9: covered by an earlier report, never diagnosed
   | "shadow" // shadow mode: what would have been queued
 
 export interface IncidentEvent {
@@ -102,7 +102,8 @@ export interface Incident {
   startedAt?: string
   retryAfter?: string
   why?: string // blocked or failed: what's needed
-  refersTo?: string // a recurrence's earlier incident
+  refersTo?: string // a follow-up's original incident, whose report it updates
+  update?: string // a follow-up's text, as appended to that report
   evidence?: string
   site?: string // the site the report is filed under
   reportPath?: string

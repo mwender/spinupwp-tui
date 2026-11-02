@@ -98,35 +98,47 @@ describe("closing", () => {
   })
 })
 
-describe("recurrence", () => {
+describe("follow-ups", () => {
   const reported = (at: Date): Incident => {
     const [i] = apply({ events: [ev("a.example.com")], now: at }).created
     return { ...i!, state: "reported", reportedAt: at.toISOString(), reportPath: "sites/a/incidents/x.md", closedAt: at.toISOString() }
   }
 
-  test("a report in the window means no new diagnosis, and a way to ask for one", () => {
-    const r = apply({ incidents: [reported(new Date(now.getTime() - 3_600_000))], events: [ev("a.example.com")] })
-    expect(r.created[0]!.state).toBe("recurrence")
+  test("a repeat in the window is queued as a follow-up to the earlier report", () => {
+    const earlier = reported(new Date(now.getTime() - 3_600_000))
+    const r = apply({ incidents: [earlier], events: [ev("a.example.com")] })
+    expect(r.created[0]).toMatchObject({ state: "queued", refersTo: earlier.id })
     expect(r.pages[0]).toMatchObject({ silent: true })
-    expect(r.pages[0]!.text).toContain("sites/a/incidents/x.md")
-    expect(r.pages[0]!.buttons![0]![0]).toMatchObject({ action: "sentinel.diagnose" })
+    expect(r.pages[0]!.text).toContain("following up on sites/a/incidents/x.md")
+  })
+
+  test("a third repeat follows up on the original, not on the follow-up", () => {
+    const earlier = reported(new Date(now.getTime() - 3_600_000))
+    const second: Incident = { ...earlier, id: "second", refersTo: earlier.id, reportedAt: new Date(now.getTime() - 1_800_000).toISOString() }
+    expect(apply({ incidents: [earlier, second], events: [ev("a.example.com")] }).created[0]!.refersTo).toBe(earlier.id)
+  })
+
+  test("in shadow mode a follow-up is recorded, not queued", () => {
+    const r = apply({ incidents: [reported(new Date(now.getTime() - 3_600_000))], events: [ev("a.example.com")], shadow: true })
+    expect(r.created[0]).toMatchObject({ state: "shadow" })
+    expect(r.created[0]!.refersTo).toBeTruthy()
   })
 
   test("outside the window, or for another kind, it's a new incident", () => {
     const old = reported(new Date(now.getTime() - 7 * 3_600_000))
-    expect(apply({ incidents: [old], events: [ev("a.example.com")] }).created[0]!.state).toBe("queued")
+    expect(apply({ incidents: [old], events: [ev("a.example.com")] }).created[0]!.refersTo).toBeUndefined()
     const recent = reported(new Date(now.getTime() - 3_600_000))
-    expect(apply({ incidents: [recent], events: [ev("a.example.com", "down", "redis")] }).created[0]!.state).toBe("queued")
+    expect(apply({ incidents: [recent], events: [ev("a.example.com", "down", "redis")] }).created[0]!.refersTo).toBeUndefined()
   })
 
   test("a failed diagnosis doesn't cover anything", () => {
     const failed: Incident = { ...reported(new Date(now.getTime() - 3_600_000)), state: "failed" }
-    expect(apply({ incidents: [failed], events: [ev("a.example.com")] }).created[0]!.state).toBe("queued")
+    expect(apply({ incidents: [failed], events: [ev("a.example.com")] }).created[0]!.refersTo).toBeUndefined()
   })
 
   test("the third in 24 hours makes a sound", () => {
     const base = reported(new Date(now.getTime() - 3_600_000))
-    const rec = (n: number): Incident => ({ ...base, id: `r${n}`, state: "recurrence", refersTo: base.id, createdAt: new Date(now.getTime() - n * 3_600_000).toISOString() })
+    const rec = (n: number): Incident => ({ ...base, id: `r${n}`, refersTo: base.id, createdAt: new Date(now.getTime() - n * 3_600_000).toISOString() })
     expect(apply({ incidents: [base, rec(1)], events: [ev("a.example.com")] }).pages[0]!.silent).toBe(true)
     expect(apply({ incidents: [base, rec(1), rec(2)], events: [ev("a.example.com")] }).pages[0]!.silent).toBe(false)
   })

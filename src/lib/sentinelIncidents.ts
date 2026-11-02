@@ -1,5 +1,5 @@
 // What a tick decides, with no I/O: which events are new, how they group into
-// incidents, what's a recurrence, and what to page. The tick feeds it state and
+// incidents, what's a follow-up, and what to page. The tick feeds it state and
 // carries out what it returns (docs/2026-10-30_sentinel-spec.md, "Incidents").
 
 import type { IncidentEvent as KumaEvent } from "./cliIncidents.ts"
@@ -63,12 +63,16 @@ export interface ApplyOutput {
   unknownDomains: string[]
 }
 
+// The original incident a repeat follows up on: the latest one in the window for
+// the same domain and kind, and if that was itself a follow-up, its original. So a
+// problem that keeps coming back stays one report with dated updates.
 function covering(all: Incident[], e: KumaEvent, sinceMs: number): Incident | null {
   const live = new Set(["reported", "queued", "diagnosing", "waiting_agent", "shadow"])
   for (const i of [...all].reverse()) {
     if (!live.has(i.state)) continue
     if (Date.parse(i.reportedAt ?? i.createdAt) < sinceMs) continue
-    if (i.events.some((x) => x.domain === e.domain && x.kind === e.kind)) return i
+    if (!i.events.some((x) => x.domain === e.domain && x.kind === e.kind)) continue
+    return (i.refersTo && all.find((x) => x.id === i.refersTo)) || i
   }
   return null
 }
@@ -90,18 +94,20 @@ function newIncidentPage(i: Incident, hasAgent: boolean, kumaAlerted: Set<number
   }
 }
 
-function recurrencePage(i: Incident, earlier: Incident, count: number): Page {
+// A repeat was worth a second look every time it was measured: the second run
+// revised the first's conclusion. So it's diagnosed again, as an update to the
+// original report rather than a report of its own.
+function followUpPage(i: Incident, original: Incident, count: number): Page {
   const first = i.events[0]!
   return {
-    text: `🔁 ${first.domain} ${first.kind} again${count > 1 ? ` (${count} in 24h)` : ""}. Covered by ${earlier.reportPath ?? earlier.id}, so no new diagnosis.`,
+    text: `🔁 ${first.domain} ${first.kind} again${count > 1 ? ` (${count} in 24h)` : ""}: following up on ${original.reportPath ?? original.id}.`,
     silent: count < LOUD_RECURRENCE,
-    buttons: [[diagnoseButton(i.id)]],
   }
 }
 
 // Applies new events to the incidents. A down event joins its server's open
-// incident, or starts one, unless a recent report already covers it. An up event
-// clears its monitor.
+// incident, or starts one: a follow-up when a recent incident covers the same
+// domain and kind. An up event clears its monitor.
 export function applyEvents(input: ApplyInput): ApplyOutput {
   const { fleet, now, recurrenceHours, hasAgent, shadow, kumaAlerted } = input
   const all = [...input.incidents]
@@ -145,7 +151,7 @@ export function applyEvents(input: ApplyInput): ApplyOutput {
       id,
       key,
       server: entry?.server ?? null,
-      state: earlier ? "recurrence" : shadow ? "shadow" : "queued",
+      state: shadow ? "shadow" : "queued",
       createdAt: nowIso,
       events: [event],
       down: [e.monitorId],
@@ -160,11 +166,11 @@ export function applyEvents(input: ApplyInput): ApplyOutput {
   }
 
   for (const i of created) {
-    if (i.state === "recurrence") {
-      const earlier = all.find((x) => x.id === i.refersTo)!
+    if (i.refersTo) {
+      const original = all.find((x) => x.id === i.refersTo)!
       const domain = i.events[0]!.domain
-      const count = all.filter((x) => x.state === "recurrence" && Date.parse(x.createdAt) > now.getTime() - 24 * HOUR && x.events.some((y) => y.domain === domain)).length
-      pages.push(recurrencePage(i, earlier, count))
+      const count = all.filter((x) => (x.refersTo || x.state === "recurrence") && Date.parse(x.createdAt) > now.getTime() - 24 * HOUR && x.events.some((y) => y.domain === domain)).length
+      pages.push(followUpPage(i, original, count))
     } else {
       pages.push(newIncidentPage(i, hasAgent, kumaAlerted))
     }

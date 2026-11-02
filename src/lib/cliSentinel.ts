@@ -7,7 +7,7 @@ import { SpinupWPClient } from "../api/client.ts"
 import { moduleWorkDir } from "../modules/contract.ts"
 import { sentinelModule } from "../modules/sentinel.ts"
 import { BLOCKED_EXIT } from "./schedulerRun.ts"
-import { postToBoard } from "./beaconBoard.ts"
+import { commentOnBoard, postToBoard } from "./beaconBoard.ts"
 import { readFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { commitAndPush } from "./schedulerGit.ts"
@@ -316,8 +316,11 @@ async function post(pos: string[], p: Parsed, json: boolean): Promise<number> {
   if (i.post === "posted") return fail(json, "already_posted", `Already posted: ${i.postUrl}`)
   const board = s.reportTo ? cfg.beacon?.boards?.[s.reportTo] : undefined
   if (!board) return fail(json, "no_board", "No board is configured.", "spinuptui sentinel setup --report-to <board> --apply")
+  // A follow-up is a comment on its original's post, which has to exist first.
+  const thread = i.refersTo ? loadIncident(i.refersTo)?.postId : undefined
+  if (i.refersTo && !thread) return fail(json, "no_thread", `${i.id} is an update to ${i.refersTo}, which was never posted. Post that one first: spinuptui sentinel post ${i.refersTo}`)
   saveIncident({ ...i, post: "posting" })
-  const r = await postToBoard(board, readFileSync(join(s.workspace, i.reportPath), "utf8"))
+  const r = thread ? await commentOnBoard(board, thread, i.update ?? "") : await postToBoard(board, readFileSync(join(s.workspace, i.reportPath), "utf8"))
   if (!r.ok) {
     saveIncident({ ...i, post: "failed", postError: r.message })
     return fail(json, r.reason, r.message)
@@ -364,7 +367,7 @@ async function goLive(p: Parsed, json: boolean): Promise<number> {
   if (!cfg.sentinel?.enabled) return fail(json, "not_configured", "Sentinel isn't set up.", "spinuptui sentinel setup --plan")
   if (cfg.sentinel.mode !== "shadow") return fail(json, "not_shadow", "Sentinel is already live; go-live only leaves shadow mode.")
   const cutoff = eventMs(since)
-  for (const i of loadIncidents()) if (i.state === "shadow" || i.refersTo) deleteIncident(i.id)
+  for (const i of loadIncidents()) if (i.state === "shadow" || i.state === "recurrence") deleteIncident(i.id)
   const seen: Seen = {}
   for (const [k, t] of Object.entries(loadSeen())) if (eventMs(t) <= cutoff) seen[k] = t
   saveSeen(seen)
