@@ -39,6 +39,17 @@ const ORDER = ["sentinel", "beacon", "scheduler"]
 const shipped = [...MODULES].sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id))
 const cards = [...shipped.map((m) => card(m, false)), ...UPCOMING_MODULES.map((m) => card(m, true))].join("")
 
+// The hero's mock fleet: example names only.
+const FLEET: [string, number, number][] = [
+  ["web1.example.net", 14, 41],
+  ["web2.example.net", 9, 58],
+  ["shop.example.com", 3, 76],
+  ["web3.example.net", 21, 33],
+  ["staging.example.net", 6, 22],
+  ["web4.example.net", 11, 47],
+]
+const DOWN = 2 // the row that goes down in the hero's loop
+
 const shot = (file: string, alt: string, cls = "") =>
   `<a class="shot ${cls}" href="assets/${file}"><img src="assets/${file}" alt="${esc(alt)}" loading="lazy" width="3840" height="2110"></a>`
 
@@ -81,15 +92,19 @@ const html = `<!doctype html>
   nav a:not(.logo) { color: var(--dim); }
   nav a:not(.logo):hover { color: var(--text); text-decoration: none; }
 
-  .hero { position: relative; padding: 72px 0 56px; text-align: center; overflow: hidden; }
-  .hero::before { content: ""; position: absolute; inset: -20% -10% auto; height: 640px; background: radial-gradient(ellipse at center, rgba(0,209,143,.18), transparent 62%); pointer-events: none; }
-  .hero > * { position: relative; }
-  .wordmark { width: min(860px, 100%); margin: 0 auto 28px; display: block; border-radius: 14px; border: 1px solid var(--border); box-shadow: 0 30px 80px rgba(0,0,0,.5), 0 0 0 1px rgba(0,209,143,.08); }
-  h1 { font: 700 clamp(30px, 5vw, 50px)/1.1 var(--mono); letter-spacing: -.02em; margin: 0 0 16px; }
+  .hero { position: relative; padding: 96px 0 88px; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; top: -160px; right: -200px; width: 900px; height: 760px; background: radial-gradient(closest-side, rgba(0,209,143,.16), transparent); pointer-events: none; }
+  .hero::after { content: ""; position: absolute; inset: 0; background-image: radial-gradient(rgba(139,148,158,.13) 1px, transparent 1px); background-size: 22px 22px; mask-image: linear-gradient(180deg, #000 0%, transparent 85%); -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 85%); pointer-events: none; }
+  .hero .wrap { position: relative; z-index: 1; display: grid; grid-template-columns: 2fr 1fr; gap: 64px; align-items: center; }
+  .hero .wrap > * { min-width: 0; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; font: 13px var(--mono); color: var(--dim); border: 1px solid var(--border); background: rgba(22,27,34,.7); border-radius: 999px; padding: 5px 14px 5px 10px; margin-bottom: 26px; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 8px var(--brand); }
+  .pill a { color: var(--text); }
+  h1 { font: 700 clamp(34px, 4.6vw, 58px)/1.06 var(--mono); letter-spacing: -.03em; margin: 0 0 22px; }
   h1 .g { background: linear-gradient(90deg, var(--brand), var(--sky)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .lede { max-width: 640px; margin: 0 auto 32px; color: var(--dim); font-size: 18px; }
+  .lede { max-width: 600px; margin: 0 0 34px; color: var(--dim); font-size: 19px; }
 
-  .install { max-width: 560px; margin: 0 auto; text-align: left; background: var(--bg-alt); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .install { max-width: 520px; background: var(--bg-alt); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
   .tabs { display: flex; border-bottom: 1px solid var(--border); font: 13px var(--mono); }
   .tabs button { all: unset; cursor: pointer; padding: 10px 16px; color: var(--dim); border-bottom: 2px solid transparent; }
   .tabs button[aria-selected="true"] { color: var(--brand); border-bottom-color: var(--brand); }
@@ -101,6 +116,33 @@ const html = `<!doctype html>
   .copy:hover { color: var(--brand); border-color: var(--brand-dim); }
   .meta { margin-top: 14px; font: 13px var(--mono); color: var(--faint); }
   .meta a { color: var(--dim); }
+
+  .fleet { position: relative; font: 12.5px/1.5 var(--mono); margin-bottom: 88px; }
+  .win { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(0,209,143,.06), 0 0 60px rgba(0,209,143,.07); }
+  .win-bar { display: flex; align-items: center; gap: 6px; padding: 10px 12px; background: var(--panel); border-bottom: 1px solid var(--border); color: var(--faint); }
+  .win-bar i { width: 10px; height: 10px; border-radius: 50%; background: #3a4048; }
+  .win-bar i:nth-child(1) { background: #f85149; } .win-bar i:nth-child(2) { background: #d29922; } .win-bar i:nth-child(3) { background: #3fb950; }
+  .win-bar span { margin-left: 8px; }
+  .win-tabs { display: flex; gap: 14px; padding: 7px 12px; border-bottom: 1px solid #1f262e; color: var(--faint); }
+  .win-tabs b { color: var(--brand); font-weight: 600; }
+  .win-head, .row { display: grid; grid-template-columns: 14px 1fr 34px 62px; gap: 8px; align-items: center; padding: 3px 12px; }
+  .win-head { color: var(--faint); font-size: 11px; padding-top: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  .row { color: var(--text); transition: background .3s; }
+  .row .n { color: var(--faint); text-align: right; }
+  .row .st { color: var(--brand); transition: color .3s; }
+  .row.sel { background: #1f6f53; }
+  .row.sel .n { color: var(--text); }
+  .row.down .st { color: var(--bad); }
+  .row.down .name { color: var(--bad); }
+  .bar { height: 6px; border-radius: 3px; background: #21262d; overflow: hidden; }
+  .bar span { display: block; height: 100%; width: var(--w); background: linear-gradient(90deg, var(--brand-dim), var(--brand)); }
+  .bar.warn span { background: linear-gradient(90deg, #9e7418, #d29922); }
+  .win-foot { display: flex; justify-content: space-between; margin-top: 8px; padding: 7px 12px; border-top: 1px solid #1f262e; color: var(--faint); font-size: 11.5px; }
+  .win-foot .watch { color: var(--brand); }
+  .toast { position: absolute; left: -36px; right: 24px; bottom: -88px; background: rgba(22,27,34,.96); border: 1px solid var(--border); border-left: 3px solid var(--bad); border-radius: 10px; padding: 10px 12px; box-shadow: 0 18px 40px rgba(0,0,0,.5); opacity: 0; transform: translateY(10px); transition: opacity .4s, transform .4s, border-color .4s; }
+  .toast.show { opacity: 1; transform: none; }
+  .toast.done { border-left-color: var(--brand); }
+  .toast small { display: block; color: var(--faint); font-size: 10.5px; margin-bottom: 2px; }
 
   section { padding: 72px 0; }
   section + section { border-top: 1px solid #1b222b; }
@@ -155,9 +197,15 @@ const html = `<!doctype html>
     nav .hide-sm { display: none; }
     .gallery, .cards, .headless { grid-template-columns: 1fr; }
     .features { grid-template-columns: 1fr; }
-    .hero { padding-top: 40px; }
+    .hero { padding: 48px 0 80px; }
+    .hero .wrap { grid-template-columns: 1fr; gap: 48px; }
+    .fleet { max-width: 420px; width: 100%; }
+    h1 { font-size: 29px; }
+    .lede { font-size: 17px; }
+    .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .toast { left: 12px; right: 12px; }
   }
-  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .shot, .card { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .shot, .card, .row, .toast { transition: none; } }
 </style>
 </head>
 <body>
@@ -170,7 +218,8 @@ const html = `<!doctype html>
 </div></nav>
 
 <header class="hero"><div class="wrap">
-  <img class="wordmark" src="assets/banner.png" alt="SpinupTUI — terminal control center for your SpinupWP fleet" width="1600" height="576">
+  <div>
+  <p class="pill"><span class="dot"></span>New: <a href="#modules">Sentinel, Beacon and Scheduler</a></p>
   <h1>Your <span class="g">SpinupWP</span> fleet,<br>from the terminal.</h1>
   <p class="lede">Every server and site in one fast, keyboard-driven app. Plus modules that keep watch after you close it: they work out what broke, page you, and follow up on their own.</p>
   <div class="install">
@@ -181,6 +230,17 @@ const html = `<!doctype html>
     <div class="cmd"><code id="cmd">brew install mwender/tap/spinuptui</code><button class="copy" id="copy" type="button">copy</button></div>
   </div>
   <p class="meta">${version ? `v${version} · ` : ""}MIT · then run <code>spinuptui</code> and paste a <a href="https://spinupwp.com">SpinupWP</a> API token</p>
+  </div>
+  <div class="fleet" aria-hidden="true">
+    <div class="win">
+      <div class="win-bar"><i></i><i></i><i></i><span>spinuptui</span></div>
+      <div class="win-tabs"><b>1 Dashboard</b><span>2 Servers</span><span>6 Modules</span></div>
+      <div class="win-head"><span></span><span>Server</span><span>Sites</span><span>Disk</span></div>
+      ${FLEET.map(([name, sites, disk]) => `<div class="row"><span class="st">●</span><span class="name">${name}</span><span class="n">${sites}</span><span class="bar${disk > 70 ? " warn" : ""}"><span style="--w:${disk}%"></span></span></div>`).join("\n      ")}
+      <div class="win-foot"><span>${FLEET.length} servers · ${FLEET.reduce((n, [, s]) => n + s, 0)} sites</span><span class="watch">◈ Sentinel watching</span></div>
+    </div>
+    <div class="toast" id="toast"><small>Beacon</small><span id="toast-text"></span></div>
+  </div>
 </div></header>
 
 <section id="tour"><div class="wrap">
@@ -250,6 +310,30 @@ const html = `<!doctype html>
     try { await navigator.clipboard.writeText(cmd.textContent); copy.textContent = "copied" } catch { copy.textContent = "select it" }
     setTimeout(() => (copy.textContent = "copy"), 1500)
   })
+  // Hero loop: the cursor walks the fleet, one server goes down, Beacon pages,
+  // then the diagnosis lands and the server recovers.
+  const rows = [...document.querySelectorAll(".fleet .row")]
+  const toast = document.getElementById("toast"), toastText = document.getElementById("toast-text")
+  const down = rows[${DOWN}], site = down.querySelector(".name").textContent
+  const pages = [
+    "🔴 " + site + " down (http): diagnosing.",
+    "🧾 " + site + ": a plugin update left a fatal error in checkout. Report filed.",
+  ]
+  const select = (r) => rows.forEach((x) => x.classList.toggle("sel", x === r))
+  const show = (i) => { toastText.textContent = pages[i]; toast.classList.add("show"); toast.classList.toggle("done", i === 1) }
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    select(rows[0]); show(1)
+  } else {
+    const steps = [
+      [0, () => { toast.classList.remove("show"); down.classList.remove("down"); select(rows[0]) }],
+      [900, () => select(rows[1])],
+      [1800, () => { down.classList.add("down"); select(down); show(0) }],
+      [5000, () => { show(1); down.classList.remove("down") }],
+      [9500, () => select(rows[3])],
+    ]
+    const run = () => steps.forEach(([t, f]) => setTimeout(f, t))
+    run(); setInterval(run, 11000)
+  }
 </script>
 </body>
 </html>
@@ -257,7 +341,7 @@ const html = `<!doctype html>
 
 rmSync(OUT, { recursive: true, force: true })
 mkdirSync(join(OUT, "assets"), { recursive: true })
-for (const f of ["banner.png", "social-preview.png", "screenshot-dashboard.png", "screenshot-servers.png", "screenshot-stacks.png", "screenshot-search.png", "screenshot-events.png"]) {
+for (const f of ["social-preview.png", "screenshot-dashboard.png", "screenshot-servers.png", "screenshot-stacks.png", "screenshot-search.png", "screenshot-events.png"]) {
   cpSync(join(ROOT, ".github/assets", f), join(OUT, "assets", f))
 }
 writeFileSync(join(OUT, "index.html"), html)
