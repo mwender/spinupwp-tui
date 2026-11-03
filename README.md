@@ -8,7 +8,8 @@
   A fast, keyboard-driven terminal control center for your
   <a href="https://spinupwp.com">SpinupWP</a> account — browse and monitor your
   servers and sites, and run local-dev workflows against them.<br>
-  Built with <a href="https://opentui.com">OpenTUI</a> and <a href="https://bun.sh">Bun</a>.
+  Built with <a href="https://opentui.com">OpenTUI</a> and <a href="https://bun.sh">Bun</a>.<br>
+  <a href="https://spinuptui.com"><b>spinuptui.com</b></a>
 </p>
 
 ## Screenshots

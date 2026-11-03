@@ -63,9 +63,14 @@ const html = `<!doctype html>
 <meta name="description" content="A fast, keyboard-driven terminal control center for SpinupWP, with modules that watch your fleet, page you, and follow up after you close it.">
 <meta property="og:title" content="SpinupTUI">
 <meta property="og:description" content="Your SpinupWP fleet, from the terminal.">
-<meta property="og:image" content="https://spinuptui.com/assets/social-preview.png">
+<meta property="og:image" content="https://spinuptui.com/assets/og.png">
+<meta property="og:image:width" content="2400">
+<meta property="og:image:height" content="1260">
+<meta property="og:image:alt" content="SpinupTUI: your SpinupWP fleet, from the terminal.">
+<meta property="og:type" content="website">
 <meta property="og:url" content="https://spinuptui.com/">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://spinuptui.com/assets/og.png">
 <meta name="theme-color" content="#0d1117">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1 15 8 8 15 1 8z' fill='%2300d18f'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -342,7 +347,8 @@ const html = `<!doctype html>
 
 rmSync(OUT, { recursive: true, force: true })
 mkdirSync(join(OUT, "assets"), { recursive: true })
-for (const f of ["social-preview.png", "screenshot-dashboard.png", "screenshot-servers.png", "screenshot-stacks.png", "screenshot-search.png", "screenshot-events.png"]) {
+cpSync(join(import.meta.dir, "og.png"), join(OUT, "assets", "og.png"))
+for (const f of ["screenshot-dashboard.png", "screenshot-servers.png", "screenshot-stacks.png", "screenshot-search.png", "screenshot-events.png"]) {
   cpSync(join(ROOT, ".github/assets", f), join(OUT, "assets", f))
 }
 writeFileSync(join(OUT, "index.html"), html)
