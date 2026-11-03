@@ -65,7 +65,7 @@ describe("the worker", () => {
     expect(readFileSync(join(workspace, i.reportPath!), "utf8")).toContain("## Root cause")
     expect(i.reportPath).toBe("sites/b.example.com/incidents/2026-10-30-cron-overlap.md")
     expect(readdirSync(join(workspace, "sites/a.example.com/incidents")).length).toBe(1)
-    expect(pages[0]).toContain("The cron overlapped.")
+    expect(pages[0]).toStartWith("🧾 b.example.com (paged as a.example.com): The cron overlapped.")
   })
 
   test("doesn't trust the agent with a path", async () => {
@@ -190,6 +190,15 @@ describe("follow-ups", () => {
     expect(loadIncident("again")).toMatchObject({ state: "reported", reportPath: o.reportPath, update: "The bot is gone; the scraper isn't.\n" })
     expect(pages[0]).toContain("🔁 a.example.com: The conclusion changed")
     expect(readdirSync(join(workspace, "sites/a.example.com/incidents")).length).toBe(1)
+  })
+
+  test("names the site the original report blamed, not the paging one", async () => {
+    original()
+    saveIncident({ ...loadIncident("orig")!, site: "b.example.com" })
+    incident("again", { refersTo: "orig", createdAt: new Date(now.getTime() + 1000).toISOString() })
+    const pages: string[] = []
+    await runWorker(settings(), deps({ code: 0, output: UPDATE }, pages))
+    expect(pages[0]).toStartWith("🔁 b.example.com (paged as a.example.com): The conclusion changed")
   })
 
   test("goes on the board as a comment on the original post", async () => {

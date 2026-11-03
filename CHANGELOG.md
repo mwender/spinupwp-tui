@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Sentinel's summary and follow-up pages now name the site the diagnosis blamed.** They used the domain of the monitor that paged, so a fatal caught on a server's vanity host was summarized under that host while the report was filed under the real site. When the two differ, the page names both: `🧾 example.com (paged as web1.example.net): …`.
+
 ## [1.3.0-alpha.9] - 2026-11-02
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
