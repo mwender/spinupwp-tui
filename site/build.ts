@@ -15,7 +15,8 @@ const DOCS = `${REPO}/blob/main/docs`
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 const nameOf = (id: string) => [...MODULES, ...UPCOMING_MODULES].find((m) => m.id === id)?.name ?? id
 
-// Stable releases only: a pre-release version shouldn't be the one the page advertises.
+// Stable releases only: a pre-release version shouldn't be the one the page
+// advertises. Until then the modules, which only exist in the pre-release, say so.
 const version = pkg.version.includes("-") ? null : pkg.version
 
 const GLYPH: Record<string, string> = { beacon: "◉", scheduler: "◷", sentinel: "◈", samurai: "⟁" }
@@ -219,7 +220,7 @@ const html = `<!doctype html>
 
 <header class="hero"><div class="wrap">
   <div>
-  <p class="pill"><span class="dot"></span>New: <a href="#modules">Sentinel, Beacon and Scheduler</a></p>
+  <p class="pill"><span class="dot"></span>New${version ? "" : " in pre-release"}: <a href="#modules">Sentinel, Beacon and Scheduler</a></p>
   <h1>Your <span class="g">SpinupWP</span> fleet,<br>from the terminal.</h1>
   <p class="lede">Every server and site in one fast, keyboard-driven app. Plus modules that keep watch after you close it: they work out what broke, page you, and follow up on their own.</p>
   <div class="install">
@@ -267,7 +268,7 @@ const html = `<!doctype html>
 <section id="modules"><div class="wrap">
   <p class="eyebrow">Modules</p>
   <h2>The part that keeps working after you quit.</h2>
-  <p class="sub">Modules ship inside SpinupTUI. Turn them on from the Modules tab: each shows what it will change before it changes anything.</p>
+  <p class="sub">Modules ship inside SpinupTUI. Turn them on from the Modules tab: each shows what it will change before it changes anything.${version ? "" : ` They're in pre-release for now: <code>bun add -g spinuptui@next</code>.`}</p>
   <div class="cards">${cards}
   </div>
 </div></section>
