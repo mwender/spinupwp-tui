@@ -113,6 +113,13 @@ function templateReport(i: Incident, evidence: string): string {
   return `# ${when} - ${e.domain} - ${e.kind}\n\n## Evidence\n\n${evidence}\n`
 }
 
+// A summary is about the site the diagnosis blamed, which isn't always the one
+// whose monitor paged (a vanity host's fatal check, say). Naming both ties the
+// summary back to the page that started it.
+function label(site: string | undefined, paged: string): string {
+  return site && site !== paged ? `${site} (paged as ${paged})` : paged
+}
+
 function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, report: string, site: string, slug: string, summary: string): Page {
   const now = deps.now()
   const path = saveReport(s.workspace, site, slug, report, now)
@@ -124,7 +131,7 @@ function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, report: stri
   i.reportedAt = now.toISOString()
   i.summary = summary
   saveIncident(i)
-  return { text: `🧾 ${paged}: ${summary}\n\nReport: ${path}`, silent: false }
+  return { text: `🧾 ${label(site, paged)}: ${summary}\n\nReport: ${path}`, silent: false }
 }
 
 // An update goes into the original report, under a dated heading.
@@ -284,7 +291,7 @@ async function followUp(i: Incident, original: Incident, s: SentinelSettings, de
     i.summary = summary
     i.update = body
     saveIncident(i)
-    const page = { text: `🔁 ${paged}: ${summary}\n\nUpdated: ${path}`, silent: false }
+    const page = { text: `🔁 ${label(original.site, paged)}: ${summary}\n\nUpdated: ${path}`, silent: false }
     // Only a thread that exists can take a comment; otherwise the update stays in the file.
     if (original.postId) await deliver(page, body, original.postId)
     else {
