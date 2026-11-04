@@ -29,7 +29,7 @@ export function separateUserSteps(ssh: boolean, switching = false): string[] {
   const login = `basecamp auth login ${ssh ? "--remote" : "--no-browser"}`
   return [
     "To post as a separate user (most teams do):",
-    `  1. ${ssh ? "In this SSH session" : "In another terminal on this machine"}, run: ${switching ? "basecamp auth logout, then " : ""}${login}`,
+    `  1. ${ssh ? "In a second SSH session to this machine" : "In another terminal on this machine"}, run: ${switching ? "basecamp auth logout, then " : ""}${login}`,
     "  2. Open the link it prints in a private window (Incognito). A normal window is probably signed in as you, and would connect your own account.",
     ssh
       ? "  3. Sign in as the separate user. The last page shows a connection error. That's expected: copy its URL and paste it back into the terminal."

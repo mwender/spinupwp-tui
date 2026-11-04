@@ -241,7 +241,7 @@ async function setupBoard(pos: string[]): Promise<number> {
       } else {
         for (const s of login.steps) say(s && `  ${s}`)
         if (login.state === "unconfirmed") {
-          if (!(await confirm("Check again?", true))) break
+          if (!(await confirm("Logged in? Check again? (n enters the project by hand)", true))) break
         } else if (!(await confirm("Installed it? Check again?", true))) return 1
       }
       login = await checkLogin()
