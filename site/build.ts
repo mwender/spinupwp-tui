@@ -61,16 +61,17 @@ const html = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SpinupTUI — your SpinupWP fleet, from the terminal</title>
 <meta name="description" content="A fast, keyboard-driven terminal control center for SpinupWP, with modules that watch your fleet, page you, and follow up after you close it.">
-<meta property="og:title" content="SpinupTUI">
-<meta property="og:description" content="Your SpinupWP fleet, from the terminal.">
-<meta property="og:image" content="https://spinuptui.com/assets/og.png">
+<meta property="og:site_name" content="SpinupTUI">
+<meta property="og:title" content="Your SpinupWP fleet, from the terminal">
+<meta property="og:description" content="A keyboard-driven terminal app for your SpinupWP servers and sites, with modules that diagnose outages and page you.">
+<meta property="og:image" content="https://spinuptui.com/assets/og.png?v=2">
 <meta property="og:image:width" content="2400">
 <meta property="og:image:height" content="1260">
 <meta property="og:image:alt" content="SpinupTUI: your SpinupWP fleet, from the terminal.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://spinuptui.com/">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://spinuptui.com/assets/og.png">
+<meta name="twitter:image" content="https://spinuptui.com/assets/og.png?v=2">
 <meta name="theme-color" content="#0d1117">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1 15 8 8 15 1 8z' fill='%2300d18f'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">

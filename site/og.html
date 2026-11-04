@@ -22,8 +22,8 @@
   h1 { font: 700 60px/1.06 var(--mono); letter-spacing: -.03em; margin-bottom: 26px; }
   h1 .g { background: linear-gradient(90deg, var(--brand), var(--sky)); -webkit-background-clip: text; color: transparent; }
   p { color: var(--dim); font-size: 22px; line-height: 1.45; margin-bottom: 34px; }
-  .url { font: 600 20px var(--mono); color: var(--text); }
-  .url::before { content: "→ "; color: var(--brand); }
+  .cmd { display: inline-flex; align-items: center; gap: 12px; font: 600 21px var(--mono); color: var(--text); background: var(--bg-alt); border: 1px solid var(--border); border-radius: 10px; padding: 14px 20px; box-shadow: 0 0 0 1px rgba(0,209,143,.08); }
+  .cmd::before { content: "$"; color: var(--brand); }
 
   .fleet { position: relative; font: 14px/1.5 var(--mono); margin-bottom: 70px; }
   .win { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 60px rgba(0,209,143,.08); }
@@ -47,7 +47,7 @@
     <div class="logo">◆ SpinupTUI</div>
     <h1>Your <span class="g">SpinupWP</span> fleet, from the terminal.</h1>
     <p>Every server and site in one keyboard-driven app, plus modules that work out what broke and page you.</p>
-    <div class="url">spinuptui.com</div>
+    <div class="cmd">brew install mwender/tap/spinuptui</div>
   </div>
   <div class="fleet">
     <div class="win">
