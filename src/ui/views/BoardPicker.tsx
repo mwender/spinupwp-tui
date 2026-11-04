@@ -9,7 +9,7 @@ import { theme } from "../../lib/theme.ts"
 import { Panel, Spinner } from "../components.tsx"
 import { List, moveSelection } from "../List.tsx"
 import { useStore } from "../store.tsx"
-import { ACCOUNT_INTRO, checkLogin, listPeople, listProjects, makeBoard, overSsh, parseProjectId, postTest, saveBoard, separateUserSteps, setupBoardName, type BoardProject, type LoginCheck } from "../../lib/boardSetup.ts"
+import { ACCOUNT_INTRO, PROJECT_PROMPT, checkLogin, listPeople, listProjects, makeBoard, overSsh, parseProjectId, postTest, saveBoard, separateUserSteps, setupBoardName, type BoardProject, type LoginCheck } from "../../lib/boardSetup.ts"
 
 type Phase = "checking" | "blocked" | "account" | "switching" | "manual" | "project" | "person" | "test" | "posting" | "failed"
 
@@ -35,9 +35,8 @@ export function BoardPicker({ onDone, onCancel }: { onDone: (name: string) => vo
       const l = await checkLogin()
       setLogin(l)
       if (l.state !== "confirmed") return setPhase("blocked")
-      const [p, q] = await Promise.all([listProjects(), listPeople()])
+      const p = await listProjects()
       setProjects(p)
-      setPeople([NOBODY, ...q])
       setSelected(0)
       if (!p.length) setMessage(`Logged in as ${l.who}, but no projects with a message board came back.`)
       setPhase("account")
@@ -53,6 +52,17 @@ export function BoardPicker({ onDone, onCancel }: { onDone: (name: string) => vo
     const name = setupBoardName()
     await saveBoard(name, makeBoard(id, who))
     onDone(name)
+  }
+
+  // The mention list is the chosen project's people, so it's fetched after the pick.
+  const choose = (id: string) => {
+    setProjectId(id)
+    setSelected(0)
+    setPhase("checking")
+    void listPeople(id, login?.state === "confirmed" ? login.who : null).then((q) => {
+      setPeople([NOBODY, ...q])
+      setPhase(q.length ? "person" : "test")
+    })
   }
 
   const test = () => {
@@ -87,11 +97,7 @@ export function BoardPicker({ onDone, onCancel }: { onDone: (name: string) => vo
       if (name === "up" || name === "k") return setSelected((i) => moveSelection(i, -1, items.length))
       if (name === "down" || name === "j") return setSelected((i) => moveSelection(i, 1, items.length))
       if (name !== "return") return
-      if (phase === "project") {
-        setProjectId(projects[selected]!.id)
-        setSelected(0)
-        return setPhase(people.length > 1 ? "person" : "test")
-      }
+      if (phase === "project") return choose(projects[selected]!.id)
       setMention(people[selected] === NOBODY ? null : people[selected]!)
       return setPhase("test")
     }
@@ -115,9 +121,7 @@ export function BoardPicker({ onDone, onCancel }: { onDone: (name: string) => vo
         )}
         {phase === "blocked" && login && login.state !== "confirmed" && (
           <>
-            {login.steps.map((s) => (
-              <text key={s} content={s} fg={theme.text} />
-            ))}
+            {login.steps.map((s, i) => (s ? <text key={i} content={s} fg={theme.text} /> : <box key={i} style={{ height: 1 }} />))}
             <box style={{ height: 1 }} />
             {line(login.state === "unconfirmed" ? "r check again · m enter the project anyway · Esc cancel" : "r check again · Esc cancel", theme.accent)}
           </>
@@ -162,7 +166,7 @@ export function BoardPicker({ onDone, onCancel }: { onDone: (name: string) => vo
         )}
         {(phase === "project" || phase === "person") && (
           <>
-            {line(phase === "project" ? "Which project's message board? It's for your own team: nothing here reaches a client." : "Who should be @-mentioned on a new report?", theme.text)}
+            {line(phase === "project" ? PROJECT_PROMPT : "Who should be @-mentioned on a new report? Only the project's people are listed.", theme.text)}
             <box style={{ height: 1 }} />
             <box style={{ height: ROWS, flexDirection: "column" }}>
               <List items={items} selectedIndex={selected} viewportRows={ROWS} focused keyFor={(x) => x} renderRow={(x, sel) => <text content={x} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />} />

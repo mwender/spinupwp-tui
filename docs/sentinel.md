@@ -80,9 +80,9 @@ spinuptui beacon setup basecamp
 spinuptui sentinel setup --report-to board --apply
 ```
 
-It finds the [Basecamp CLI](https://github.com/basecamp/basecamp-cli) and tells you how to install it if it's missing, shows who reports will post as, and lets you pick the project and who to @-mention. It can post a test message first, which is a real post that the project's people may be notified of.
+It finds the [Basecamp CLI](https://github.com/basecamp/basecamp-cli) and tells you how to install it if it's missing, shows who reports will post as, and lets you pick the project and who to @-mention from that project's people. It can post a test message first, which is a real post that the project's people may be notified of.
 
-This is for your own team's record. Agent output is never sent to a client. If a post fails, the page says so and the report is safe on disk; retry with `spinuptui sentinel post <incident>`. A post is never retried automatically, because Basecamp can't tell a retry from a second post.
+This is for your own team's record, so pick a project only your team is in: everyone in the project can read the reports. Agent output is never sent to a client. If a post fails, the page says so and the report is safe on disk; retry with `spinuptui sentinel post <incident>`. A post is never retried automatically, because Basecamp can't tell a retry from a second post.
 
 ### Who reports post as
 
@@ -95,8 +95,8 @@ basecamp auth login --no-browser      # over SSH: --remote
 ```
 
 1. Open the link it prints in a private window (Incognito). In a normal window, you're probably already signed in as yourself, and you'd connect your own account.
-2. Sign in as the separate user.
-3. The last page shows a connection error. That's expected: copy its URL and paste it back into the terminal.
+2. Sign in as the separate user. The page then says you're connected, and the terminal finishes the login.
+3. Over SSH, with `--remote`, the last page shows a connection error instead. That's expected: copy its URL and paste it back into the terminal.
 
 Setup shows the account before you choose a project, so you'll see if the wrong one connected. To change it, run `basecamp auth logout` and log in again.
 

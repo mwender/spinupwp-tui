@@ -20,7 +20,7 @@ import {
   setupChannelName,
   verifyBotToken,
 } from "./beaconSetup.ts"
-import { ACCOUNT_INTRO, checkLogin, listPeople, listProjects, makeBoard, overSsh, parseProjectId, postTest, saveBoard, separateUserSteps, setupBoardName } from "./boardSetup.ts"
+import { ACCOUNT_INTRO, PROJECT_PROMPT, checkLogin, listPeople, listProjects, makeBoard, overSsh, parseProjectId, postTest, saveBoard, separateUserSteps, setupBoardName } from "./boardSetup.ts"
 import { confirm, PromptCancelled, readLine } from "./prompt.ts"
 import { listen, routesFrom } from "./beaconListen.ts"
 import {
@@ -227,7 +227,7 @@ async function setupBoard(pos: string[]): Promise<number> {
   if (!NAME_RE.test(name)) return fail(false, "usage", `"${name}" can't be a board name (lowercase letters, digits and dashes).`)
   const say = (line = "") => process.stderr.write(line + "\n")
   try {
-    say("Connect a Basecamp message board, for your own team's record. Nothing here reaches a client.")
+    say("Connect a Basecamp message board, for your own team's record.")
     say()
     say(ACCOUNT_INTRO)
     say()
@@ -239,7 +239,7 @@ async function setupBoard(pos: string[]): Promise<number> {
         for (const s of separateUserSteps(overSsh(), true)) say(`  ${s}`)
         if (!(await confirm("Done? Check again?", true))) return 1
       } else {
-        for (const s of login.steps) say(`  ${s}`)
+        for (const s of login.steps) say(s && `  ${s}`)
         if (login.state === "unconfirmed") {
           if (!(await confirm("Check again?", true))) break
         } else if (!(await confirm("Installed it? Check again?", true))) return 1
@@ -252,6 +252,7 @@ async function setupBoard(pos: string[]): Promise<number> {
       const projects = await listProjects()
       if (projects.length) {
         say()
+        say(PROJECT_PROMPT)
         projects.forEach((p, i) => say(`  ${String(i + 1).padStart(3)}. ${p.name}`))
         for (;;) {
           const n = Number((await readLine("Post to which project? (number) ")).trim())
@@ -262,9 +263,9 @@ async function setupBoard(pos: string[]): Promise<number> {
           say("  Pick a number from the list.")
         }
       }
-      const people = await listPeople()
+      const people = projectId ? await listPeople(projectId, login.who) : []
       if (people.length) {
-        const typed = (await readLine("Who should be @-mentioned on a new report? (part of a name, Enter for nobody) ")).trim().toLowerCase()
+        const typed = (await readLine(`Who should be @-mentioned on a new report? (${people.length <= 8 ? `${people.join(", ")}; ` : ""}part of a name, Enter for nobody) `)).trim().toLowerCase()
         const hits = typed ? people.filter((p) => p.toLowerCase().includes(typed)) : []
         if (hits.length === 1) mention = hits[0]!
         else if (typed) say(`  ${hits.length ? `That matches ${hits.length} people` : "Nobody matches that"}, so no one will be mentioned. Re-run this to change it.`)

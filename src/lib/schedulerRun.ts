@@ -28,8 +28,9 @@ export const BLOCKED_RE = /^\s*STATUS:\s*blocked\b/im
 export const AUTH_FAIL_RE =
   /Failed to authenticate|OAuth (session|token)|could not be refreshed|Invalid API key|API key.*(expired|invalid)|Please run .?\/login|not (logged in|authenticated)/i
 const REPORT_CAP = 200_000
-// Tools a launchd PATH doesn't include by default.
-const EXTRA_PATH = [join(homedir(), ".local/bin"), join(homedir(), ".bun/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
+// Tools a launchd PATH doesn't include by default. ~/bin is where the Basecamp
+// installer puts its CLI when ~/bin is on the user's own PATH.
+const EXTRA_PATH = [join(homedir(), ".local/bin"), join(homedir(), "bin"), join(homedir(), ".bun/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
 
 export type RunStatus = "ok" | "failed" | "blocked" | "timeout" | "error" | "auth"
 
