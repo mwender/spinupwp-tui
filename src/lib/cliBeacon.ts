@@ -235,6 +235,7 @@ async function setupBoard(pos: string[]): Promise<number> {
     for (;;) {
       if (login.state === "confirmed") {
         say(`Reports will post as ${login.who}.`)
+        if (login.note) say(`  ${login.note}`)
         if (await confirm(`Post as ${login.who}?`, true)) break
         for (const s of separateUserSteps(overSsh(), true)) say(`  ${s}`)
         if (!(await confirm("Done? Check again?", true))) return 1

@@ -14,7 +14,7 @@ const noCli: BasecampRun = async () => {
 
 describe("checkLogin", () => {
   test("a yes is real", async () => {
-    expect(await checkLogin(answering({ me: ok({ identity: { first_name: "Pat", last_name: "Doe" } }) }))).toEqual({ state: "confirmed", who: "Pat Doe" })
+    expect(await checkLogin(answering({ me: ok({ identity: { first_name: "Pat", last_name: "Doe" } }) }), false)).toEqual({ state: "confirmed", who: "Pat Doe" })
   })
 
   test("no CLI says how to install it", async () => {
@@ -30,10 +30,17 @@ describe("checkLogin", () => {
     expect((r as { steps: string[] }).steps.join(" ")).not.toContain("sandbox")
   })
 
-  test("over SSH it names the reason and the headless login", async () => {
+  test("over SSH it names the reason and sends the login to the Mac itself", async () => {
     const steps = ((await checkLogin(answering({}), true)) as { steps: string[] }).steps.join(" ")
-    expect(steps).toContain("Over SSH")
-    expect(steps).toContain("basecamp auth login --remote")
+    expect(steps).toContain("SSH session can't read the login keychain")
+    expect(steps).toContain("on the Mac itself")
+    expect(steps).not.toContain("--remote")
+  })
+
+  test("a login confirmed over SSH is flagged: it's one only SSH can see", async () => {
+    const me = answering({ me: ok({ identity: { first_name: "Pat" } }) })
+    expect(await checkLogin(me, true)).toMatchObject({ state: "confirmed", who: "Pat", note: expect.stringContaining("Mac's own session") })
+    expect(await checkLogin(me, false)).toEqual({ state: "confirmed", who: "Pat" })
   })
 
   test("an unconfirmed login recommends a separate user, in a private window", async () => {
@@ -43,15 +50,12 @@ describe("checkLogin", () => {
     expect(steps).toContain("post as yourself: basecamp auth login")
   })
 
-  test("the separate-user login never opens the default browser", () => {
-    expect(separateUserSteps(false)[1]).toContain("basecamp auth login --no-browser")
-    expect(separateUserSteps(true)[1]).toContain("basecamp auth login --remote")
-  })
-
-  test("only the SSH login ends on an error page to paste back", () => {
-    expect(separateUserSteps(true).join(" ")).toContain("connection error. That's expected")
-    expect(separateUserSteps(false).join(" ")).not.toContain("connection error")
-    expect(separateUserSteps(false).join(" ")).toContain("says you're connected")
+  test("the separate-user login never opens the default browser, and never uses --remote", () => {
+    for (const ssh of [false, true]) {
+      expect(separateUserSteps(ssh)[1]).toContain("basecamp auth login --no-browser")
+      expect(separateUserSteps(ssh).join(" ")).not.toContain("--remote")
+      expect(separateUserSteps(ssh).join(" ")).toContain("says you're connected")
+    }
   })
 
   test("changing accounts logs out first", () => {

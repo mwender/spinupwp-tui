@@ -12,7 +12,8 @@ version; such changes are called out here.
 ## [Unreleased]
 
 ### Fixed
-- **Basecamp setup's login steps match what actually happens.** A local login finishes on a success page; only a login over SSH (`--remote`) ends on an error page whose URL you paste back. The steps are numbered, and a terminal that isn't logged in is no longer told it might be a sandboxed shell.
+- **Basecamp setup's login steps match what actually happens.** A `--no-browser` login finishes on a success page, with nothing to paste back. The steps are numbered, and a terminal that isn't logged in is no longer told it might be a sandboxed shell.
+- **Setup over SSH no longer recommends `basecamp auth login --remote`.** Without the Keychain, that login is saved to a plaintext file that only SSH sessions read, so setup looked fine while every report failed to post. Setup now says to log in on the Mac itself (Screen Sharing works), and flags a login it can only see over SSH.
 - **The @-mention list shows only the chosen project's people,** not everyone in the Basecamp account, and leaves out the account that posts.
 - **Setup no longer says "nothing here reaches a client".** Anyone in the project can read the reports, so it asks for a project only your team is in.
 - **Scheduler jobs and Sentinel's posts find tools in `~/bin`.** The Basecamp installer puts its CLI there when `~/bin` is on your PATH, and an unattended run couldn't see it, so every post would have failed with the CLI "missing".

@@ -129,6 +129,7 @@ export function BoardPicker({ onDone, onCancel }: { onDone: (name: string) => vo
         {phase === "account" && login?.state === "confirmed" && (
           <>
             {line(`Reports will post as ${login.who}.`, theme.text)}
+            {login.note && line(login.note, theme.warn)}
             <box style={{ height: 1 }} />
             {line(ACCOUNT_INTRO)}
             <box style={{ height: 1 }} />

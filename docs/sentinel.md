@@ -88,21 +88,22 @@ This is for your own team's record, so pick a project only your team is in: ever
 
 Reports post as whichever Basecamp account the CLI is logged in to. If that's you, it works, but every report looks like you wrote it, and an @-mention may not notify its own author. Most teams use a separate Basecamp user. Posting as yourself is fine if you'd rather, and a separate user may take a seat on your plan.
 
-To log the CLI in as a separate user:
+To log the CLI in as a separate user, run this in a terminal on the Mac itself:
 
 ```sh
-basecamp auth login --no-browser      # over SSH: --remote
+basecamp auth login --no-browser
 ```
 
 1. Open the link it prints in a private window (Incognito). In a normal window, you're probably already signed in as yourself, and you'd connect your own account.
 2. Sign in as the separate user. The page then says you're connected, and the terminal finishes the login.
-3. Over SSH, with `--remote`, the last page shows a connection error instead. That's expected: copy its URL and paste it back into the terminal.
+
+**Not over SSH.** An SSH session can't use the Keychain, so `basecamp auth login --remote` saves its login in a plaintext file, `~/.config/basecamp/credentials.json`, and only SSH sessions read that file. The Mac's own sessions, including the one that posts the reports, don't, so reports would fail even though setup over SSH shows you as logged in. On a headless Mac, log in over Screen Sharing instead. If you've already logged in over SSH, run `basecamp auth logout` over SSH to remove the file.
 
 Setup shows the account before you choose a project, so you'll see if the wrong one connected. To change it, run `basecamp auth logout` and log in again.
 
 ### If the login can't be confirmed
 
-Over SSH, or in an agent's shell, the login often can't be confirmed even when it's fine, because those sessions may not be able to read the Keychain. So you can still save the board by giving its project ID or any URL from the project, and the morning digest's Board line tells you whether it works. 
+Over SSH, or in an agent's shell, the login can't be confirmed even when it's fine, because those sessions can't read the Keychain. So you can still save the board by giving its project ID or any URL from the project, and the morning digest's Board line tells you whether it works.
 
 
 ## The daily digest
