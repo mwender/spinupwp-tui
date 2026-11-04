@@ -78,8 +78,8 @@
   register/recalibrate/remove it — plus a cache/outage doctor and alert
   wiring. → [docs/site-monitoring.md](docs/site-monitoring.md) ·
   [docs/uptime-kuma.md](docs/uptime-kuma.md)
-- **Modules** (`6`, pre-release: `bun add -g spinuptui@next --no-cache`) — the parts of SpinupTUI that keep working after you close it,
-  each set up from the same screen. First up, **Beacon**: `spinuptui beacon send`
+- **Modules** (`6`, new in 1.3.0) — the parts of SpinupTUI that keep working after you close it,
+  each set up from the same screen. First, **Beacon**: `spinuptui beacon send`
   pages you on Telegram from any cron job, watcher or agent, with retries, long
   messages split instead of dropped, and a send log. A guided setup creates the
   bot connection for you. The pager also answers back: with the listener on

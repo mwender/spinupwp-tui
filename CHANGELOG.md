@@ -11,13 +11,28 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
-### Fixed
-- **Basecamp setup's login steps match what actually happens.** A `--no-browser` login finishes on a success page, with nothing to paste back. The steps are numbered, and a terminal that isn't logged in is no longer told it might be a sandboxed shell.
-- **Setup over SSH no longer recommends `basecamp auth login --remote`.** Without the Keychain, that login is saved to a plaintext file that only SSH sessions read, so setup looked fine while every report failed to post. Setup now says to log in on the Mac itself (Screen Sharing works), and flags a login it can only see over SSH.
-- **The @-mention list shows only the chosen project's people,** not everyone in the Basecamp account, and leaves out the account that posts.
-- **Setup no longer says "nothing here reaches a client".** Anyone in the project can read the reports, so it asks for a project only your team is in.
-- **Scheduler jobs and Sentinel's posts find tools in `~/bin`.** The Basecamp installer puts its CLI there when `~/bin` is on your PATH, and an unattended run couldn't see it, so every post would have failed with the CLI "missing".
-- **Sentinel's summary and follow-up pages now name the site the diagnosis blamed.** They used the domain of the monitor that paged, so a fatal caught on a server's vanity host was summarized under that host while the report was filed under the real site. When the two differ, the page names both: `🧾 example.com (paged as web1.example.net): …`.
+## [1.3.0] - YYYY-MM-DD
+
+**Modules: the parts of SpinupTUI that keep working after you close it.** The Modules tab (`6`) and `spinuptui modules` show each one's status on this machine and set it up from the same place. Three ship in this release, and each builds on the one before: **Beacon** pages you, **Scheduler** runs follow-ups on a clock, and **Sentinel** watches the fleet, works out what broke, and writes it up. Turning on Scheduler makes a machine a *station*, so put it on one that stays awake. They've been in pre-release on npm's `next` tag since 1.2.0-alpha.1; this rolls up 1.3.0-alpha.1 to alpha.9.
+
+### Added
+- **Beacon: `spinuptui beacon send` pages you on Telegram.** One command any script, cron job or agent can use instead of its own `curl` to the Telegram API. Long messages are split into numbered parts instead of rejected, sends are retried and logged, and exit codes tell a caller what happened (`0` delivered, `1` not configured, `2` failed). `spinuptui beacon setup` walks you through making a bot with @BotFather and finds your chat by itself, and saves nothing until a test message has arrived. See [docs/beacon.md](docs/beacon.md).
+- **The pager answers back.** With Beacon's listener on (`l` on the Beacon card, or `spinuptui beacon listener install`), send `/jobs` to your bot for the station's jobs, soonest expiry first, with an **Extend 1 year** button on recurring jobs about to expire, and **Run again** on failed or blocked ones. It answers only your own private chat. See [docs/beacon.md](docs/beacon.md#let-the-pager-answer-you).
+- **Team boards.** A Basecamp message board for your own team's record, where Sentinel posts its reports. `spinuptui beacon setup basecamp` (or `b` in Sentinel's setup) finds the Basecamp CLI, shows which account reports will post as and recommends a separate user, lists your projects and the people in the one you pick, and can post a test message first. `beacon add basecamp` does the same for scripts. A board is never paged.
+- **Scheduler: follow-ups that run themselves.** Queue "check this tomorrow at 8" (`spinuptui scheduler add …`) and the station runs it, writes a report, and sends you the result through Beacon. A job can be a SpinupTUI command, a script, or a prompt for an agent CLI (Claude Code or Codex, read-only by default), once or recurring, and every job carries an expiry so a forgotten one stops by itself. `list`, `show`, `run`, `cancel`, `extend` and `validate` round it out, and a job that couldn't do its work reports `blocked` instead of `ok`. See [docs/scheduler.md](docs/scheduler.md).
+- **One LaunchAgent for everything.** `spinuptui scheduler install --plan|--apply`, or `⏎` on the Scheduler card, installs a tick at login and every five minutes, with the PATH a bare launchd environment lacks, and doesn't report success until a tick has run. It's the clock every module's recurring work runs on.
+- **Your SpinupTUI folder.** Jobs and reports live in `~/SpinupTUI/`, which explains itself in a `README.md`. `spinuptui home sync` (or `f`) shares it through a private git repository, so you can queue a job from any machine with a commit and read reports anywhere; only one station runs a repository's jobs.
+- **Station heartbeat.** Every tick pings an Uptime Kuma push monitor you run somewhere else, so a station that stops, or can't page you, is noticed from outside. `h` on the Scheduler card, or `spinuptui scheduler heartbeat setup`, creates the monitor if SpinupTUI has your Kuma login. See [docs/scheduler.md](docs/scheduler.md#know-when-the-station-itself-stops).
+- **Sentinel: know why, not just that it's down.** Every 5 minutes it checks Uptime Kuma, groups what went down by server, pages you, and writes it up: the evidence on its own, or a full diagnosis if you bring an agent CLI. The agent reads servers only through `ssh-exec` and can't post anything; Sentinel saves the report, posts it to your team board, and pages a one-line summary naming the site the diagnosis blamed. A repeat within 6 hours gets a follow-up on the same report instead of a new one. A lapsed agent login delays work instead of losing it. Set it up from the Modules tab, or `spinuptui sentinel setup`; `spinuptui sentinel attach` adopts an existing Kuma's monitors without changing anything in Kuma. See [docs/sentinel.md](docs/sentinel.md).
+- **A morning digest that only speaks up about what's new.** Sentinel's 08:00 message covers station health, the last 24 hours, server updates and your expectation checks: a crawler that stopped arriving, a cache that stopped hitting, a box that latches under load. A flag is New on the day it trips, then Ongoing with its age, and the digest is silent unless something needs you. Preview it with `t` on the Sentinel card.
+
+### Changed
+- **Headless commands start about three times faster.** `beacon send`, `incidents`, `ssh-exec`, `scheduler` and the rest no longer load the dashboard's renderer before looking at their arguments, which matters for something started every five minutes.
+- **`spinuptui incidents` output** gains `monitorId` on each event and a `failedMonitors` list, so a caller can tell "no events" from "couldn't read that monitor".
+
+### Notes
+- **Upgrading from a 1.3.0 alpha:** nothing to migrate. The modules keep their config and `~/SpinupTUI/`; installs from `@next` can move to `@latest` (`bun add -g spinuptui@latest --no-cache`) or Homebrew.
+- Stations are macOS-only for now: Scheduler and Beacon's listener install LaunchAgents, and team boards rely on the Basecamp CLI's Keychain login. Over SSH, log the Basecamp CLI in on the Mac itself; see [docs/sentinel.md](docs/sentinel.md#who-reports-post-as).
 
 ## [1.2.2] - 2026-11-06
 
@@ -27,97 +42,11 @@ version; such changes are called out here.
 - **`pull db` rewrites URLs in plugin tables too.** wp-cli's `search-replace` only covers WordPress's core tables unless told otherwise, so Yoast's indexables (the local canonical and schema URLs), cache and log tables, and form entries kept production URLs. The rewrite now covers every table with the site's prefix.
 - **The production media fallback (`m`) works when production runs a different stack.** It built production image URLs from the local copy's uploads path, so a Standard WP site converted to Bedrock locally pointed every missing image at `/app/uploads` on production, which 404s there, while the dialog reported it as on. The plugin (now v3) maps the local uploads path to production's, worked out from production's stack. The dialog shows the mapping when they differ, and its source line now names production's stack rather than the local one. Press `u` to update an installed plugin.
 
-## [1.3.0-alpha.9] - 2026-11-02
-
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
-
-### Changed
-- **A repeat now gets a follow-up instead of being skipped.** When the same site and monitor go down again within 6 hours, Sentinel gives the agent the earlier report and asks what changed and whether its conclusion still holds. The answer is added to that report as a dated update, and posted as a comment on the original board post, so one problem stays one report. In real incidents, the second look revised the first one's conclusion. **Diagnose anyway** is gone, since repeats are always diagnosed now. See [docs/sentinel.md](docs/sentinel.md#repeats-get-a-follow-up-not-a-new-report).
-
-## [1.3.0-alpha.8] - 2026-10-31
-
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
-
-### Changed
-- **Basecamp setup now shows who reports will post as, and recommends a separate user.** It's whichever account the CLI is logged in to, which is easy to miss when that's your own. Setup shows the account before you choose a project, lets you change it, and gives the login that keeps you out of your own session: open its link in a private window. See [docs/sentinel.md](docs/sentinel.md#who-reports-post-as).
-
-## [1.3.0-alpha.7] - 2026-10-31
-
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1. It includes the fixes below in 1.3.0-alpha.6, which was never published to npm.
-
-### Added
-- **Guided Basecamp setup.** `spinuptui beacon setup basecamp`, or `b` in Sentinel's setup, walks you through connecting a team board: it finds the Basecamp CLI and says how to install it if it's missing, checks your login, lists your projects, asks who to @-mention, and can post a test message first.
-
-### Changed
-- **`beacon add basecamp` no longer refuses when the login can't be confirmed.** Over SSH or in an agent's shell, that check often can't tell, even when the login is fine. The board is saved with a note, and the morning digest confirms it. A missing CLI still stops it.
-
-## [1.3.0-alpha.6] - 2026-10-31
-
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
-
-### Fixed
-- **Sentinel's digest no longer reads healthy servers as unverified.** Each update check looked the fleet up through the API, so a large fleet hit the rate limit and probes ran out of time before they connected. A digest now looks the fleet up once. A domain that exists on two servers no longer fails the check either.
-
-## [1.3.0-alpha.5] - 2026-10-30
-
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
-
-### Added
-- **Sentinel: know why, not just that it's down.** The third module checks Uptime Kuma every 5 minutes, groups what went down by server, pages you, and writes it up: the evidence on its own, or a full diagnosis if you bring an agent CLI. The agent reads servers only through `ssh-exec` and can't post anything; Sentinel saves its report and does the posting. A repeat within 6 hours skips the diagnosis and offers **Diagnose anyway**. A lapsed agent login delays work instead of losing it. Set it up from the Modules tab, or `spinuptui sentinel setup`. See [docs/sentinel.md](docs/sentinel.md).
-- **A morning digest that only speaks up about what's new.** Sentinel's 08:00 message covers station health, the last 24 hours, server updates and your expectation checks: a crawler that stopped arriving, a cache that stopped hitting, a box that latches under load. A flag is New on the day it trips, then Ongoing with its age, and the digest is silent unless something needs you.
-- **`spinuptui sentinel attach`** adopts an existing Kuma's monitors on a fresh install, without changing anything in Kuma.
-- **Jobs can say they're blocked.** A job that ran but couldn't do its work now reports `blocked` instead of `ok`: an agent with `STATUS: blocked`, a script by exiting 75. Failed and blocked pages, and `/jobs`, get a **Run again** button. It re-runs the job exactly as written and never adds permissions.
-- **Team boards.** `spinuptui beacon add basecamp <name> --project <id>` connects a Basecamp message board for your own team's record. It can't be paged, and it's where Sentinel posts reports.
-
-### Changed
-- **`spinuptui incidents` output** gains `monitorId` on each event and a `failedMonitors` list, so a caller can tell "no events" from "couldn't read that monitor".
-
-### Fixed
-- **A long job no longer makes Kuma report a healthy station as dead.** The heartbeat was only sent when a tick finished, so a job past the 15-minute window looked like an outage. A tick that finds another still running now pings too.
-- **Beacon's listener no longer reads as down right after it starts.** Its first poll takes up to 50 seconds, so `beacon listener status` showed ✗ after an install, and a Scheduler tick in that window could have paged about a listener that was fine.
-
-## [1.3.0-alpha.4] - 2026-10-30
-
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
-
-### Added
-- **Keep a job running longer without editing its file.** `spinuptui scheduler extend <id> --by 1y` moves a job's expiry a year later (`--by` takes days, weeks, months or years: `30d`, `2w`, `6m`, `1y`), or `--expires YYYY-MM-DD` sets a date. `--by` counts from the current expiry, or from today if the job has already expired. Only the `expires:` line changes, and in a git source the change is committed and pushed like `add` and `cancel`. It refuses a date that isn't later; to stop a job sooner, cancel it.
-- **The pager answers back: send `/jobs` to your Beacon bot.** Beacon's new listener lets you message the station from Telegram. `/jobs` replies with the station's scheduled jobs, soonest expiry first, and flags any that expire within 14 days. Recurring jobs about to expire get an **Extend 1 year** button, which commits and pushes the change like `scheduler extend`. Turn it on with `l` on the Modules tab's Beacon card, or `spinuptui beacon listener install --plan|--apply`. It runs as a LaunchAgent that launchd keeps alive and restarts itself after an upgrade. Scheduler's tick pages you if it stops polling. It answers only your own private chat with the bot, ignores everyone else without replying, acts on each message once, and makes every button work once. Beacon setup stops it while it looks for your chat, because Telegram allows only one reader of a bot's messages. See [docs/beacon.md](docs/beacon.md#let-the-pager-answer-you).
-
-### Fixed
-- **`scheduler status` points to the right heartbeat setup.** With a saved Uptime Kuma login, the "heartbeat: not set" line now suggests `h` on the Scheduler card or `scheduler heartbeat setup`, which create the monitor for you, instead of the manual `heartbeat set <url>`.
-
-## [1.3.0-alpha.3] - 2026-10-27
-
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
-
-### Added
-- **Station heartbeat: find out when the station itself stops.** If the machine running Scheduler is off, the installed `spinuptui` is broken, or its LaunchAgent is gone, nothing on that machine can page you. Now every dispatcher tick pings an Uptime Kuma push monitor that you run somewhere else (a small VPS is easiest), and when the pings stop, Kuma alerts you through its own notifications. If SpinupTUI has your Kuma login (from site monitoring), `spinuptui scheduler heartbeat setup --plan|--apply` creates the monitor for you; otherwise make a push monitor by hand and run `spinuptui scheduler heartbeat set '<push URL>'`. Both ping once before saving. In the app, `h` on the Modules tab's Scheduler card walks through the same setup and later shows the last ping, sends a test ping, or removes it. The ping reports **down** when the station is running but can't page you, because Beacon isn't set up or its last page failed, so a broken pager reaches you too. `scheduler status` and the Modules tab show the last ping. See [docs/scheduler.md](docs/scheduler.md#know-when-the-station-itself-stops).
-- **Your SpinupTUI folder explains itself, and can be shared across machines in one step.** `~/SpinupTUI/`, where Scheduler keeps your jobs and reports, now gets a `README.md` when it's created, covering what each part is, which parts are yours to edit, and how to move or share it. `spinuptui home` shows where it is and whether it's shared. `spinuptui home sync --plan|--apply` shares it through a private git repository: it creates one on GitHub (`--github <name>`, using the GitHub CLI) or pushes to an empty one you made (`--remote <url>`). Then you can queue jobs from any machine and read the reports anywhere. On a second machine, `--clone <url>` sets up the same folder. It won't share a folder inside iCloud, Dropbox or another sync service, push to a repository that already has commits, or use a public GitHub repository. The Modules tab shows where jobs and reports land, and `f` on Scheduler walks through the same steps. Queuing a job now prints the full path of the job file and where its reports will go.
-
-### Fixed
-- **Scheduler no longer reports a problem on every tick before you've queued anything locally.** `~/SpinupTUI/scheduler/` is created on first use, so its absence is normal; `scheduler status` used to list "source local … does not exist" as a problem from the last tick.
-
 ## [1.2.1] - 2026-10-27
 
 ### Fixed
 - **WordPress versions no longer go stale.** The version shown for a site was read once, when the site was first identified, and never again, so sites updated outside SpinupTUI (auto-updates, wp-admin, deploys) kept showing the old version, and `r` didn't help. Versions older than a day are now re-checked in the background when the site list loads, one site at a time per server, stopping at a server's first failure so unattended SSH can't trip fail2ban. A reading that couldn't be refreshed shows its age in the Stacks list, and the Details pane always says when it was taken.
 - **`w` opens the site or server you picked, not the SpinupWP dashboard.** Deep links need the account slug, which SpinupWP's API doesn't provide and first-run setup never asked for, so unless you had added `accountSlug` to `config.json` by hand, `w` quietly fell back to the dashboard. Now `w` asks for the slug the first time it needs it (pasting any dashboard URL works), saves it to the current account and opens the right page. First-run setup also asks for it, as an optional step after the token.
-
-## [1.3.0-alpha.2] - 2026-10-26
-
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.2.0.
-
-### Added
-- **Scheduler: follow-ups that run themselves.** Queue a job for later (`spinuptui scheduler add verify-410s --kind spinuptui --when "2026-10-21 08:00" --expires 2026-10-28 --created-by "…" -- incidents example.com`) and this machine runs it at that time, writes a report, and sends you the result through Beacon. Jobs can be a SpinupTUI command, a shell script, or a prompt for an agent CLI (Claude Code or Codex, read-only by default). They can be one-offs or recurring (`every 30m`, `weekdays 08:00`, `mon,thu 08:00`), and every job carries an expiry date so a forgotten one stops on its own. Jobs and reports live in `~/SpinupTUI/scheduler/`, a visible folder of your own. Make `~/SpinupTUI/` a git repository and Scheduler pulls it before each run and commits and pushes the reports, so you can queue a job from any machine with a commit. Only one machine runs a repository's jobs: the first station to tick it claims it, so a second machine with a dispatcher can't run them twice. `scheduler source claim` and `release` move them between machines. A job can say what happens when the station reaches it late (`--late run`, `skip`, or a grace window like `2h`). A skipped job is paged, not dropped silently. `scheduler list`, `show`, `run`, `cancel` and `validate` round it out. See [docs/scheduler.md](docs/scheduler.md).
-- **`spinuptui scheduler install --plan|--apply`** sets up the one LaunchAgent everything runs on: a tick at login and every five minutes, with the PATH a bare launchd environment lacks written into it. `--apply` doesn't report success until a tick has actually run under launchd. `uninstall` removes it and keeps your jobs and reports. Scheduler shows up live on the Modules tab (`6`), where `⏎` shows the same plan and installs it on confirm, and in `spinuptui modules`, which reports how long ago the last tick ran. Modules will declare their own recurring work for Scheduler to run, so a station needs only this one unit. The design is in [docs/2026-10-20_scheduler-spec.md](docs/2026-10-20_scheduler-spec.md).
-
-### Changed
-- **Headless commands start about three times faster.** `beacon send`, `incidents`, `ssh-exec`, `scheduler` and the rest no longer load the dashboard's renderer before looking at their arguments, which matters for something started every five minutes.
-
-## [1.3.0-alpha.1] - 2026-10-21
-
-A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew stay on 1.2.0. It continues `1.2.0-alpha.1` under a new number, because stable 1.2.0 shipped without the modules: it has Beacon and the Modules tab (see [1.2.0-alpha.1]) plus everything in [1.2.0]. The stable 1.3.0 will roll these notes up with the next modules.
 
 ## [1.2.0] - 2026-10-21
 
@@ -1610,18 +1539,10 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.9...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/mwender/spinupwp-tui/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/mwender/spinupwp-tui/compare/v1.2.1...v1.2.2
-[1.3.0-alpha.9]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.8...v1.3.0-alpha.9
-[1.3.0-alpha.8]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.7...v1.3.0-alpha.8
-[1.3.0-alpha.7]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.6...v1.3.0-alpha.7
-[1.3.0-alpha.6]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.5...v1.3.0-alpha.6
-[1.3.0-alpha.5]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.4...v1.3.0-alpha.5
-[1.3.0-alpha.4]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.3...v1.3.0-alpha.4
-[1.3.0-alpha.3]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.2...v1.3.0-alpha.3
 [1.2.1]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...v1.2.1
-[1.3.0-alpha.2]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.1...v1.3.0-alpha.2
-[1.3.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...v1.3.0-alpha.1
 [1.2.0]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0
 [1.2.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0-alpha.1
 [1.1.2]: https://github.com/mwender/spinupwp-tui/compare/v1.1.1...v1.1.2
