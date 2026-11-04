@@ -14,7 +14,7 @@ const noCli: BasecampRun = async () => {
 
 describe("checkLogin", () => {
   test("a yes is real", async () => {
-    expect(await checkLogin(answering({ me: ok({ identity: { first_name: "Pat", last_name: "Doe" } }) }))).toEqual({ state: "confirmed", who: "Pat Doe" })
+    expect(await checkLogin(answering({ me: ok({ identity: { first_name: "Pat", last_name: "Doe" } }) }), false)).toEqual({ state: "confirmed", who: "Pat Doe" })
   })
 
   test("no CLI says how to install it", async () => {
@@ -23,16 +23,24 @@ describe("checkLogin", () => {
     expect((r as { steps: string[] }).steps[0]).toContain("basecamp.com/install-cli")
   })
 
-  test("a no is never stated as a fact", async () => {
+  test("a no is never stated as a fact, and isn't blamed on a sandbox in a normal terminal", async () => {
     const r = await checkLogin(answering({}), false)
     expect(r.state).toBe("unconfirmed")
-    expect((r as { steps: string[] }).steps[0]).toBe("Couldn't confirm the Basecamp login from this session.")
+    expect((r as { steps: string[] }).steps[0]).toBe("The Basecamp CLI doesn't seem to be logged in.")
+    expect((r as { steps: string[] }).steps.join(" ")).not.toContain("sandbox")
   })
 
-  test("over SSH it names the reason and the headless login", async () => {
+  test("over SSH it names the reason and sends the login to the Mac itself", async () => {
     const steps = ((await checkLogin(answering({}), true)) as { steps: string[] }).steps.join(" ")
-    expect(steps).toContain("SSH session")
-    expect(steps).toContain("basecamp auth login --remote")
+    expect(steps).toContain("SSH session can't read the login keychain")
+    expect(steps).toContain("on the Mac itself")
+    expect(steps).not.toContain("--remote")
+  })
+
+  test("a login confirmed over SSH is flagged: it's one only SSH can see", async () => {
+    const me = answering({ me: ok({ identity: { first_name: "Pat" } }) })
+    expect(await checkLogin(me, true)).toMatchObject({ state: "confirmed", who: "Pat", note: expect.stringContaining("Mac's own session") })
+    expect(await checkLogin(me, false)).toEqual({ state: "confirmed", who: "Pat" })
   })
 
   test("an unconfirmed login recommends a separate user, in a private window", async () => {
@@ -42,18 +50,17 @@ describe("checkLogin", () => {
     expect(steps).toContain("post as yourself: basecamp auth login")
   })
 
-  test("the separate-user login never opens the default browser", () => {
-    expect(separateUserSteps(false)[0]).toContain("basecamp auth login --no-browser")
-    expect(separateUserSteps(true)[0]).toContain("basecamp auth login --remote")
-  })
-
-  test("it warns about the error page, which otherwise looks like a failure", () => {
-    expect(separateUserSteps(false).join(" ")).toContain("connection error. That's expected")
+  test("the separate-user login never opens the default browser, and never uses --remote", () => {
+    for (const ssh of [false, true]) {
+      expect(separateUserSteps(ssh)[1]).toContain("basecamp auth login --no-browser")
+      expect(separateUserSteps(ssh).join(" ")).not.toContain("--remote")
+      expect(separateUserSteps(ssh).join(" ")).toContain("says you're connected")
+    }
   })
 
   test("changing accounts logs out first", () => {
-    expect(separateUserSteps(false, true)[0]).toContain("basecamp auth logout, then basecamp auth login --no-browser")
-    expect(separateUserSteps(false)[0]).not.toContain("logout")
+    expect(separateUserSteps(false, true)[1]).toContain("basecamp auth logout, then basecamp auth login --no-browser")
+    expect(separateUserSteps(false)[1]).not.toContain("logout")
   })
 
   test("overSsh", () => {
@@ -70,8 +77,14 @@ describe("listing", () => {
     expect(await listProjects(run)).toEqual([{ id: "1", name: "Alpha" }, { id: "2", name: "Zed" }])
   })
 
-  test("people once each, by name", async () => {
-    expect(await listPeople(answering({ people: ok([{ name: "Zoe" }, { name: "Al" }, { name: "Zoe" }]) }))).toEqual(["Al", "Zoe"])
+  test("the project's people once each, by name, without the poster", async () => {
+    const calls: string[][] = []
+    const run: BasecampRun = async (args) => {
+      calls.push(args)
+      return ok([{ name: "Zoe" }, { name: "Bot" }, { name: "Al" }, { name: "Zoe" }])
+    }
+    expect(await listPeople("5", "Bot", run)).toEqual(["Al", "Zoe"])
+    expect(calls[0]).toEqual(["people", "list", "--project", "5", "--all", "--json"])
   })
 
   test("a failed listing is empty, not a crash", async () => {

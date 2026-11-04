@@ -21,18 +21,30 @@ export const ACCOUNT_INTRO = "Reports post as whichever Basecamp account the CLI
 
 // The CLI's plain login opens the default browser, usually already signed in as the
 // person at the keyboard, so it can connect the wrong account before they've thought
-// about it. These forms stop at a link they can open in a private window instead.
+// about it. --no-browser stops at a link they can open in a private window instead,
+// and still finishes on the CLI's own listener, on a success page.
+//
+// Over SSH there's no Keychain, so `--remote` stores its login in a plaintext file,
+// and sessions that do have the Keychain (a terminal on the Mac, the LaunchAgent
+// that posts) never read that file. A login made over SSH is seen only over SSH,
+// so the steps send SSH users to the Mac itself instead.
 export function separateUserSteps(ssh: boolean, switching = false): string[] {
-  const login = `basecamp auth login ${ssh ? "--remote" : "--no-browser"}`
   return [
-    `To use a separate user, run this in a terminal on this machine: ${switching ? "basecamp auth logout, then " : ""}${login}`,
-    "Open its link in a private window (Incognito). If you're signed in to Basecamp as yourself, a normal window connects your own account.",
-    "The last page shows a connection error. That's expected: copy its URL and paste it back into the terminal.",
+    ssh ? "To post as a separate user (most teams do), log in on the Mac itself, at its screen or over Screen Sharing. A login made over SSH is only seen over SSH, not by what posts the reports." : "To post as a separate user (most teams do):",
+    `  1. ${ssh ? "In a terminal there" : "In another terminal on this machine"}, run: ${switching ? "basecamp auth logout, then " : ""}basecamp auth login --no-browser`,
+    "  2. Open the link it prints in a private window (Incognito). A normal window is probably signed in as you, and would connect your own account.",
+    "  3. Sign in as the separate user. When the page says you're connected, come back here.",
   ]
 }
 
+// Shown with a login confirmed over SSH: it can only be one made over SSH.
+export const SSH_LOGIN_NOTE = "This login was read over SSH, which only sees a login made over SSH. The reports are posted from the Mac's own session, which doesn't see it: log in on the Mac itself too, and the morning digest's Board line will confirm it."
+
+// Reports go to everyone in the chosen project, so it must be one only the team is in.
+export const PROJECT_PROMPT = "Which project's message board? Pick one only your own team is in: everyone in the project can read the reports."
+
 export type LoginCheck =
-  | { state: "confirmed"; who: string }
+  | { state: "confirmed"; who: string; note?: string }
   | { state: "missing"; steps: string[] }
   | { state: "unconfirmed"; steps: string[] }
 
@@ -40,14 +52,17 @@ export type LoginCheck =
 // reach, and where a browser-based login has nowhere to open.
 export const overSsh = (env: Record<string, string | undefined> = process.env) => !!(env.SSH_CONNECTION || env.SSH_TTY)
 
+// Steps are lines to show as they are; "" is a blank line between groups.
 export async function checkLogin(run: BasecampRun = realRun, ssh = overSsh()): Promise<LoginCheck> {
   const login = await boardLogin(run)
-  if (login.state === "ok") return { state: "confirmed", who: login.detail }
+  if (login.state === "ok") return { state: "confirmed", who: login.detail, ...(ssh ? { note: SSH_LOGIN_NOTE } : {}) }
   if (login.state === "missing") return { state: "missing", steps: [`Install the Basecamp CLI: ${BASECAMP_INSTALL}`, `(${BASECAMP_CLI_URL})`] }
-  const why = ssh
-    ? "This is an SSH session, which often can't read the login keychain even when the login is fine."
-    : "A sandboxed shell, such as an agent's, can't read the login keychain even when the login is fine."
-  return { state: "unconfirmed", steps: ["Couldn't confirm the Basecamp login from this session.", why, ...separateUserSteps(ssh), `Or post as yourself: basecamp auth login${ssh ? " --remote" : ""}`] }
+  // Still only "seems": an agent's sandboxed shell gets the same answer when the
+  // login is fine. Over SSH that's common enough to say so.
+  const what = ssh
+    ? "Couldn't confirm the Basecamp login. An SSH session can't read the login keychain, so this proves nothing either way. After logging in on the Mac, enter the project by hand: the morning digest's Board line will confirm the login."
+    : "The Basecamp CLI doesn't seem to be logged in."
+  return { state: "unconfirmed", steps: [what, "", ...separateUserSteps(ssh), "", `Or post as yourself: basecamp auth login${ssh ? ", on the Mac itself" : ""}`] }
 }
 
 export interface BoardProject {
@@ -64,9 +79,11 @@ export async function listProjects(run: BasecampRun = realRun): Promise<BoardPro
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
-export async function listPeople(run: BasecampRun = realRun): Promise<string[]> {
-  const people = await cliJson<{ name: string }[]>(run, ["people", "pingable"])
-  return [...new Set((people ?? []).map((p) => p.name))].sort((a, b) => a.localeCompare(b))
+// Who can be mentioned on a project's posts: its own people, since anyone else
+// can't see the post. Not the posting account, which would only mention itself.
+export async function listPeople(projectId: string, poster: string | null = null, run: BasecampRun = realRun): Promise<string[]> {
+  const people = await cliJson<{ name: string }[]>(run, ["people", "list", "--project", projectId, "--all"])
+  return [...new Set((people ?? []).map((p) => p.name))].filter((n) => n !== poster).sort((a, b) => a.localeCompare(b))
 }
 
 // "12345", or any URL into the project.
