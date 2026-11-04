@@ -97,7 +97,7 @@ basecamp auth login --no-browser
 1. Open the link it prints in a private window (Incognito). In a normal window, you're probably already signed in as yourself, and you'd connect your own account.
 2. Sign in as the separate user. The page then says you're connected, and the terminal finishes the login.
 
-**Not over SSH.** An SSH session can't use the Keychain, so `basecamp auth login --remote` saves its login in a plaintext file, `~/.config/basecamp/credentials.json`, and only SSH sessions read that file. The Mac's own sessions, including the one that posts the reports, don't, so reports would fail even though setup over SSH shows you as logged in. On a headless Mac, log in over Screen Sharing instead. If you've already logged in over SSH, run `basecamp auth logout` over SSH to remove the file.
+**Not over SSH.** An SSH session can't use the Keychain, so `basecamp auth login --remote` saves its login in a plaintext file, `~/.config/basecamp/credentials.json`, and only SSH sessions read that file. The Mac's own sessions, including the one that posts the reports, don't, so reports would fail even though setup over SSH shows you as logged in. On a headless Mac, log in over Screen Sharing instead. If you've already logged in over SSH, run `basecamp auth logout` over SSH to clear the login from that file.
 
 Setup shows the account before you choose a project, so you'll see if the wrong one connected. To change it, run `basecamp auth logout` and log in again.
 
