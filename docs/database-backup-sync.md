@@ -31,16 +31,10 @@ Everything is detected automatically, for Standard WP **and** Bedrock:
 - the **local WordPress root** from the linked path (where `wp` runs — wp-config
   for Standard WP, `wp-cli.yml` for Bedrock),
 - the **local URL** for the rewrite from the link's local URL, falling back to the
-  project's `.env` `WP_HOME`.
+  project's `.env` `WP_HOME`,
+- the **production URLs** to rewrite: production's home URL (`wp option get home`, read over the same SSH connection as the export; on Bedrock that's its `WP_HOME`), plus the SpinupWP domain when the two differ. A site whose domain is `example.com` but whose WordPress home is `https://www.example.com` gets both rewritten. The rewrite covers every table with the site's prefix, plugin tables included (Yoast's indexables, cache and log tables, form entries), not just WordPress's core tables.
 
-If your project already has a `bin/sync.d/post-import.sh` (e.g. Elementor URL
-swaps, plugin toggles), it runs with `WEB_DIR`, `SYNC_REMOTE_HOST`, and
-`SYNC_LOCAL_HOST` set — so existing per-project tweaks carry over with no extra
-configuration. When a project has **no** hook yet, the `p` confirm screen
-explains what the hook is and offers `s` to scaffold an **inert** sample
-`bin/sync.d/post-import.sh` (every example commented out, documented with the env
-vars above) for you to edit. Backups stay **gzipped** in `sql/`; decompress with
-`gunzip` when you need one.
+If your project already has a `bin/sync.d/post-import.sh` (e.g. Elementor URL swaps, plugin toggles), it runs with `WEB_DIR`, `SYNC_REMOTE_HOST` (the host from production's home URL), `SYNC_REMOTE_HOSTS` (every production host that was rewritten, space-separated) and `SYNC_LOCAL_HOST` set, so existing per-project tweaks carry over with no extra configuration. When a project has **no** hook yet, the `p` confirm screen explains what the hook is and offers `s` to scaffold an **inert** sample `bin/sync.d/post-import.sh` (every example commented out, documented with the env vars above) for you to edit. Backups stay **gzipped** in `sql/`; decompress with `gunzip` when you need one.
 
 Both `d` and `p` show their progress as a **building checklist** inside the
 overlay — each step gets a `✓` as it completes, the running step spins, and a

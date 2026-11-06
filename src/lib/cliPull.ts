@@ -80,6 +80,7 @@ export interface PullDbSuccess {
   downloadPath: string
   localBackupPath: string
   ranHook: boolean
+  rewrote: string[] // production origins rewritten to localUrl, canonical first
   warnings?: string[]
 }
 
@@ -337,7 +338,7 @@ export async function runPullDb(
     )
   }
 
-  onStage(`Rewriting ${plan.remoteOrigin} → ${plan.localOrigin}`)
+  onStage(`Rewriting ${plan.remoteOrigin}, and production's home URL if it differs, → ${plan.localOrigin}`)
   if (plan.prefixWarning) onStage(`Warning: ${plan.prefixWarning}`)
   onStage(`A pre-import backup of the local database is written to ${plan.localBackupPath}`)
 
@@ -345,7 +346,7 @@ export async function runPullDb(
   const result = await runDbSync(plan, site.domain, (p) => {
     if (p.stage !== lastStage && p.stage !== "done" && p.stage !== "error") {
       lastStage = p.stage
-      onStage(`${DB_STAGE_LABELS[p.stage]} …`)
+      onStage(p.stage === "replace" && p.rewrote?.length ? `${DB_STAGE_LABELS[p.stage]}: ${p.rewrote.join(", ")} → ${plan.localOrigin} …` : `${DB_STAGE_LABELS[p.stage]} …`)
     }
   })
 
@@ -382,6 +383,7 @@ export async function runPullDb(
     downloadPath: result.downloadPath ?? plan.downloadPath,
     localBackupPath: result.localBackupPath ?? plan.localBackupPath,
     ranHook: result.ranHook === true,
+    rewrote: result.rewrote ?? [plan.remoteOrigin],
     ...(plan.prefixWarning ? { warnings: [plan.prefixWarning] } : {}),
   }
 }
