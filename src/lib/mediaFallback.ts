@@ -12,11 +12,19 @@
 // plugin self-configures from `wp_get_upload_dir()` (correct for Standard WP,
 // Bedrock, and multisite) and self-disables when running on the production
 // domain, so it's inert if ever deployed.
+//
+// The local copy and production can run different stacks: a Standard WP site
+// converted to Bedrock locally, before production is switched, serves uploads
+// from /app/uploads locally and /wp-content/uploads on production. So the
+// plugin is also told production's uploads path (from production's stack) and
+// swaps it in for the local one (#100).
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from "node:fs"
 import { join } from "node:path"
 import type { Site } from "../api/types.ts"
 import { expandPath, findProjectRoot, type LocalLink } from "./local.ts"
+import type { ProbeKind } from "./probe.ts"
+import { effectiveStack, type Stack } from "./stack.ts"
 
 const PLUGIN_FILE = "spinup-media-fallback.php"
 // Identifies a plugin WE generated, so we never touch a user's own file.
@@ -24,14 +32,24 @@ const MARKER = "spinup:media-fallback"
 // Bumped whenever the generated PHP changes; an installed file older than this
 // surfaces an "update available" prompt in the overlay. A file carrying our
 // marker but no version tag predates versioning and counts as v1.
-const PLUGIN_VERSION = 2
+const PLUGIN_VERSION = 3
+
+// Where each WordPress stack serves uploads from, as a URL path. Non-WP has none.
+const UPLOADS_PATH: Partial<Record<Stack, string>> = {
+  "Standard WP": "/wp-content/uploads",
+  Bedrock: "/app/uploads",
+  Radicle: "/content/uploads",
+}
 
 export interface MediaFallbackPlan {
   localRoot: string // where the local WordPress install lives
   muDir: string // the mu-plugins dir (created on enable)
   pluginPath: string // muDir/spinup-media-fallback.php
   prodOrigin: string // https://prod-domain — the fallback source
-  stack: "bedrock" | "standard"
+  stack: "bedrock" | "standard" // the LOCAL copy's stack
+  localUploadsPath: string // e.g. /app/uploads
+  prodStack: Stack
+  prodUploadsPath: string | null // production's uploads URL path; null when unknown (Non-WP)
   enabled: boolean // our plugin currently present
   version: number // the version this build would write
   installedVersion: number | null // version on disk, or null when not installed
@@ -66,7 +84,9 @@ function installedVersion(pluginPath: string): number | null {
   }
 }
 
-export function planMediaFallback(site: Site, link: LocalLink | undefined): MediaFallbackResult {
+// `probeKind` is the site's cached Tier-2 probe, when there is one; without it
+// production's stack comes from the Tier-1 heuristic (public_folder).
+export function planMediaFallback(site: Site, link: LocalLink | undefined, probeKind?: ProbeKind | null): MediaFallbackResult {
   if (!link) return { ok: false, error: "Not linked — press L to link a local copy first." }
   const dir = expandPath(link.path)
   if (!existsSync(dir)) return { ok: false, error: "Local path is missing — press L to fix the link." }
@@ -75,6 +95,7 @@ export function planMediaFallback(site: Site, link: LocalLink | undefined): Medi
   const { dir: muDir, stack } = contentMuDir(localRoot)
   const pluginPath = join(muDir, PLUGIN_FILE)
   const prodOrigin = `${site.https?.enabled ? "https" : "http"}://${site.domain}`
+  const prodStack = effectiveStack(site, probeKind)
   const iv = installedVersion(pluginPath)
   return {
     ok: true,
@@ -84,6 +105,9 @@ export function planMediaFallback(site: Site, link: LocalLink | undefined): Medi
       pluginPath,
       prodOrigin,
       stack,
+      localUploadsPath: stack === "bedrock" ? "/app/uploads" : "/wp-content/uploads",
+      prodStack,
+      prodUploadsPath: UPLOADS_PATH[prodStack] ?? null,
       enabled: iv !== null,
       version: PLUGIN_VERSION,
       installedVersion: iv,
@@ -95,7 +119,7 @@ export function planMediaFallback(site: Site, link: LocalLink | undefined): Medi
 // Write (or refresh) the mu-plugin. Idempotent; safe to call repeatedly.
 export function enableMediaFallback(plan: MediaFallbackPlan): void {
   mkdirSync(plan.muDir, { recursive: true })
-  writeFileSync(plan.pluginPath, pluginSource(plan.prodOrigin))
+  writeFileSync(plan.pluginPath, pluginSource(plan.prodOrigin, plan.prodUploadsPath ?? ""))
 }
 
 // Remove the mu-plugin — but only if it's the one we generated.
@@ -104,8 +128,9 @@ export function disableMediaFallback(plan: MediaFallbackPlan): void {
 }
 
 // The generated mu-plugin. String.raw keeps PHP backslashes (regex) intact; the
-// only interpolation is the production origin. The marker comment must survive.
-function pluginSource(origin: string): string {
+// only interpolations are the production origin and uploads path. The marker
+// comment must survive. Exported for tests.
+export function pluginSource(origin: string, uploadsPath: string): string {
   return String.raw`<?php
 /**
  * Plugin Name: Spinup Media Fallback (local dev)
@@ -125,6 +150,30 @@ if (!defined('ABSPATH')) {
 
 if (!defined('SPINUP_MEDIA_FALLBACK_ORIGIN')) {
     define('SPINUP_MEDIA_FALLBACK_ORIGIN', '${origin}');
+}
+
+// Production's uploads URL path. Empty means "same as local".
+if (!defined('SPINUP_MEDIA_FALLBACK_UPLOADS_PATH')) {
+    define('SPINUP_MEDIA_FALLBACK_UPLOADS_PATH', '${uploadsPath}');
+}
+
+/**
+ * Map a local URL path to the path production serves it from. When production
+ * keeps uploads somewhere else (Standard WP in production, Bedrock locally:
+ * /wp-content/uploads vs /app/uploads), swap the local uploads root for
+ * production's. Anything outside the local uploads root passes through as is.
+ */
+function spinup_mf_prod_path($path) {
+    static $roots = null;
+    if ($roots === null) {
+        $prod = rtrim((string) SPINUP_MEDIA_FALLBACK_UPLOADS_PATH, '/');
+        $local = rtrim((string) parse_url(content_url('uploads'), PHP_URL_PATH), '/');
+        $roots = ($prod !== '' && $local !== '' && $prod !== $local) ? array($local, $prod) : false;
+    }
+    if ($roots && ($path === $roots[0] || strpos($path, $roots[0] . '/') === 0)) {
+        return $roots[1] . substr($path, strlen($roots[0]));
+    }
+    return $path;
 }
 
 /**
@@ -167,7 +216,7 @@ function spinup_mf_base() {
     $base_url = rtrim($u['baseurl'], '/');
     $base_dir = rtrim($u['basedir'], '/');
     $path = parse_url($base_url, PHP_URL_PATH);
-    $prod_base = rtrim(SPINUP_MEDIA_FALLBACK_ORIGIN, '/') . $path;
+    $prod_base = rtrim(SPINUP_MEDIA_FALLBACK_ORIGIN, '/') . spinup_mf_prod_path($path);
     $cache = array($base_url, $base_dir, $prod_base);
     return $cache;
 }
@@ -231,7 +280,7 @@ function spinup_mf_map_path($path) {
     if ($root !== '' && @file_exists($root . $path)) {
         return null; // present locally — leave it
     }
-    return rtrim(SPINUP_MEDIA_FALLBACK_ORIGIN, '/') . $path;
+    return rtrim(SPINUP_MEDIA_FALLBACK_ORIGIN, '/') . spinup_mf_prod_path($path);
 }
 
 // Front-end catch-all: rewrite any local-origin media URL in the final HTML whose

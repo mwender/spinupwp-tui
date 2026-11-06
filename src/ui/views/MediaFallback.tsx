@@ -105,8 +105,8 @@ export function MediaFallback() {
                 <Sparkle />
                 <text content={`  Newer missing-images plugin ready (v${plan.installedVersion} → v${plan.version}).`} fg={theme.text} wrapMode="none" />
               </box>
-              <text content="Now covers legacy /wp-content/uploads paths, CDN/S3" fg={theme.textDim} wrapMode="none" />
-              <text content="redirects, and Elementor gallery URLs." fg={theme.textDim} wrapMode="none" />
+              <text content="Now finds production's images when it runs a different" fg={theme.textDim} wrapMode="none" />
+              <text content="stack from this copy (e.g. Standard WP → Bedrock)." fg={theme.textDim} wrapMode="none" />
               <box style={{ flexDirection: "row" }}>
                 <text content="Press " fg={theme.textDim} />
                 <text content="u" fg={theme.brand} />
@@ -120,8 +120,11 @@ export function MediaFallback() {
           <box style={{ flexDirection: "row" }}>
             <text content="source " fg={theme.textFaint} />
             <text content={plan.prodOrigin} fg={theme.accent} wrapMode="none" />
-            <text content={`  (${plan.stack === "bedrock" ? "Bedrock" : "Standard WP"})`} fg={theme.textFaint} wrapMode="none" />
+            <text content={`  (${plan.prodStack})`} fg={theme.textFaint} wrapMode="none" />
           </box>
+          {plan.prodUploadsPath && plan.prodUploadsPath !== plan.localUploadsPath ? (
+            <text content={`uploads ${plan.localUploadsPath} → ${plan.prodUploadsPath}`} fg={theme.textFaint} wrapMode="none" />
+          ) : null}
           <text content="plugin" fg={theme.textFaint} />
           <DestPath path={plan.pluginPath} fileColor={plan.enabled ? theme.good : theme.textDim} width={64} />
           <box style={{ height: 1 }} />
