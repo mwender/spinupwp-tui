@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Fixed
+- **Uptime Kuma connects through proxies that block WebSockets, and says why when it can't.** SpinupTUI only ever tried a WebSocket, so a reverse proxy or CDN in front of Kuma that doesn't pass WebSocket upgrades failed the connection, even though Kuma also answers over HTTP long-polling. It now tries polling when the WebSocket fails. When both fail, the error gives each one's real reason (e.g. `Expected 101 status code (WebSocket); HTTP 404 (polling)`) instead of a bare `websocket error`.
+
 ## [1.2.1] - 2026-10-27
 
 ### Fixed

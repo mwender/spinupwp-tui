@@ -68,18 +68,25 @@ const ACK_TIMEOUT_MS = 15_000
 const CONNECT_TIMEOUT_MS = 10_000
 
 // engine.io wraps most transport failures in a TransportError whose `.message`
-// is a fixed literal ("websocket error") with the real reason tucked away in
-// `.description`; a few failure modes (a WebSocket constructor throwing
-// synchronously — seen from Bun's net/tls shim on cert issues) skip that
-// wrapper and hand us a bare Error whose `.message` can be empty. Walk every
-// place a reason might live rather than trusting `.message` alone, so a
-// connect failure never renders as a bare trailing colon.
-function describeConnectError(e: unknown): string {
+// is a fixed literal ("websocket error", "xhr poll error") that says nothing on
+// its own. The real reason is in `.description`: under Bun, the WebSocket
+// transport puts an ErrorEvent there ("WebSocket connection to 'wss://…'
+// failed: Expected 101 status code"), and the polling transport puts the HTTP
+// status (0 when nothing answered). A few failure modes (a WebSocket
+// constructor throwing synchronously, seen from Bun's net/tls shim on cert
+// issues) skip that wrapper and hand us a bare Error whose `.message` can be
+// empty. Prefer the description, then fall back through the other places a
+// reason might live, so a connect failure never renders as a bare "websocket
+// error" or a trailing colon (#75).
+export function describeConnectError(e: unknown): string {
   const err = e as { message?: string; description?: unknown; code?: string } | undefined
+  const desc = err?.description as { message?: unknown } | number | string | undefined
+  if (typeof desc === "number") return desc === 0 ? "no response" : `HTTP ${desc}`
+  const descMsg = typeof desc === "string" ? desc : typeof desc?.message === "string" ? desc.message : ""
+  // Drop Bun's "WebSocket connection to '<url>' failed: " lead-in; the URL is
+  // already in the surrounding message.
+  if (descMsg) return descMsg.replace(/^WebSocket connection to '[^']*' failed:\s*/, "")
   if (err?.message) return err.message
-  const desc = err?.description
-  if (desc instanceof Error && desc.message) return desc.message
-  if (typeof desc === "string" && desc) return desc
   if (err?.code) return err.code
   return String(e)
 }
@@ -172,27 +179,44 @@ export class KumaClient {
 
   static async connect(url: string): Promise<KumaClient> {
     const base = url.replace(/\/+$/, "")
-    // Polling as a fallback (not websocket-only): a reverse proxy/CDN in front of
-    // Kuma that doesn't forward the WebSocket Upgrade headers otherwise hard-fails
-    // the connection outright instead of degrading gracefully.
-    const socket = io(base, { transports: ["websocket", "polling"], reconnection: false, timeout: CONNECT_TIMEOUT_MS })
+    // WebSocket first, then long-polling as a separate attempt. A reverse
+    // proxy or CDN in front of Kuma that doesn't forward the WebSocket Upgrade
+    // headers fails the first attempt; Kuma also accepts polling, so the
+    // second one gets through. (Listing both transports in one `io()` call
+    // doesn't do this: engine.io only moves on to the next transport with
+    // `tryAllTransports`, and then reports only the last transport's error.)
+    // When both fail, the error names both reasons.
+    // A proxy can also swallow the Upgrade and hang, so polling gets its turn
+    // after a WebSocket timeout too.
+    const ws = await KumaClient.attempt(base, "websocket")
+    if (ws.ok) return ws.client
+    const poll = await KumaClient.attempt(base, "polling")
+    if (poll.ok) return poll.client
+    if (ws.timedOut && poll.timedOut) throw new KumaError(`Timed out reaching ${base} — is that the right URL?`)
+    throw new KumaError(`Couldn't reach Uptime Kuma at ${base}: ${ws.reason} (WebSocket); ${poll.reason} (polling)`)
+  }
+
+  private static attempt(
+    base: string,
+    transport: "websocket" | "polling",
+  ): Promise<{ ok: true; client: KumaClient } | { ok: false; reason: string; timedOut: boolean }> {
+    const socket = io(base, { transports: [transport], reconnection: false, timeout: CONNECT_TIMEOUT_MS })
     const client = new KumaClient(socket)
-    await new Promise<void>((resolve, reject) => {
+    return new Promise((resolve) => {
       const t = setTimeout(() => {
         socket.disconnect()
-        reject(new KumaError(`Timed out reaching ${base} — is that the right URL?`))
+        resolve({ ok: false, reason: "timed out", timedOut: true })
       }, CONNECT_TIMEOUT_MS)
       socket.once("connect", () => {
         clearTimeout(t)
-        resolve()
+        resolve({ ok: true, client })
       })
       socket.once("connect_error", (e: Error) => {
         clearTimeout(t)
         socket.disconnect()
-        reject(new KumaError(`Couldn't reach Uptime Kuma at ${base}: ${describeConnectError(e)}`))
+        resolve({ ok: false, reason: describeConnectError(e), timedOut: false })
       })
     })
-    return client
   }
 
   disconnect(): void {
