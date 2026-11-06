@@ -2328,7 +2328,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [servers, localLinks],
   )
 
-  const planMediaFallbackFor = useCallback((site: Site): MediaFallbackResult => planMediaFallback(site, localLinks.get(site.id)), [localLinks])
+  const planMediaFallbackFor = useCallback(
+    (site: Site): MediaFallbackResult => planMediaFallback(site, localLinks.get(site.id), probes.get(site.id)?.result.kind),
+    [localLinks, probes],
+  )
 
   const startDbSync = useCallback(
     (site: Site) => {

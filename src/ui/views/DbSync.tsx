@@ -204,6 +204,7 @@ export function DbSync() {
             <box style={{ height: 1 }} />
             <text content="rewrite URLs" fg={theme.textFaint} />
             <text content={`  ${plan ? middleTruncate(`${plan.remoteOrigin} → ${plan.localOrigin}`, 64) : "—"}`} fg={theme.textDim} wrapMode="none" />
+            <text content="  and production's home URL too, if it differs (e.g. www.)" fg={theme.textFaint} wrapMode="none" />
             {renderHookSection()}
             {plan?.prefixWarning ? (
               <>
@@ -259,6 +260,14 @@ export function DbSync() {
               {progress?.downloadPath ? <DestPath path={progress.downloadPath} fileColor={theme.accent} width={62} /> : null}
               <text content="local DB backup" fg={theme.textFaint} />
               {progress?.localBackupPath ? <DestPath path={progress.localBackupPath} fileColor={theme.textDim} width={62} /> : null}
+              {progress?.rewrote?.length ? (
+                <>
+                  <text content="URLs rewritten" fg={theme.textFaint} />
+                  {progress.rewrote.map((o) => (
+                    <text key={o} content={`  ${middleTruncate(`${o} → ${plan?.localOrigin ?? "local"}`, 62)}`} fg={theme.textDim} wrapMode="none" />
+                  ))}
+                </>
+              ) : null}
               <box style={{ height: 1 }} />
               {mediaFallbackEnabled ? (
                 <text content="✓ Missing images load from production (media fallback on)." fg={theme.textFaint} wrapMode="none" />

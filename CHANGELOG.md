@@ -19,6 +19,14 @@ version; such changes are called out here.
 - **Scheduler jobs and Sentinel's posts find tools in `~/bin`.** The Basecamp installer puts its CLI there when `~/bin` is on your PATH, and an unattended run couldn't see it, so every post would have failed with the CLI "missing".
 - **Sentinel's summary and follow-up pages now name the site the diagnosis blamed.** They used the domain of the monitor that paged, so a fatal caught on a server's vanity host was summarized under that host while the report was filed under the real site. When the two differ, the page names both: `🧾 example.com (paged as web1.example.net): …`.
 
+## [1.2.2] - 2026-11-06
+
+### Fixed
+- **Uptime Kuma connects through proxies that block WebSockets, and says why when it can't.** SpinupTUI only ever tried a WebSocket, so a reverse proxy or CDN in front of Kuma that doesn't pass WebSocket upgrades failed the connection, even though Kuma also answers over HTTP long-polling. It now tries polling when the WebSocket fails. When both fail, the error gives each one's real reason (e.g. `Expected 101 status code (WebSocket); HTTP 404 (polling)`) instead of a bare `websocket error`.
+- **`pull db` rewrites a `www.` site's URLs.** The rewrite started from the SpinupWP domain, so a site whose domain is `example.com` but whose WordPress home is `https://www.example.com` kept every `www.` URL pointing at production, while every step reported success. The pull now reads production's home URL over the same SSH connection as the export and rewrites it as well as the domain. A post-import hook's `SYNC_REMOTE_HOST` is now the home URL's host, and the new `SYNC_REMOTE_HOSTS` lists every host that was rewritten.
+- **`pull db` rewrites URLs in plugin tables too.** wp-cli's `search-replace` only covers WordPress's core tables unless told otherwise, so Yoast's indexables (the local canonical and schema URLs), cache and log tables, and form entries kept production URLs. The rewrite now covers every table with the site's prefix.
+- **The production media fallback (`m`) works when production runs a different stack.** It built production image URLs from the local copy's uploads path, so a Standard WP site converted to Bedrock locally pointed every missing image at `/app/uploads` on production, which 404s there, while the dialog reported it as on. The plugin (now v3) maps the local uploads path to production's, worked out from production's stack. The dialog shows the mapping when they differ, and its source line now names production's stack rather than the local one. Press `u` to update an installed plugin.
+
 ## [1.3.0-alpha.9] - 2026-11-02
 
 A pre-release, published on npm's `next` tag (`bun add -g spinuptui@next --no-cache`). `@latest` and Homebrew are on 1.2.1.
@@ -1603,6 +1611,7 @@ Initial tagged release.
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
 [Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.9...HEAD
+[1.2.2]: https://github.com/mwender/spinupwp-tui/compare/v1.2.1...v1.2.2
 [1.3.0-alpha.9]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.8...v1.3.0-alpha.9
 [1.3.0-alpha.8]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.7...v1.3.0-alpha.8
 [1.3.0-alpha.7]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0-alpha.6...v1.3.0-alpha.7
