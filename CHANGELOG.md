@@ -11,6 +11,8 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-11-06
+
 ### Fixed
 - **Uptime Kuma connects through proxies that block WebSockets, and says why when it can't.** SpinupTUI only ever tried a WebSocket, so a reverse proxy or CDN in front of Kuma that doesn't pass WebSocket upgrades failed the connection, even though Kuma also answers over HTTP long-polling. It now tries polling when the WebSocket fails. When both fail, the error gives each one's real reason (e.g. `Expected 101 status code (WebSocket); HTTP 404 (polling)`) instead of a bare `websocket error`.
 - **`pull db` rewrites a `www.` site's URLs.** The rewrite started from the SpinupWP domain, so a site whose domain is `example.com` but whose WordPress home is `https://www.example.com` kept every `www.` URL pointing at production, while every step reported success. The pull now reads production's home URL over the same SSH connection as the export and rewrites it as well as the domain. A post-import hook's `SYNC_REMOTE_HOST` is now the home URL's host, and the new `SYNC_REMOTE_HOSTS` lists every host that was rewritten.
@@ -1502,7 +1504,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/mwender/spinupwp-tui/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/mwender/spinupwp-tui/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/mwender/spinupwp-tui/compare/v1.1.1...v1.1.2
