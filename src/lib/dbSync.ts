@@ -11,6 +11,11 @@
 // runs an existing bin/sync.d/post-import.sh hook with the same WEB_DIR /
 // SYNC_REMOTE_HOST / SYNC_LOCAL_HOST env contract as the sync-prod-to-local
 // script, so per-project tweaks (Elementor URL swaps, plugin toggles) carry over.
+//
+// The URL rewrite starts from production's own home URL, read over SSH during
+// the export, not from the SpinupWP domain alone: a site whose domain is
+// example.com but whose WordPress home is https://www.example.com would
+// otherwise keep every www URL pointing at production (#95).
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from "node:fs"
 import { join, dirname } from "node:path"
@@ -44,23 +49,53 @@ function hostOf(url: string): string {
   return url.replace(/^[a-z]+:\/\//i, "").replace(/\/.*$/, "").trim()
 }
 
+// Which production origins to rewrite, given the SpinupWP domain's origin and
+// production's home URL (`wp option get home`; on Bedrock that resolves the
+// WP_HOME constant, so it's the canonical URL). The canonical origin comes
+// first and its host is the one hooks get as SYNC_REMOTE_HOST; the domain's own
+// origin is kept too when it differs, so links in either form are rewritten.
+// An unreadable or non-http(s) home falls back to the domain alone, which is
+// what every pull did before.
+export function rewriteSources(siteOrigin: string, homeUrl: string | null): { origins: string[]; host: string } {
+  let canonical: string | null = null
+  try {
+    const u = new URL((homeUrl ?? "").trim())
+    if (u.protocol === "https:" || u.protocol === "http:") canonical = u.origin
+  } catch {
+    /* not a URL — fall back below */
+  }
+  if (!canonical || canonical === siteOrigin) return { origins: [siteOrigin], host: hostOf(siteOrigin) }
+  return { origins: [canonical, siteOrigin], host: hostOf(canonical) }
+}
+
+// The export prints production's home URL on a line of its own, after the dump.
+const HOME_MARK = "SPINUP_HOME="
+export function parseRemoteHome(stdout: string): string | null {
+  const line = stdout.split("\n").find((l) => l.startsWith(HOME_MARK))
+  return line ? line.slice(HOME_MARK.length).trim() || null : null
+}
+
 // An INERT starter post-import hook. Every real command is commented out and the
 // only live line is an echo, so scaffolding-then-pulling can't surprise anyone —
 // the user uncomments what they want deliberately. The comments document the env
-// contract (WEB_DIR / SYNC_REMOTE_HOST / SYNC_LOCAL_HOST, see runDbSync) and the
+// contract (WEB_DIR / SYNC_REMOTE_HOST(S) / SYNC_LOCAL_HOST, see runDbSync) and the
 // real-world tweaks (Elementor URL swaps, plugin toggles) the hook exists for.
 const SAMPLE_HOOK = `#!/usr/bin/env bash
 set -euo pipefail
 # Runs after Spinup pulls production → local (DB imported, URLs rewritten).
 # Spinup exports these for you:
 #   WEB_DIR           local project root (this script starts here)
-#   SYNC_REMOTE_HOST  production host, e.g. example.com
-#   SYNC_LOCAL_HOST   local host,      e.g. example.test
+#   SYNC_REMOTE_HOST   production host from its home URL, e.g. www.example.com
+#   SYNC_REMOTE_HOSTS  every production host whose URLs were rewritten,
+#                      space-separated, e.g. "www.example.com example.com"
+#   SYNC_LOCAL_HOST    local host, e.g. example.test
 cd "$WEB_DIR"
 
 # --- Examples — uncomment what your project needs ----------------------
 # Elementor stores absolute URLs in serialized data; rewrite + reflush:
-# wp elementor replace_urls "https://$SYNC_REMOTE_HOST" "https://$SYNC_LOCAL_HOST"
+# for host in $SYNC_REMOTE_HOSTS; do
+#   wp elementor replace_urls "https://$host" "https://$SYNC_LOCAL_HOST"
+# done
 # wp elementor flush_css
 #
 # Turn off prod-only plugins locally (keep non-fatal with || true):
@@ -93,9 +128,9 @@ export interface DbSyncPlan {
   sqlDir: string // localRoot/sql
   downloadPath: string // sqlDir/<base>.sql.gz — the prod dump, kept as a backup
   localBackupPath: string // sqlDir/local_<ts>.sql.gz — pre-import safety dump
-  remoteOrigin: string // https://prod-domain (rewritten from)
+  remoteOrigin: string // https://prod-domain (rewritten from; production's home URL is added at run time, see rewriteSources)
   localOrigin: string // local URL as entered (rewritten to)
-  remoteHost: string // bare prod host (hook env)
+  remoteHost: string // bare prod host (hook env, until production's home URL is known)
   localHost: string // bare local host (hook env)
   hookPath: string | null // bin/sync.d/post-import.sh, if present
   prefixWarning: string | null // set when remote/local table prefixes differ
@@ -175,6 +210,7 @@ export interface DbSyncProgress {
   downloadPath?: string
   localBackupPath?: string
   ranHook?: boolean
+  rewrote?: string[] // production origins rewritten to local, canonical first (set from the replace stage on)
   error?: string
   failedStage?: DbSyncStage // which step broke, so the UI can mark it ✕
 }
@@ -240,10 +276,14 @@ export async function runDbSync(plan: DbSyncPlan, domain: string, onProgress: (p
   // 2) Export prod + download the gzip (same remote pipeline as the backup).
   onProgress({ stage: "export", domain })
   const sql = plan.remoteGz.replace(/\.gz$/, "")
+  // The same connection also reads production's home URL (best-effort: a
+  // failure there leaves the line empty and the rewrite falls back to the domain).
   const remoteScript =
-    `set -e; cd '${plan.docroot}'; wp db export "$HOME/${sql}" --single-transaction >/dev/null; gzip -f "$HOME/${sql}"`
+    `set -e; cd '${plan.docroot}'; wp db export "$HOME/${sql}" --single-transaction >/dev/null; gzip -f "$HOME/${sql}"; ` +
+    `printf '%s\\n' "${HOME_MARK}$(wp option get home 2>/dev/null || true)"`
   const exp = await runProcess(["ssh", ...SSH_OPTS, ...sshPort(plan.port), target, remoteScript], 300_000)
   if (exp.code !== 0) return stageFail("Remote export failed", exp.stderr, `ssh exit ${exp.code}.`, "export")
+  const sources = rewriteSources(plan.remoteOrigin, parseRemoteHome(exp.stdout))
 
   onProgress({ stage: "download", domain })
   const dl = await runProcess(["scp", ...SSH_OPTS, ...scpPort(plan.port), `${target}:${plan.remoteGz}`, plan.downloadPath], 300_000)
@@ -259,21 +299,34 @@ export async function runDbSync(plan: DbSyncPlan, domain: string, onProgress: (p
   if (imp.code !== 0) return stageFail("Local import failed", imp.stderr, "wp db cli error.", "import")
 
   // 4) Rewrite production URLs → local URLs.
-  onProgress({ stage: "replace", domain })
-  const sr = await wp(`wp search-replace "${plan.remoteOrigin}" "${plan.localOrigin}" --skip-columns=guid --format=count`, 300_000)
-  if (sr.code !== 0) return stageFail("URL search-replace failed", sr.stderr, "wp search-replace error.", "replace")
+  onProgress({ stage: "replace", domain, rewrote: sources.origins })
+  // --all-tables-with-prefix: wp-cli otherwise searches only the tables
+  // registered with $wpdb (core), skipping plugin tables that hold URLs too:
+  // Yoast's indexables (its canonical and schema URLs), WP Rocket, Redirection,
+  // form entries. Prefix-scoped, so another install sharing the database is
+  // left alone.
+  for (const origin of sources.origins) {
+    const sr = await wp(`wp search-replace "${origin}" "${plan.localOrigin}" --skip-columns=guid --all-tables-with-prefix --format=count`, 600_000)
+    if (sr.code !== 0) return stageFail("URL search-replace failed", sr.stderr, "wp search-replace error.", "replace")
+  }
 
   // 5) Optional per-project post-import hook (Elementor swaps, plugin toggles, …).
   let ranHook = false
   if (plan.hookPath) {
-    onProgress({ stage: "hook", domain })
-    const env = { ...process.env, WEB_DIR: plan.localRoot, SYNC_REMOTE_HOST: plan.remoteHost, SYNC_LOCAL_HOST: plan.localHost } as Record<string, string>
+    onProgress({ stage: "hook", domain, rewrote: sources.origins })
+    const env = {
+      ...process.env,
+      WEB_DIR: plan.localRoot,
+      SYNC_REMOTE_HOST: sources.host,
+      SYNC_REMOTE_HOSTS: sources.origins.map(hostOf).join(" "),
+      SYNC_LOCAL_HOST: plan.localHost,
+    } as Record<string, string>
     const hk = await runProcess(["bash", plan.hookPath], 300_000, plan.localRoot, env)
     if (hk.code !== 0) return stageFail("Post-import hook failed", hk.stderr, "hook script error.", "hook")
     ranHook = true
   }
 
-  const done: DbSyncProgress = { stage: "done", domain, downloadPath: plan.downloadPath, localBackupPath: plan.localBackupPath, ranHook }
+  const done: DbSyncProgress = { stage: "done", domain, downloadPath: plan.downloadPath, localBackupPath: plan.localBackupPath, ranHook, rewrote: sources.origins }
   onProgress(done)
   return done
 }
