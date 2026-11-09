@@ -12,6 +12,7 @@ version; such changes are called out here.
 ## [Unreleased]
 
 ### Fixed
+- **A reboot's Uptime Kuma maintenance window now ends by itself after 30 minutes.** It used to stay open until SpinupTUI deleted it when the reboot finished. Quitting the app mid-reboot, or a failed delete, left the server's monitors in Maintenance indefinitely, so they wouldn't alert. SpinupTUI still closes the window as soon as the reboot is done. Windows already left behind by earlier versions have to be deleted in Kuma (Maintenance page).
 - **Basecamp setup's login steps match what actually happens.** A `--no-browser` login finishes on a success page, with nothing to paste back. The steps are numbered, and a terminal that isn't logged in is no longer told it might be a sandboxed shell.
 - **Setup over SSH no longer recommends `basecamp auth login --remote`.** Without the Keychain, that login is saved to a plaintext file that only SSH sessions read, so setup looked fine while every report failed to post. Setup now says to log in on the Mac itself (Screen Sharing works), and flags a login it can only see over SSH.
 - **The @-mention list shows only the chosen project's people,** not everyone in the Basecamp account, and leaves out the account that posts.

@@ -379,6 +379,33 @@ export class KumaClient {
     return res.maintenanceID
   }
 
+  // One-time ("single") maintenance: active from now for `minutes`, then over on
+  // its own. Kuma checks the end time live on every beat, so the window ends even
+  // if nothing ever deletes it — the safety net for windows a crashed or closed
+  // caller can't clean up. Times are sent in UTC with the window's zone set to UTC.
+  async addTimedMaintenance(title: string, description: string, minutes: number): Promise<number> {
+    const fmt = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ")
+    const start = new Date()
+    const end = new Date(start.getTime() + minutes * 60_000)
+    const res = await this.must("addMaintenance", {
+      title,
+      description,
+      strategy: "single",
+      active: true,
+      intervalDay: 1,
+      dateRange: [fmt(start), fmt(end)],
+      timeRange: [
+        { hours: 0, minutes: 0 },
+        { hours: 0, minutes: 0 },
+      ],
+      weekdays: [],
+      daysOfMonth: [],
+      timezoneOption: "UTC",
+    })
+    if (typeof res.maintenanceID !== "number") throw new KumaError("Kuma didn't return the maintenance id.")
+    return res.maintenanceID
+  }
+
   async setMaintenanceMonitors(maintenanceID: number, monitorIds: number[]): Promise<void> {
     await this.must(
       "addMonitorMaintenance",

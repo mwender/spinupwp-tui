@@ -75,6 +75,8 @@ export interface PhpUpgradeProgress {
 const UPGRADE_DONE = "deployed"
 const UPGRADE_FAIL = "failed"
 const UPGRADE_POLL_MS = 2500
+// How long a reboot's Kuma maintenance window lasts if nothing deletes it first.
+const REBOOT_WINDOW_MINUTES = 30
 // Kuma status refresh — its monitors beat at 60s, so faster polling buys nothing.
 const KUMA_POLL_MS = 60_000
 
@@ -1667,9 +1669,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const run = async () => {
         setOp(server.id, { kind, label, status: "queued" })
 
-        // Reboot only: shield this server's Kuma monitors behind a manual
-        // maintenance window so the planned outage never pages. Best-effort in
-        // both directions — Kuma being unreachable must never block a reboot.
+        // Reboot only: shield this server's Kuma monitors behind a maintenance
+        // window so the planned outage never pages. Best-effort in both
+        // directions — Kuma being unreachable must never block a reboot. The
+        // window ends by itself after REBOOT_WINDOW_MINUTES, so one this process
+        // never gets to delete (app quit mid-reboot, delete failed) can't silence
+        // the server's monitors indefinitely.
         let kumaMaintId: number | null = null
         const kumaConn = isDevMode() ? null : cfgRef.current.uptimeKuma
         if (kind === "reboot" && kumaConn) {
@@ -1683,7 +1688,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (monitorIds.length) {
             try {
               const { result } = await withKuma(kumaConn, async (kuma) => {
-                const id = await kuma.addManualMaintenance(`Reboot ${server.name}`, "Planned reboot fired from SpinupTUI")
+                const id = await kuma.addTimedMaintenance(`Reboot ${server.name}`, "Planned reboot fired from SpinupTUI. Ends by itself after 30 minutes.", REBOOT_WINDOW_MINUTES)
                 try {
                   await kuma.setMaintenanceMonitors(id, monitorIds)
                 } catch (err) {
@@ -1705,7 +1710,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const id = kumaMaintId
           kumaMaintId = null
           withKuma(kumaConn, (kuma) => kuma.deleteMaintenance(id)).catch(() => {
-            // Stale window left behind in Kuma — visible + deletable there.
+            // Left behind in Kuma, but it ends by itself on schedule.
           })
         }
 
