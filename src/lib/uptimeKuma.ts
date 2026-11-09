@@ -421,14 +421,17 @@ export class KumaClient {
 
 // Standard payloads for the two monitors Spinup creates per vanity site. Kuma's
 // `add` handler tolerates missing columns, but we send what its own UI sends so
-// the rows are indistinguishable from hand-made ones.
-export function healthMonitorPayload(name: string, url: string): Record<string, unknown> {
+// the rows are indistinguishable from hand-made ones. `interval` is the health
+// check's window in seconds (the user's choice, default 1 min); retries stay at
+// 60s so a suspect site is confirmed quickly whatever the window.
+export const DEFAULT_HEALTH_INTERVAL = 60
+export function healthMonitorPayload(name: string, url: string, interval = DEFAULT_HEALTH_INTERVAL): Record<string, unknown> {
   return {
     type: "http",
     name,
     url,
     method: "GET",
-    interval: 60,
+    interval,
     retryInterval: 60,
     resendInterval: 0,
     maxretries: 2, // ride out a brief load spike before alerting
@@ -601,12 +604,18 @@ export async function registerBypassMonitor(
 //   - Same-named monitors are adopted rather than duplicated; an adopted push
 //     monitor keeps its own token so the cron feeds the right one.
 //   - The two creates are independent acks — run them in parallel.
+//   - `healthInterval` sets a NEW health monitor's window. An existing one keeps
+//     whatever window it has (it may have been changed by hand in Kuma) unless
+//     `retimeHealth` is set, i.e. the user just picked one: then it's edited in
+//     place, so its history and notification wiring survive.
 export async function registerMonitors(
   kuma: KumaClient,
   domain: string,
   opts: {
     proto: "http" | "https"
     healthzPath: string
+    healthInterval?: number
+    retimeHealth?: boolean
     wantPush: boolean
     wantRedis?: boolean
     wantFatal?: boolean
@@ -615,6 +624,7 @@ export async function registerMonitors(
   },
 ): Promise<{
   healthId: number
+  healthInterval?: number // the window this call set (created or retimed); unset = left as Kuma had it
   pushId?: number
   pushToken?: string
   redisId?: number
@@ -643,8 +653,22 @@ export async function registerMonitors(
   const existingFatal = opts.wantFatal && live(known.fatalId) == null ? byName.get(`${domain} php-fatal`) : undefined
   if (existingFatal?.pushToken) fatalToken = existingFatal.pushToken
 
+  const interval = opts.healthInterval ?? DEFAULT_HEALTH_INTERVAL
+  let healthInterval: number | undefined
   const [healthId, pushId, redisId, fatalId] = await Promise.all([
-    (async () => live(known.healthId) ?? byName.get(domain)?.id ?? (await kuma.addMonitor(healthMonitorPayload(domain, `${opts.proto}://${domain}${opts.healthzPath}`))))(),
+    (async () => {
+      const existing = live(known.healthId) ?? byName.get(domain)?.id
+      if (existing == null) {
+        healthInterval = interval
+        return kuma.addMonitor(healthMonitorPayload(domain, `${opts.proto}://${domain}${opts.healthzPath}`, interval))
+      }
+      if (opts.retimeHealth) {
+        const full = await kuma.getMonitor(existing)
+        if (full.interval !== interval) await kuma.editMonitor({ ...full, interval })
+        healthInterval = interval
+      }
+      return existing
+    })(),
     (async () => {
       if (!opts.wantPush) return undefined
       return live(known.pushId) ?? existingPush?.id ?? (await kuma.addMonitor(loadPushMonitorPayload(`${domain} load`, pushToken)))
@@ -660,6 +684,7 @@ export async function registerMonitors(
   ])
   return {
     healthId,
+    healthInterval,
     pushId,
     pushToken: opts.wantPush ? pushToken : undefined,
     redisId,

@@ -47,6 +47,17 @@ const BASE_FIELDS = ["url", "username", "password"] as const
 // padEnd(10)), so 52 fills the row — roomy enough that long URLs stay visible.
 const INPUT_W = 52
 
+// Check windows for the health check (site or server). Kuma's usual 1m is the
+// default; a longer window is fewer requests for a slower alert. A suspect
+// check is still retried every 60s, so the window is roughly the added delay.
+// The last one picked becomes the default for the next site.
+const HEALTH_WINDOWS = [
+  { label: "1m", sec: 60 },
+  { label: "2m", sec: 120 },
+  { label: "5m", sec: 300 },
+  { label: "10m", sec: 600 },
+] as const
+
 // Check windows for the front-page fingerprint monitor. The check is one GET
 // served straight from nginx's page cache (no PHP), so even 5m costs the site
 // nothing — the window is really "how long a wrong page may go unnoticed".
@@ -86,7 +97,7 @@ const MONITOR_GLOSSARY: GlossaryEntry[] = [
     label: "Site health check",
     tagline: "Is this specific website up right now?",
     detail:
-      "A plain HTTP check on this site's own homepage, plus certificate-expiry alerting. Served straight from the page cache when one exists — cheap, but for that exact reason it can't see a PHP fatal hiding behind a still-warm cache. This is about whether THIS site answers — independent of whether the server it lives on is under strain.",
+      "A plain HTTP check on this site's own homepage, every minute unless you pick a longer window, plus certificate-expiry alerting. Served straight from the page cache when one exists — cheap, but for that exact reason it can't see a PHP fatal hiding behind a still-warm cache. This is about whether THIS site answers — independent of whether the server it lives on is under strain.",
     contexts: ["regular"],
   },
   {
@@ -94,7 +105,7 @@ const MONITOR_GLOSSARY: GlossaryEntry[] = [
     label: "Server health check",
     tagline: "Is the server itself under strain?",
     detail:
-      "Hits the vanity page's /?healthz endpoint — a small script that reports the server's own resource state (load, disk) and returns 503 when it's strained. This is about the server's health, not any one site's: a customer site can be completely broken while this stays green, and the server can be strained while every site still limps out a 200.",
+      "Hits the vanity page's /?healthz endpoint, every minute unless you pick a longer window — a small script that reports the server's own resource state (load, disk) and returns 503 when it's strained. This is about the server's health, not any one site's: a customer site can be completely broken while this stays green, and the server can be strained while every site still limps out a 200.",
     contexts: ["vanity"],
   },
   {
@@ -152,7 +163,7 @@ type AlertsState =
 type AlertSummary = null | { kind: "loading" } | { kind: "error"; error: string } | { kind: "ready"; providers: KumaAlertProvider[] }
 
 export function KumaSite() {
-  const { kumaSite: site, setKumaSite, kumaConfigured, kumaUrl, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, startBypassMonitorSetup, removeSiteMonitor, fetchKumaAlerts, toggleKumaAlert, clearKumaOp, kumaStatus, servers, setInputMode, probes } = useStore()
+  const { kumaSite: site, setKumaSite, kumaConfigured, kumaUrl, connectKuma, kumaMonitorFor, kumaOps, startKumaSetup, startVanityReseed, startKumaRotate, startFingerprintSetup, startBypassMonitorSetup, kumaCheckInterval, removeSiteMonitor, fetchKumaAlerts, toggleKumaAlert, clearKumaOp, kumaStatus, servers, setInputMode, probes } = useStore()
 
   const [draft, setDraft] = useState({ url: "", username: "", password: "" })
   const [fieldIdx, setFieldIdx] = useState(0)
@@ -166,6 +177,9 @@ export function KumaSite() {
   // `x` arms a confirm before deleting an opt-in monitor (front page / cache
   // bypass) — remembers WHICH kind, unlike confirmRotate (only one target).
   const [confirmRemove, setConfirmRemove] = useState<"fingerprint" | "bypass" | null>(null)
+  // `a` on the health check opens its window picker; ⏎ registers or retimes.
+  const [healthPick, setHealthPick] = useState(false)
+  const [healthIdx, setHealthIdx] = useState(0)
   // `f` opens the front-page check-window picker; ⏎ calibrates & registers.
   const [fpPick, setFpPick] = useState(false)
   const [fpIdx, setFpIdx] = useState(0)
@@ -262,7 +276,7 @@ export function KumaSite() {
             : healthUp === false
               ? "down"
               : healthUp === true
-                ? "up"
+                ? `up${registered.healthInterval ? ` · every ${win(registered.healthInterval)}` : ""}`
                 : "registered (status unknown)",
           color: healthUp === false ? theme.bad : registered?.healthId ? (healthUp === true ? theme.good : theme.text) : theme.textFaint,
         }
@@ -500,6 +514,17 @@ export function KumaSite() {
       }
       return
     }
+    if (healthPick) {
+      if (name === "left" || name === "up" || name === "h" || name === "k") return setHealthIdx((i) => Math.max(i - 1, 0))
+      if (name === "right" || name === "down" || name === "l" || name === "j" || name === "tab") return setHealthIdx((i) => Math.min(i + 1, HEALTH_WINDOWS.length - 1))
+      if (/^[1-4]$/.test(name)) return setHealthIdx(Number(name) - 1)
+      if (name === "return" && site) {
+        setHealthPick(false)
+        return startKumaSetup(site, { healthInterval: HEALTH_WINDOWS[healthIdx]!.sec })
+      }
+      if (name === "escape" || name === "q") return setHealthPick(false)
+      return
+    }
     if (fpPick) {
       if (name === "left" || name === "up" || name === "h" || name === "k") return setFpIdx((i) => Math.max(i - 1, 0))
       if (name === "right" || name === "down" || name === "l" || name === "j" || name === "tab") return setFpIdx((i) => Math.min(i + 1, FP_WINDOWS.length - 1))
@@ -567,6 +592,12 @@ export function KumaSite() {
       if (selected?.key === "bypass") {
         setBypassIdx(BYPASS_DEFAULT_IDX)
         return setBypassPick(true)
+      }
+      if (selected?.key === "health-site" || selected?.key === "health-server") {
+        const sec = registered?.healthId ? (registered.healthInterval ?? 60) : kumaCheckInterval
+        const idx = HEALTH_WINDOWS.findIndex((w) => w.sec === sec)
+        setHealthIdx(idx >= 0 ? idx : 0)
+        return setHealthPick(true)
       }
       return startKumaSetup(site)
     }
@@ -714,6 +745,22 @@ export function KumaSite() {
                   <Spinner />
                   <text content={`  ${op.detail}`} fg={theme.textDim} wrapMode="none" />
                 </box>
+              ) : healthPick && (selected?.key === "health-site" || selected?.key === "health-server") ? (
+                <>
+                  <text content="How often Kuma checks. A longer window is fewer requests, and a" fg={theme.textDim} wrapMode="none" />
+                  <text content="slower alert: a failed check is retried every minute, so an outage" fg={theme.textDim} wrapMode="none" />
+                  <text content="pages about one window later. New monitors use your last choice." fg={theme.textDim} wrapMode="none" />
+                  {isVanity && <text content="The heartbeat crons keep their one-minute beat." fg={theme.textFaint} wrapMode="none" />}
+                  <box style={{ height: 1 }} />
+                  <box style={{ flexDirection: "row" }}>
+                    <text content="Check window:" fg={theme.textDim} style={{ flexShrink: 0 }} />
+                    {HEALTH_WINDOWS.map((w, i) => (
+                      <text key={w.label} content={i === healthIdx ? `  ▸${w.label}` : `   ${w.label}`} fg={i === healthIdx ? theme.brand : theme.textFaint} style={{ flexShrink: 0 }} />
+                    ))}
+                  </box>
+                  <box style={{ height: 1 }} />
+                  <text content={`←/→ or 1-4 window · ⏎ ${registered?.healthId ? "apply & repair" : "register"} · esc cancel`} fg={theme.textFaint} wrapMode="none" />
+                </>
               ) : fpPick && selected?.key === "fingerprint" ? (
                 <>
                   <text content="Reads the live page now (while it's healthy), derives a template" fg={theme.textDim} wrapMode="none" />
@@ -769,9 +816,13 @@ export function KumaSite() {
                             ? registered?.bypassId
                               ? "a — recalibrate"
                               : "a — register (opt-in)"
-                            : statusFor(selected.key).registered
-                              ? "a — repair / re-register"
-                              : "a — register"
+                            : selected.key === "health-site" || selected.key === "health-server"
+                              ? statusFor(selected.key).registered
+                                ? "a — check window / repair"
+                                : "a — choose check window & register"
+                              : statusFor(selected.key).registered
+                                ? "a — repair / re-register"
+                                : "a — register"
                       return removable ? `${base} · x — remove` : base
                     })()}
                   />
@@ -925,6 +976,7 @@ export function KumaSite() {
     if (confirmRemove) return [{ key: "y/⏎", label: "remove" }, { key: "esc", label: "cancel" }]
     if (doctor) return doctor.kind === "ready" ? [{ key: "d", label: "re-run" }, { key: "esc", label: "back" }] : [{ key: "esc", label: "back" }]
     if (alerts) return alerts.kind === "ready" && alerts.providers.length > 0 ? [{ key: "↑↓", label: "select" }, { key: "⏎", label: "toggle" }, { key: "esc", label: "done" }] : [{ key: "esc", label: "back" }]
+    if (healthPick) return [{ key: "←/→", label: "window" }, { key: "⏎", label: registered?.healthId ? "apply" : "register" }, { key: "esc", label: "cancel" }]
     if (fpPick) return [{ key: "←/→", label: "window" }, { key: "⏎", label: "calibrate" }, { key: "esc", label: "cancel" }]
     if (bypassPick) return [{ key: "←/→", label: "window" }, { key: "⏎", label: "register" }, { key: "esc", label: "cancel" }]
     if (op?.status === "running") return [{ key: "esc", label: "background" }]
@@ -942,9 +994,13 @@ export function KumaSite() {
             ? registered?.bypassId
               ? "recalibrate cache-bypass"
               : "cache-bypass check"
-            : statusFor(selected?.key ?? "").registered
-              ? "repair monitors"
-              : "add monitors",
+            : selected?.key === "health-site" || selected?.key === "health-server"
+              ? statusFor(selected.key).registered
+                ? "check window / repair"
+                : "add monitors"
+              : statusFor(selected?.key ?? "").registered
+                ? "repair monitors"
+                : "add monitors",
     })
     if (selected && (selected.key === "fingerprint" || selected.key === "bypass") && monitorIdFor(selected.key) != null) {
       base.push({ key: "x", label: "remove monitor" })

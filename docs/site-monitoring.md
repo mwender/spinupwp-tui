@@ -15,7 +15,8 @@ It talks to your own [Uptime Kuma](https://github.com/louislam/uptime-kuma)
 A regular site sees three:
 
 - **Health check** — is this specific website up right now? A plain HTTP
-  check on the site's own homepage, plus certificate-expiry alerting.
+  check on the site's own homepage, plus certificate-expiry alerting, every
+  minute unless you pick a longer window (1m/2m/5m/10m).
   Served straight from the page cache when one exists — cheap, but for
   that exact reason it can't see a PHP fatal hiding behind a still-warm
   cache.
@@ -70,8 +71,17 @@ whichever monitor is currently selected:
   recalibrates the same monitor in place (history survives a redesign).
 - **Cache bypass** selected → opens its check-window picker (registers on
   first use, since it's opt-in).
-- **Anything else** (Health check / Load heartbeat / Redis sentinel /
-  PHP-fatal) → registers or repairs. Safe to re-run any time — it re-syncs
+- **Health check** selected → opens its check-window picker (1m/2m/5m/10m),
+  then registers or repairs as below. A longer window means fewer requests
+  and a slower alert: a failed check is still retried every minute, so an
+  outage pages roughly one window later. Picking a window for a site that
+  already has a health check changes that monitor in place (history and
+  alert wiring survive), and the window you pick becomes the default for the
+  next site you set up, the vanity wizard's included. A repair keeps the
+  site's own window. The heartbeat crons keep beating every minute whatever
+  you pick.
+- **Anything else** (Load heartbeat / Redis sentinel / PHP-fatal) →
+  registers or repairs. Safe to re-run any time — it re-syncs
   with Kuma, e.g. if a monitor was deleted directly in Kuma, or sudo just
   got connected (unlocking the PHP-fatal sentinel).
 
