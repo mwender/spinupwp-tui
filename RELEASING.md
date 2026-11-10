@@ -127,6 +127,17 @@ Run these in order. Replace `X.Y.Z` with the new version.
    - Check it from a neutral directory (`cd /` first — Homebrew's build sandbox can't read a cwd inside Dropbox and fails with a misleading "Failed to fix install linkage"): `brew update && brew upgrade spinuptui && brew test spinuptui`.
    - The formula runs `bun install --production --frozen-lockfile`, so the npm tarball **must include `bun.lock`** (it's in `package.json` `files`); `npm pack --dry-run` should list it.
 
+9. **Check spinuptui.com.** Publishing the GitHub release redeploys the site, so its changelog picks up the new release by itself (the Pages workflow re-runs on `main`). Check `https://spinuptui.com/changelog/` shows `vX.Y.Z` within a few minutes; if it doesn't, run the "Landing page" workflow by hand (`gh workflow run pages.yml --ref main`).
+
+### News posts (notable releases only)
+
+Most releases need nothing on the site beyond the automatic changelog entry. A release worth a story also gets a post at `/news/<name>/`, written as `site/posts/<name>.md` (front matter is documented in `site/news.ts`).
+
+- Write it on the release branch with `draft: true`, and preview it with `SITE_DRAFTS=1 bun run site:build`.
+- On release day set the real `date` and remove `draft: true` in the release commit, so the post goes live when `main` is pushed.
+- The newest post becomes the home page's "New:" pill. Link the GitHub release notes to the post.
+- Keep it short: short paragraphs, headings per feature, bullets for lists. No client names, and no details of your own machines or accounts.
+
 ## Pre-releases (alphas)
 
 Work that should be used before it's announced (the modules, until Sentinel ships) goes out as `X.Y.Z-alpha.N` on npm's **`next`** dist-tag. `@latest`, the in-app update hint (GitHub's "latest release" skips pre-releases) and Homebrew all stay on stable. The steps are the normal ones, with these differences:
@@ -149,4 +160,5 @@ Work that should be used before it's announced (the modules, until Sentinel ship
 - [ ] GitHub release published in house style
 - [ ] Published to npm (`npm publish` from a real terminal — passkey 2FA), `npm view spinuptui version` confirms it
 - [ ] Homebrew tap formula bumped (url + sha256), `brew upgrade spinuptui && brew test spinuptui` passes
+- [ ] spinuptui.com/changelog/ shows the release; news post (if any) is out of draft and dated
 - [ ] No client domains anywhere

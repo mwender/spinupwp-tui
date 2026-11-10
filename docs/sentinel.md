@@ -2,7 +2,7 @@
 
 Sentinel watches your fleet, works out what actually broke, and writes it up. Uptime monitoring tells you a domain is down. Sentinel tells you why, on your phone, with a report waiting when you look. It also notices what monitoring can't see: a crawler that stopped arriving, a cache that stopped hitting, a server that stopped updating.
 
-It builds on [Beacon](beacon.md) for paging, [Scheduler](scheduler.md) for its clock, and [Uptime Kuma](uptime-kuma.md) for detection. It's a pre-release: `bun add -g spinuptui@next --no-cache`.
+It builds on [Beacon](beacon.md) for paging, [Scheduler](scheduler.md) for its clock, and [Uptime Kuma](uptime-kuma.md) for detection.
 
 ## Turn it on
 

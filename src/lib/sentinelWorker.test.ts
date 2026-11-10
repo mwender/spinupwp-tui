@@ -48,6 +48,14 @@ describe("parseAgentReport", () => {
     expect(parseAgentReport("SUMMARY: seen it.\nSTATUS: duplicate\nsites/a/incidents/x.md")).toMatchObject({ status: "duplicate", path: "sites/a/incidents/x.md" })
   })
 
+  test("duplicate and blocked answers without a SUMMARY line, as agents write them", () => {
+    const live = "Permission allow rule (--allowed-tools): ignored.\nSTATUS: duplicate\nsites/a/incidents/x.md\n"
+    expect(parseAgentReport(live)).toMatchObject({ status: "duplicate", path: "sites/a/incidents/x.md", summary: "Already covered by sites/a/incidents/x.md." })
+    expect(parseAgentReport("STATUS: blocked\nGrant the station's key.")).toMatchObject({ status: "blocked", why: "Grant the station's key." })
+    expect(parseAgentReport("STATUS: blocked\n")).toBeNull()
+    expect(parseAgentReport("STATUS: done\nSITE: a.example.com\n\n# H\n")).toBeNull()
+  })
+
   test("anything else isn't a report", () => {
     expect(parseAgentReport("All done, the site is fine!")).toBeNull()
     expect(parseAgentReport("SUMMARY: x\nSTATUS: done\nSITE: a.example.com\n\nno heading")).toBeNull()

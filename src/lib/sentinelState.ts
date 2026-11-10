@@ -10,7 +10,7 @@ import { moduleStateDir, moduleWorkDir } from "../modules/contract.ts"
 import type { IncidentKind } from "./cliIncidents.ts"
 import { expandHome } from "./schedulerJobs.ts"
 
-export const DEFAULT_ALLOW = "Read,Grep,Glob,Edit(sites/**),Write(sites/**),Bash(spinuptui ssh-exec *),Bash(spinuptui siblings *),Bash(spinuptui incidents *)"
+export const DEFAULT_ALLOW = "Read,Grep,Glob,Edit(sites/**),Bash(spinuptui ssh-exec *),Bash(spinuptui siblings *),Bash(spinuptui incidents *)"
 const LOG_MAX_BYTES = 1_000_000
 export const INCIDENT_KEEP_DAYS = 30
 export const SEEN_KEEP_DAYS = 8

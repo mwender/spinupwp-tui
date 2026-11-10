@@ -1,26 +1,45 @@
-# Builds the landing page from site/build.ts and publishes it to GitHub Pages
-# (spinuptui.com). Module copy comes from src/modules, so a change there
-# redeploys the page too.
+# Builds spinuptui.com from site/build.ts and publishes it to GitHub Pages: the
+# landing page, the news posts in site/posts, and the changelog, which is built
+# from the GitHub release notes. Module copy comes from src/modules, so a change
+# there redeploys the page too.
 name: Landing page
 
 on:
   push:
     branches: [main]
     paths: [site/**, src/modules/**, .github/assets/**, package.json, .github/workflows/pages.yml]
+  # A published or edited release changes the changelog pages.
+  release:
+    types: [published, edited]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  # A release event runs on the tag, and the github-pages environment only
+  # deploys from main. So a release just starts this workflow again on main.
+  redeploy-on-main:
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - run: gh workflow run pages.yml --ref main --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  deploy:
+    if: github.event_name != 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -29,6 +48,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run site:build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

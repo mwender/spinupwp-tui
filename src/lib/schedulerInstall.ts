@@ -258,7 +258,7 @@ export const NO_SCHEDULER = {
   ok: false as const,
   reason: "spinuptui_too_old",
   message: "The `spinuptui` the dispatcher would run doesn't have Scheduler yet, so it would open the dashboard every 5 minutes instead of ticking.",
-  remedy: "Install a release that has it first: bun add -g spinuptui@next --no-cache",
+  remedy: "Install 1.3.0 or later first: brew upgrade spinuptui, or bun add -g spinuptui@latest --no-cache",
 }
 
 export async function launchctl(...args: string[]): Promise<{ code: number; out: string }> {

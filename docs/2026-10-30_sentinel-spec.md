@@ -195,7 +195,7 @@ The agent reads logs that strangers can write to: a user agent or a query string
 - **Its allow list is exact**, not `spinuptui *`, which would include commands that change production:
 
 ```
-Read, Grep, Glob, Edit(sites/**), Write(sites/**),
+Read, Grep, Glob, Edit(sites/**),
 Bash(spinuptui ssh-exec *), Bash(spinuptui siblings *), Bash(spinuptui incidents *)
 ```
 
@@ -217,9 +217,9 @@ SLUG: short-file-slug
 …the report in Markdown…
 ```
 
-So the deliverable can't be lost to a missing `Write` permission, because the agent doesn't need one to produce it. Its `Write(sites/**)` is only for `SITE.md`.
+So the deliverable can't be lost to a missing `Write` permission, because the agent doesn't need one to produce it. Its `Edit(sites/**)` is only for `SITE.md`; Claude's Edit rules cover every file-writing tool, so no separate `Write` rule is needed (a `Write(path)` rule is ignored, with a warning).
 
-`STATUS: duplicate` plus a path means the agent found the event already documented. Nothing is saved or posted. `STATUS: blocked` uses Scheduler's new status (below), and the line after it says what's needed.
+`STATUS: duplicate` plus a path means the agent found the event already documented. A duplicate or blocked answer that leaves out its SUMMARY line is still accepted, since agents drop it. Nothing is saved or posted. `STATUS: blocked` uses Scheduler's new status (below), and the line after it says what's needed.
 
 A run that exits 0 with no parsable header isn't `done`. It's saved as a raw transcript and marked `failed`, because an unparsable report is the same class of problem as "exit 0 on a job that did no work".
 

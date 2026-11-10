@@ -136,7 +136,7 @@ export const NO_LISTENER = {
   ok: false as const,
   reason: "spinuptui_too_old",
   message: "The `spinuptui` the LaunchAgent would run doesn't have Beacon's listener yet.",
-  remedy: "Install a release that has it first: bun add -g spinuptui@next --no-cache",
+  remedy: "Install 1.3.0 or later first: brew upgrade spinuptui, or bun add -g spinuptui@latest --no-cache",
 }
 
 export async function applyListenerInstall(plan: ListenerPlan, onStage: (s: string) => void = () => {}): Promise<ListenerApplyResult> {
