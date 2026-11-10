@@ -93,6 +93,10 @@ export interface AppConfig {
   // Kuma monitors Spinup has registered, keyed by site domain. `pushToken` is the
   // token baked into the server-side cron; ids let later features pause/verify.
   kumaMonitors: Record<string, KumaMonitorRef>
+  // The health check's window (seconds) last picked in the monitoring overlay,
+  // used for every new health monitor after that (the vanity wizard's too).
+  // Machine-level like the Kuma login. Null = Kuma's usual 60s.
+  kumaCheckInterval: number | null
   // Per-vanity-site health keys, keyed by domain — the `key` the seeded page's
   // ?format=json mode requires (baked in at seed time). Kept here so re-seeds
   // reuse the same key (monitor URLs stay stable) and so monitor-registration
@@ -197,6 +201,7 @@ export interface UptimeKumaConn {
 // Don't add a numeric `*Id` field that isn't a monitor id.
 export interface KumaMonitorRef {
   healthId?: number // HTTP monitor on /?healthz
+  healthInterval?: number // the health monitor's check window in seconds, when picked in SpinupTUI (unset = 60s)
   pushId?: number // push monitor fed by the server-side load cron
   pushToken?: string
   redisId?: number // "{server} redis" push monitor fed by the cron's redis-cli ping (vanity/server domains)
@@ -273,6 +278,7 @@ export interface StoredConfig {
   vanityHealthKeys?: Record<string, string>
   uptimeKuma?: UptimeKumaConn
   kumaMonitors?: Record<string, KumaMonitorRef>
+  kumaCheckInterval?: number
   lastSeenVersion?: string
   beacon?: BeaconStored
   scheduler?: SchedulerStored
@@ -562,6 +568,7 @@ export function loadConfig(): AppConfig {
       return stored.uptimeKuma ?? null
     })(),
     kumaMonitors: stored.kumaMonitors ?? {},
+    kumaCheckInterval: typeof stored.kumaCheckInterval === "number" && stored.kumaCheckInterval > 0 ? stored.kumaCheckInterval : null,
     lastSeenVersion: stored.lastSeenVersion?.trim() || null,
     beacon: stored.beacon ?? null,
     scheduler: stored.scheduler ?? null,

@@ -25,7 +25,8 @@ monitor, load balancer, or badge.
 ### 1. Server up/down + resource alerting in one monitor (recommended)
 
 Monitor type **HTTP(s)** on `https://web1.example.com/?healthz`, accepted status
-codes `200-299`, interval 60s. Because the page returns `503` under CPU pressure or
+codes `200-299`, interval 60s (SpinupTUI's default; pick a longer window with `a` in
+the monitoring overlay). Because the page returns `503` under CPU pressure or
 low disk, this single plain-HTTP monitor also alerts on resource trouble — no
 special monitor type needed.
 

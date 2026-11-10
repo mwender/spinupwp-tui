@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Choose how often Uptime Kuma checks a site.** In the monitoring overlay (`M`), `a` on the health check now opens a window picker (1m, 2m, 5m or 10m) before registering or repairing. Kuma's 1 minute is still the default. Picking a window for a site that's already monitored changes its monitor in place, so history and alert wiring survive, and your pick becomes the default for the next site you set up, the vanity wizard's included. A failed check is still retried every minute. The heartbeat crons keep their one-minute beat.
+
 ### Fixed
 - **A reboot's Uptime Kuma maintenance window now ends by itself after 30 minutes.** It used to stay open until SpinupTUI deleted it when the reboot finished. Quitting the app mid-reboot, or a failed delete, left the server's monitors in Maintenance indefinitely, so they wouldn't alert. SpinupTUI still closes the window as soon as the reboot is done. Windows already left behind by earlier versions have to be deleted in Kuma (Maintenance page).
 - **Basecamp setup's login steps match what actually happens.** A `--no-browser` login finishes on a success page, with nothing to paste back. The steps are numbered, and a terminal that isn't logged in is no longer told it might be a sandboxed shell.

@@ -41,7 +41,7 @@ import {
 import { ProvidersCache, type VerifiedConn } from "../lib/providersCache.ts"
 import { recordProviderFor, type DnsRecord, type RecordResult } from "../lib/dnsRecords.ts"
 import { deriveSiteUser, seedVanityIndex, seedVanityPushCron, seedFatalMonitorCron, probeServerRedis, aRecordResolves, isVanityPair } from "../lib/vanitySite.ts"
-import { withKuma, KumaClient, registerMonitors, registerFingerprintMonitor, registerBypassMonitor, setMonitorNotifications, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
+import { withKuma, KumaClient, DEFAULT_HEALTH_INTERVAL, registerMonitors, registerFingerprintMonitor, registerBypassMonitor, setMonitorNotifications, genPushToken, rotatePushToken, retargetHealthKeyMonitors, LOAD_PUSH_SCALE } from "../lib/uptimeKuma.ts"
 import { deriveFingerprint } from "../lib/siteFingerprint.ts"
 import type { StoredProviders } from "../config.ts"
 import { fetchRebootInfo, grantSiteSshKey, revokeSiteSshKey, verifySudo, ensureSpinupKey, listPersonalKeys, keyBody, type RebootInfo } from "../lib/ssh.ts"
@@ -627,7 +627,8 @@ interface StoreValue extends DataState {
   kumaOps: Map<number, KumaOp> // in-flight/settled monitor setups, by site id
   connectKuma: (conn: { url: string; username: string; password: string }, twofa?: string) => Promise<{ ok: true; version: string | null } | { ok: false; error: string; tokenRequired?: boolean }>
   kumaMonitorFor: (domain: string) => KumaMonitorRef | null // monitors Spinup registered for a domain
-  startKumaSetup: (site: Site, opts?: { reseed?: boolean }) => void
+  startKumaSetup: (site: Site, opts?: { reseed?: boolean; healthInterval?: number }) => void // healthInterval = a window just picked: retimes the health monitor and becomes the default
+  kumaCheckInterval: number // the health-check window new monitors get (seconds)
   startVanityReseed: (site: Site) => void // refresh an existing vanity page (no Kuma needed)
   startKumaRotate: (site: Site) => void // rotate the push token + health key (vanity; old URLs die immediately)
   startFingerprintSetup: (site: Site, intervalSec: number) => void // calibrate + register the front-page fingerprint monitor
@@ -3057,13 +3058,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             registerMonitors(kuma, j.hostname, {
               proto: j.sslSkipped ? "http" : "https",
               healthzPath: "/?healthz",
+              healthInterval: cfgRef.current.kumaCheckInterval ?? DEFAULT_HEALTH_INTERVAL,
               wantPush: true,
               known,
               pushToken: j.kumaPushToken,
             }),
           )
           persistKumaAuth(conn, jwt)
-          persistKumaMonitors(j.hostname, { ...known, healthId: result.healthId, pushId: result.pushId ?? known.pushId, pushToken: result.pushToken ?? known.pushToken })
+          persistKumaMonitors(j.hostname, { ...known, healthId: result.healthId, healthInterval: result.healthInterval ?? known.healthInterval, pushId: result.pushId ?? known.pushId, pushToken: result.pushToken ?? known.pushToken })
           void doCron({ ...j, step: "cron", kumaPushToken: result.pushToken ?? known.pushToken })
         } catch (err) {
           fail(j, "monitor", (err as Error).message)
@@ -3369,7 +3371,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // monitor + heartbeat cron. A regular site gets a plain HTTPS monitor on its
   // homepage (up/down + cert expiry); we never touch a client site's files.
   const startKumaSetup = useCallback(
-    (site: Site, opts: { reseed?: boolean } = {}) => {
+    (site: Site, opts: { reseed?: boolean; healthInterval?: number } = {}) => {
       const conn = cfgRef.current.uptimeKuma
       if (!conn || isDevMode()) return
       const server = servers.find((s) => s.id === site.server_id)
@@ -3415,13 +3417,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // Monitor over the protocol the site actually serves — an https monitor
           // on an http-only site would be permanently down.
           const proto = site.https?.enabled ? "https" : "http"
+          // A window just picked wins and retimes an existing monitor; a repair
+          // keeps the site's own window and only applies the default to a new one.
+          const healthInterval = opts.healthInterval ?? known.healthInterval ?? cfgRef.current.kumaCheckInterval ?? DEFAULT_HEALTH_INTERVAL
+          const retimeHealth = opts.healthInterval != null
           const { result, jwt } = await withKuma(conn, (kuma) =>
-            registerMonitors(kuma, domain, { proto, healthzPath: isVanity ? "/?healthz" : "/", wantPush: isVanity, wantRedis, wantFatal, known }),
+            registerMonitors(kuma, domain, { proto, healthzPath: isVanity ? "/?healthz" : "/", healthInterval, retimeHealth, wantPush: isVanity, wantRedis, wantFatal, known }),
           )
           persistKumaAuth(conn, jwt)
+          if (retimeHealth && healthInterval !== cfgRef.current.kumaCheckInterval) {
+            cfgRef.current.kumaCheckInterval = healthInterval
+            void saveProfileConfig({ kumaCheckInterval: healthInterval })
+          }
           persistKumaMonitors(domain, {
             ...known,
             healthId: result.healthId,
+            healthInterval: result.healthInterval ?? known.healthInterval,
             pushId: result.pushId ?? known.pushId,
             pushToken: result.pushToken ?? known.pushToken,
             redisId: result.redisId ?? known.redisId,
@@ -4541,6 +4552,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     clearVanity,
     vanityHealthKeyFor,
     kumaConfigured: !isDevMode() && cfgRef.current.uptimeKuma != null,
+    kumaCheckInterval: cfgRef.current.kumaCheckInterval ?? DEFAULT_HEALTH_INTERVAL,
     // Base URL for deep-linking straight to a monitor's own Kuma page
     // (`${kumaUrl}/dashboard/${id}`) — null in Dev Mode / when unconfigured.
     kumaUrl: !isDevMode() ? (cfgRef.current.uptimeKuma?.url ?? null) : null,
