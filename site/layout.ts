@@ -14,8 +14,9 @@ type Section = "home" | "changelog" | "news"
 
 const FAVICON = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1 15 8 8 15 1 8z' fill='%2300d18f'/></svg>"
 
-export function head(o: { title: string; description: string; path: string; ogTitle?: string; type?: "website" | "article" }): string {
+export function head(o: { title: string; description: string; path: string; ogTitle?: string; type?: "website" | "article"; image?: string }): string {
   const url = ORIGIN + o.path
+  const img = o.image ? `${ORIGIN}/assets/${o.image}` : `${ORIGIN}/assets/og.png?v=2`
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -27,14 +28,14 @@ export function head(o: { title: string; description: string; path: string; ogTi
 <meta property="og:site_name" content="SpinupTUI">
 <meta property="og:title" content="${esc(o.ogTitle ?? o.title)}">
 <meta property="og:description" content="${esc(o.description)}">
-<meta property="og:image" content="${ORIGIN}/assets/og.png?v=2">
+<meta property="og:image" content="${img}">
 <meta property="og:image:width" content="2400">
 <meta property="og:image:height" content="1260">
-<meta property="og:image:alt" content="SpinupTUI: your SpinupWP fleet, from the terminal.">
+<meta property="og:image:alt" content="${o.image ? esc(o.ogTitle ?? o.title) : "SpinupTUI: your SpinupWP fleet, from the terminal."}">
 <meta property="og:type" content="${o.type ?? "website"}">
 <meta property="og:url" content="${url}">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="${ORIGIN}/assets/og.png?v=2">
+<meta name="twitter:image" content="${img}">
 <meta name="theme-color" content="#0d1117">
 <link rel="icon" href="${FAVICON}">
 <link rel="alternate" type="application/atom+xml" title="SpinupTUI news and releases" href="/feed.xml">
@@ -69,8 +70,8 @@ export const footer = `<footer><div class="wrap">
 </div></footer>`
 
 // A whole subpage: the shared head, nav and footer around a page heading and body.
-export function page(o: { title: string; description: string; path: string; section: Section; heading: string; lede?: string; body: string; type?: "website" | "article" }): string {
-  return `${head({ title: o.title, description: o.description, path: o.path, type: o.type })}
+export function page(o: { title: string; description: string; path: string; section: Section; heading: string; lede?: string; body: string; type?: "website" | "article"; image?: string }): string {
+  return `${head({ title: o.title, description: o.description, path: o.path, type: o.type, image: o.image })}
 ${nav(o.section)}
 
 <header class="page-head"><div class="wrap narrow">

@@ -265,7 +265,8 @@ const postPage = (p: Post) => {
     type: "article",
     heading: `<p class="eyebrow"><a href="/news/">News</a></p><h1>${esc(p.title)}</h1>`,
     lede: `${longDate(p.date)}${p.draft ? " · draft" : ""}`,
-    body: `<article class="prose">${p.html}</article>
+    image: p.image ?? undefined,
+    body: `${p.image ? `<img class="post-hero" src="/assets/${p.image}" alt="${esc(p.title)}" width="2400" height="1260">` : ""}<article class="prose">${p.html}</article>
 <aside class="post-cta"><p><b>The details:</b> ${rel ? `<a href="${releaseHref(rel)}">${esc(rel.tag)} release notes</a> · ` : ""}<a href="/changelog/">every release</a> · <a href="${REPO}#readme">docs</a></p></aside>`,
   })
 }
@@ -315,6 +316,7 @@ cpSync(join(import.meta.dir, "site.css"), join(OUT, "assets", "site.css"))
 write("/", html)
 for (const p of [...changelogPages, ...releasePages]) write(p.path, p.html)
 write("/news/", newsIndex)
+for (const p of posts) if (p.image) cpSync(join(import.meta.dir, p.image), join(OUT, "assets", p.image))
 for (const p of posts) write(`/news/${p.slug}/`, postPage(p))
 write("/feed.xml", feed)
 // GitHub Pages: serve files as-is, no Jekyll pass.

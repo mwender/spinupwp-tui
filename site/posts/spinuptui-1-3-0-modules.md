@@ -3,6 +3,7 @@ title: SpinupTUI 1.3.0: modules that keep watch after you close it
 date: 2026-11-10
 summary: SpinupTUI 1.3.0 adds modules, parts of the app that run on their own on an always-on Mac. Sentinel works out what broke, Beacon pages you, and Scheduler follows up.
 release: v1.3.0
+image: og-v1.3.0.png
 ---
 
 Until now, SpinupTUI only worked while it was open. That's fine for checking on a fleet, but outages don't wait for you to open a terminal.

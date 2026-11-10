@@ -1,0 +1,61 @@
+<!doctype html>
+<!--
+  The v1.3.0 release image (news post, forum, social), in the style of og.html.
+  Render to site/og-v1.3.0.png at 1200×630, 2x:
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --hide-scrollbars \
+      --window-size=1200,630 --force-device-scale-factor=2 --virtual-time-budget=3000 \
+      --screenshot=site/og-v1.3.0.png site/og-v1.3.0.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #0d1117; --bg-alt: #11161d; --panel: #161b22; --border: #30363d; --text: #e6edf3; --dim: #8b949e; --faint: #586069; --brand: #00d18f; --brand-deep: #0b3d2c; --sky: #5ec8ff; --bad: #f85149; --mono: "JetBrains Mono", monospace; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body { background: var(--bg); color: var(--text); font-family: Inter, sans-serif; position: relative; }
+  body::before { content: ""; position: absolute; top: -240px; right: -240px; width: 1000px; height: 900px; background: radial-gradient(closest-side, rgba(0,209,143,.2), transparent); }
+  body::after { content: ""; position: absolute; inset: 0; background-image: radial-gradient(rgba(139,148,158,.14) 1px, transparent 1px); background-size: 22px 22px; -webkit-mask-image: linear-gradient(180deg, #000, transparent 90%); }
+  .grid { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 400px; gap: 56px; align-items: center; height: 100%; padding: 0 72px; }
+  .top { display: flex; align-items: center; gap: 16px; margin-bottom: 30px; }
+  .logo { font: 700 24px var(--mono); color: var(--brand); }
+  .ver { font: 700 17px var(--mono); color: var(--bg); background: var(--brand); border-radius: 999px; padding: 4px 14px; box-shadow: 0 0 18px rgba(0,209,143,.45); }
+  h1 { font: 700 52px/1.08 var(--mono); letter-spacing: -.03em; margin-bottom: 30px; }
+  h1 .g { background: linear-gradient(90deg, var(--brand), var(--sky)); -webkit-background-clip: text; color: transparent; }
+  .mods { display: grid; gap: 14px; }
+  .mod { display: flex; align-items: center; gap: 16px; font-size: 21px; color: var(--dim); }
+  .mod b { color: var(--text); font: 700 21px var(--mono); }
+  .glyph { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 9px; background: var(--brand-deep); color: var(--brand); font-size: 20px; border: 1px solid rgba(0,209,143,.3); }
+
+  .phone { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 22px; padding: 20px; font: 14.5px/1.5 var(--mono); box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 60px rgba(0,209,143,.08); }
+  .phone-head { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; margin-bottom: 16px; border-bottom: 1px solid var(--border); color: var(--dim); font-size: 13px; }
+  .phone-head .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 8px var(--brand); }
+  .msg { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px; margin-bottom: 11px; }
+  .msg:last-child { margin-bottom: 0; }
+  .msg.down { border-left: 3px solid var(--bad); }
+  .msg.done { border-left: 3px solid var(--brand); }
+  .msg time { display: block; color: var(--faint); font-size: 11.5px; margin-top: 4px; }
+  .k { color: var(--sky); }
+</style>
+</head>
+<body>
+<div class="grid">
+  <div>
+    <div class="top"><span class="logo">◆ SpinupTUI</span><span class="ver">v1.3.0</span></div>
+    <h1>Modules that <span class="g">keep watch</span> after you close it.</h1>
+    <div class="mods">
+      <div class="mod"><span class="glyph">◈</span><span><b>Sentinel</b> works out what broke</span></div>
+      <div class="mod"><span class="glyph">◉</span><span><b>Beacon</b> pages you</span></div>
+      <div class="mod"><span class="glyph">◷</span><span><b>Scheduler</b> follows up</span></div>
+    </div>
+  </div>
+  <div class="phone">
+    <div class="phone-head"><span class="dot"></span>SpinupTUI · Beacon</div>
+    <div class="msg down">🔴 shop.example.com down <span class="k">(http)</span> on web2: diagnosing.<time>09:41</time></div>
+    <div class="msg done">🧾 shop.example.com: a plugin update left a fatal error in checkout. Rolling it back clears it. Report filed.<time>09:43</time></div>
+    <div class="msg">☀️ Fleet OK. Nothing new overnight.<time>08:00</time></div>
+  </div>
+</div>
+</body>
+</html>

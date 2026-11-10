@@ -188,3 +188,4 @@ nav a.here { color: var(--text); }
 .post-cta { margin-top: 40px; padding: 20px 24px; background: linear-gradient(180deg, var(--panel), var(--bg-alt)); border: 1px solid var(--border); border-radius: 12px; }
 .post-cta p { margin: 0 0 8px; }
 .post-cta p:last-child { margin: 0; }
+.post-hero { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--border); margin: 0 0 36px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
