@@ -95,7 +95,7 @@ export function composeDigest(d: DigestData, flags: Flags): Digest {
   const stuck = d.incidents.filter((i) => isWaiting(i) && d.when.getTime() - Date.parse(i.createdAt) > STUCK_MS)
   const failing = d.health.filter((h) => !h.ok)
   const reports = recent.filter((i) => i.state === "reported").length
-  // Follow-ups, and the never-diagnosed repeats from before them.
+  // Updates, and the never-diagnosed repeats from before them.
   const recurrences = recent.filter((i) => i.refersTo || i.state === "recurrence")
   const blind = d.ticks.filter((t) => !t.ok).length
   const retried = d.ticks.filter((t) => t.ok && t.retries > 0).length
@@ -107,7 +107,7 @@ export function composeDigest(d: DigestData, flags: Flags): Digest {
   const lines = [header, ""]
   if (d.paused) lines.push(`Paused until ${d.paused}.`, "")
   lines.push(d.health.map((h) => `${h.name}: ${h.ok ? h.detail : `⚠️ ${h.detail}`}`).join("\n"))
-  lines.push(`Last 24h: ${plural(d.ticks.length, "check")} · ${plural(recent.length - recurrences.length, "incident")} · ${plural(reports, "report")} · ${plural(recurrences.length, "follow-up")} · ${blind} blind${retried ? ` · ${retried} cold start${retried === 1 ? "" : "s"}` : ""}`)
+  lines.push(`Last 24h: ${plural(d.ticks.length, "check")} · ${plural(recent.length - recurrences.length, "incident")} · ${plural(reports, "report")} · ${plural(recurrences.length, "update")} · ${blind} blind${retried ? ` · ${retried} cold start${retried === 1 ? "" : "s"}` : ""}`)
   if (recurrences.length) {
     const bySite = new Map<string, number>()
     for (const i of recurrences) bySite.set(i.events[0]!.domain, (bySite.get(i.events[0]!.domain) ?? 0) + 1)

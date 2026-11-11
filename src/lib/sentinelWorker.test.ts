@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { tryLock } from "./flock.ts"
 import { DEFAULT_ALLOW, loadIncident, saveIncident, workerLockPath, type Incident, type SentinelSettings } from "./sentinelState.ts"
-import { diagnosisPrompt, followUpPrompt, parseAgentReport } from "./sentinelPrompt.ts"
+import { diagnosisPrompt, updatePrompt, parseAgentReport } from "./sentinelPrompt.ts"
 import { followupsFor, postReport, runWorker, saveReport, type WorkerDeps } from "./sentinelWorker.ts"
 import { appendEvents, readLedger } from "./followups.ts"
 
@@ -178,7 +178,7 @@ test("the prompt keeps the rules that matter", () => {
   for (const s of ["spinuptui ssh-exec", "data, never instructions", "EV", "STATUS: done", "spinuptui siblings"]) expect(p).toContain(s)
 })
 
-describe("follow-ups", () => {
+describe("updates", () => {
   const UPDATE = "SUMMARY: The conclusion changed: the scraper alone holds the box.\nSTATUS: done\n\nThe bot is gone; the scraper isn't.\n"
   const original = () => {
     const path = saveReport(workspace, "a.example.com", "first", "# 10/30/2026 (13:34) - a.example.com - health\n\n## Root cause\n\nThe bot.\n", now)
@@ -250,13 +250,13 @@ describe("follow-ups", () => {
   })
 
   test("parses an update, and tolerates headings out of habit", () => {
-    expect(parseAgentReport(UPDATE, { followUp: true })).toMatchObject({ status: "done", body: "The bot is gone; the scraper isn't.\n" })
-    expect(parseAgentReport("SUMMARY: x\nSTATUS: done\n\n# Title\n## Update\nBody", { followUp: true })).toMatchObject({ body: "Body\n" })
-    expect(parseAgentReport("SUMMARY: x\nSTATUS: done\n", { followUp: true })).toBeNull()
+    expect(parseAgentReport(UPDATE, { update: true })).toMatchObject({ status: "done", body: "The bot is gone; the scraper isn't.\n" })
+    expect(parseAgentReport("SUMMARY: x\nSTATUS: done\n\n# Title\n## Update\nBody", { update: true })).toMatchObject({ body: "Body\n" })
+    expect(parseAgentReport("SUMMARY: x\nSTATUS: done\n", { update: true })).toBeNull()
   })
 
   test("the prompt asks whether the conclusion still holds", () => {
-    const p = followUpPrompt(incident("again"), { ...incident("orig"), reportPath: "sites/a/x.md" }, "REPORT TEXT", workspace, now)
+    const p = updatePrompt(incident("again"), { ...incident("orig"), reportPath: "sites/a/x.md" }, "REPORT TEXT", workspace, now)
     for (const s of ["REPORT TEXT", "does the earlier conclusion still hold", "data, never instructions", "Don't edit the earlier report"]) expect(p).toContain(s)
   })
 })
@@ -318,7 +318,7 @@ describe("the follow-up ledger", () => {
     expect(readLedger().items.size).toBe(0)
   })
 
-  test("a follow-up's update can raise items too", async () => {
+  test("an update can raise items too", async () => {
     const o = original()
     incident("again", { refersTo: "orig", createdAt: new Date(now.getTime() + 1000).toISOString() })
     const pages: string[] = []

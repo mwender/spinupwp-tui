@@ -68,7 +68,7 @@ Use STATUS: blocked, then a line saying what a person must do, if something outs
 // A repeat: the problem came back within hours. The earlier report is the starting
 // point, and the question is what changed and whether its conclusion holds. Twice
 // in the incident watcher's history, this second look revised the first.
-export function followUpPrompt(i: Incident, original: Incident, report: string, workspace: string, now: Date, followups?: string): string {
+export function updatePrompt(i: Incident, original: Incident, report: string, workspace: string, now: Date, followups?: string): string {
   const events = i.events.map((e) => `- ${e.time} UTC: ${e.domain} ${e.kind}${e.message ? ` (${e.message})` : ""}`).join("\n")
   return `You are following up on a website incident, unattended. Nobody is watching this run and nobody can answer questions. Your working directory is the incident workspace: ${workspace}
 
@@ -112,7 +112,7 @@ export type AgentReport =
 // Reads the last SUMMARY: block, since an agent may narrate before its answer. An
 // answer that doesn't parse returns null: exit 0 with no usable report is a failed
 // run, not a finished one.
-export function parseAgentReport(output: string, opts: { followUp?: boolean } = {}): AgentReport | null {
+export function parseAgentReport(output: string, opts: { update?: boolean } = {}): AgentReport | null {
   const at = [...output.matchAll(/^SUMMARY:/gm)].pop()?.index
   // A duplicate or blocked answer is complete without its SUMMARY line, and agents
   // drop it: "stop and answer with STATUS: duplicate" reads as the whole answer.
@@ -134,7 +134,7 @@ export function parseAgentReport(output: string, opts: { followUp?: boolean } = 
     return path ? { status, summary: summary || `Already covered by ${path}.`, path } : null
   }
   if (status !== "done") return null
-  if (opts.followUp) {
+  if (opts.update) {
     // An update has no H1, but tolerate one, and any SITE/SLUG lines out of habit.
     const body = after.replace(/^(SITE|SLUG):.*$/gm, "").replace(/^#{1,2} .*$/gm, "").trim()
     return body ? { status, summary, site: null, slug: null, body: body + "\n" } : null

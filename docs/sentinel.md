@@ -29,11 +29,11 @@ Setup needs a Beacon channel, Scheduler's dispatcher and a Kuma connection, and 
 
 Without an agent you still get the page, the evidence as a write-up, and the digest.
 
-### Repeats get a follow-up, not a new report
+### Repeats get an update, not a new report
 
-If the same domain and monitor kind went down in the last 6 hours (`sentinel.recurrenceHours`), the repeat is a **follow-up**. The agent gets the earlier report, checks what's different this time, and says whether the earlier conclusion still holds. Its answer is added to that report under a dated `## Update` heading, so a problem that keeps coming back stays one report. On a team board it's a comment on the original post.
+If the same domain and monitor kind went down in the last 6 hours (`sentinel.recurrenceHours`), the repeat is an **update**. The agent gets the earlier report, checks what's different this time, and says whether the earlier conclusion still holds. Its answer is added to that report under a dated `## Update` heading, so a problem that keeps coming back stays one report. On a team board it's a comment on the original post.
 
-A second look is worth it: a problem an hour later is often still unfolding, and the second run can find what the first couldn't. The page for a repeat is silent, and the third in 24 hours makes a sound. Follow-ups count toward the daily limit, and the digest counts them by site. This never suppresses anything Kuma sends.
+A second look is worth it: a problem an hour later is often still unfolding, and the second run can find what the first couldn't. The page for a repeat is silent, and the third in 24 hours makes a sound. Updates count toward the daily limit, and the digest counts them by site. This never suppresses anything Kuma sends.
 
 ### When a diagnosis can't finish
 
@@ -43,7 +43,7 @@ Nothing waits silently. `/incidents` on the pager, `spinuptui sentinel list --op
 |---|---|
 | The agent's login lapsed | Pages once with the fix, retries every 30 minutes, and works through the queue when it's back |
 | The agent couldn't do the work | Marks it `blocked`, says what's needed, offers **Run again** |
-| A follow-up's original never got a report | Diagnoses it from scratch instead |
+| An update's original never got a report | Diagnoses it from scratch instead |
 | It failed or timed out | Tries once more, then marks it `failed`, with **Run again** |
 | The day's limit is reached (`sentinel.maxDiagnosesPerDay`, default 15) | Pages once; the rest wait |
 | Kuma can't be read | Retries for two minutes, then Scheduler pages you once, and again on recovery |

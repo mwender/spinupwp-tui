@@ -20,7 +20,7 @@ import { gitRootOf } from "./schedulerJobs.ts"
 import { agentCommand, jobEnv, outcomeOf, runProcess, type ProcResult } from "./schedulerRun.ts"
 import { diagnoseButton, startedToday, type Page } from "./sentinelIncidents.ts"
 import { extractFollowups, fillPlaceholders, followupNote, ledgerSection, planEntries, readLedger, relevantItems, withLedger } from "./followups.ts"
-import { diagnosisPrompt, followUpPrompt, parseAgentReport } from "./sentinelPrompt.ts"
+import { diagnosisPrompt, updatePrompt, parseAgentReport } from "./sentinelPrompt.ts"
 import { loadFleet, loadIncident, loadIncidents, loadTickState, type Fleet, saveIncident, saveTickState, transcriptsDir, workerLockPath, type Incident, type SentinelSettings } from "./sentinelState.ts"
 import { MAX_ATTEMPTS, nextRetryAt, sendPage } from "./sentinelTick.ts"
 import { runSiteDoctor } from "./siteDoctor.ts"
@@ -219,11 +219,11 @@ async function diagnose(i: Incident, s: SentinelSettings, deps: WorkerDeps): Pro
     await deps.page(failed ? { ...page, text: `${page.text}\n\n⚠️ Couldn't post it to the board: ${failed}\nRetry with: spinuptui sentinel post ${i.id}` } : page)
   }
 
-  // A follow-up needs its original's report. If the original never produced one,
+  // An update needs its original's report. If the original never produced one,
   // this is diagnosed from scratch instead.
   const original = i.refersTo ? loadIncident(i.refersTo) : null
   const prior = original?.reportPath && existsSync(join(s.workspace, original.reportPath)) ? original : null
-  if (prior) return followUp(i, prior, s, deps, deliver)
+  if (prior) return runUpdate(i, prior, s, deps, deliver)
 
   if (!s.agent) {
     const done = finish(i, s, deps, templateReport(i, i.evidence), paged, `${i.events[0]!.kind}-${i.id.slice(9, 13)}`, `${i.events[0]!.kind} is down; the evidence is saved.`)
@@ -321,7 +321,7 @@ async function afterRun(
   return "next"
 }
 
-async function followUp(i: Incident, original: Incident, s: SentinelSettings, deps: WorkerDeps, deliver: (page: Page, report: string, commentOn?: string) => Promise<void>): Promise<Step> {
+async function runUpdate(i: Incident, original: Incident, s: SentinelSettings, deps: WorkerDeps, deliver: (page: Page, report: string, commentOn?: string) => Promise<void>): Promise<Step> {
   const paged = i.events[0]!.domain
   const path = original.reportPath!
   const finishUpdate = async (raw: string, summary: string) => {
@@ -348,7 +348,7 @@ async function followUp(i: Incident, original: Incident, s: SentinelSettings, de
     await finishUpdate(i.evidence ?? "", `${i.events[0]!.kind} is down again; the evidence is added to the report.`)
     return "next"
   }
-  const r = await deps.agent(followUpPrompt(i, original, readFileSync(join(s.workspace, path), "utf8"), s.workspace, deps.now(), followupsFor(original, deps.now())), s)
+  const r = await deps.agent(updatePrompt(i, original, readFileSync(join(s.workspace, path), "utf8"), s.workspace, deps.now(), followupsFor(original, deps.now())), s)
   if (typeof r === "string") {
     i.state = "blocked"
     i.why = r
@@ -359,7 +359,7 @@ async function followUp(i: Incident, original: Incident, s: SentinelSettings, de
   const status = outcomeOf(true, r.code, r.timedOut, r.output)
   if (status === "auth") return lapsedLogin(i, s, deps)
   loginBack()
-  const parsed = status === "ok" || status === "blocked" ? parseAgentReport(r.output, { followUp: true }) : null
+  const parsed = status === "ok" || status === "blocked" ? parseAgentReport(r.output, { update: true }) : null
   if (!parsed) {
     mkdirSync(transcriptsDir(), { recursive: true })
     writeFileSync(join(transcriptsDir(), `${i.id}-${i.attempts}.log`), r.output, { mode: 0o600 })

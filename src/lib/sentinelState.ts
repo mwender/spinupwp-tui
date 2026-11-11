@@ -102,8 +102,8 @@ export interface Incident {
   startedAt?: string
   retryAfter?: string
   why?: string // blocked or failed: what's needed
-  refersTo?: string // a follow-up's original incident, whose report it updates
-  update?: string // a follow-up's text, as appended to that report
+  refersTo?: string // an update's original incident, whose report it updates
+  update?: string // an update's text, as appended to that report
   evidence?: string
   site?: string // the site the report is filed under
   reportPath?: string
