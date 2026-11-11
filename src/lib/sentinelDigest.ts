@@ -16,6 +16,7 @@ import { execSshCommand } from "./sshExec.ts"
 import { hasIncidentMonitors } from "./cliIncidents.ts"
 import { withKuma } from "./uptimeKuma.ts"
 import { join } from "node:path"
+import { effectiveState, readLedger, type Followup } from "./followups.ts"
 
 const CHECK_TIMEOUT_MS = 30_000
 const CONCURRENCY = 4
@@ -39,6 +40,25 @@ export interface DigestData {
   apt: ExpectResult[]
   notes: string[]
   paused?: string
+  followups?: Followup[]
+}
+
+// The ledger in one or two lines: what's open by kind, and what moved today. A
+// regression was already paged when its report arrived, so it isn't attention here.
+export function followupLines(items: Followup[], when: Date): string[] {
+  const since = when.getTime() - DAY_MS
+  const open = items.filter((f) => effectiveState(f, when) === "open")
+  if (!items.length) return []
+  const byKind = new Map<string, number>()
+  for (const f of open) byKind.set(f.kind, (byKind.get(f.kind) ?? 0) + 1)
+  const kinds = [...byKind].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${k}`).join(", ")
+  const created = items.filter((f) => f.kind !== "note" && Date.parse(f.createdAt) >= since).length
+  const closed = items.filter((f) => (f.state === "done" || f.state === "wontfix") && f.kind !== "note" && Date.parse(f.changedAt) >= since && Date.parse(f.createdAt) < Date.parse(f.changedAt)).length
+  const back = items.filter((f) => f.history.some((e) => e.event === "regressed" && Date.parse(e.at) >= since))
+  const moved = [created ? `${created} new` : "", closed ? `${closed} closed` : ""].filter(Boolean).join(" · ")
+  const lines = [`To do: ${plural(open.length, "open follow-up")}${kinds ? ` (${kinds})` : ""}${moved ? ` · ${moved}` : ""}`]
+  if (back.length) lines.push(`Back after a fix: ${back.map((f) => `${f.id} ${f.title}`).join("; ")}`)
+  return lines
 }
 
 export interface Digest {
@@ -93,6 +113,7 @@ export function composeDigest(d: DigestData, flags: Flags): Digest {
     for (const i of recurrences) bySite.set(i.events[0]!.domain, (bySite.get(i.events[0]!.domain) ?? 0) + 1)
     lines.push(`Recurring: ${[...bySite].map(([s, n]) => `${s} ×${n}`).join(", ")}`)
   }
+  if (d.followups) lines.push(...followupLines(d.followups, d.when))
   if (stuck.length) lines.push("", "Stuck:", ...stuck.map((i) => `  ${i.id}: ${i.state}${i.why ? ` (${i.why})` : ""}`))
   if (fresh.length) lines.push("", "New:", ...fresh.map((l) => `  ${l}`))
   if (ongoing.length) lines.push("", "Ongoing:", ...ongoing.map((l) => `  ${l}`))
@@ -262,7 +283,10 @@ export async function gatherDigest(s: SentinelSettings, cfg: AppConfig, apiClien
   )
   const apt = await checkApt(fleet, cfg, deps, !!opts.dryRun)
   const pause = loadPause()
+  const ledger = readLedger()
+  if (ledger.skipped) notes.push(`${plural(ledger.skipped, "line")} of the follow-up ledger didn't parse and ${ledger.skipped === 1 ? "was" : "were"} skipped.`)
   return {
+    followups: [...ledger.items.values()],
     when,
     health,
     ticks: readTickLog(when.getTime() - DAY_MS),

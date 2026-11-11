@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Sentinel keeps a list of what its reports tell you to do.** Each recommendation becomes an item with an ID, a kind, a scope and a state, and the agent sees the list before every diagnosis: it refers to items by ID instead of repeating them, stops recommending what you've marked won't fix, and reopens a fix that didn't hold. `spinuptui followups` lists them and marks them done, won't fix or snoozed, and the digest says what's open. It's kept as an append-only log in your SpinupTUI folder that merges cleanly between machines. See [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do).
+
 ## [1.3.0] - 2026-11-10
 
 **Modules: the parts of SpinupTUI that keep working after you close it.** The Modules tab (`6`) and `spinuptui modules` show each one's status on this machine and set it up from the same place. Three ship in this release, and each builds on the one before: **Beacon** pages you, **Scheduler** runs follow-ups on a clock, and **Sentinel** watches the fleet, works out what broke, and writes it up. Turning on Scheduler makes a machine a *station*, so put it on one that stays awake. They've been in pre-release on npm's `next` tag since 1.2.0-alpha.1; this rolls up 1.3.0-alpha.1 to alpha.9.

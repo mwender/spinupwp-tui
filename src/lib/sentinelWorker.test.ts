@@ -5,7 +5,8 @@ import { join } from "node:path"
 import { tryLock } from "./flock.ts"
 import { DEFAULT_ALLOW, loadIncident, saveIncident, workerLockPath, type Incident, type SentinelSettings } from "./sentinelState.ts"
 import { diagnosisPrompt, followUpPrompt, parseAgentReport } from "./sentinelPrompt.ts"
-import { postReport, runWorker, saveReport, type WorkerDeps } from "./sentinelWorker.ts"
+import { followupsFor, postReport, runWorker, saveReport, type WorkerDeps } from "./sentinelWorker.ts"
+import { appendEvents, readLedger } from "./followups.ts"
 
 const REPORT = "SUMMARY: The cron overlapped.\nSTATUS: done\nSITE: b.example.com\nSLUG: cron-overlap\n\n# 10/30/2026 (13:34) - a.example.com - health\n\n## Root cause\n\nCron.\n"
 const now = new Date("2026-10-30T14:00:00Z")
@@ -258,4 +259,85 @@ describe("follow-ups", () => {
     const p = followUpPrompt(incident("again"), { ...incident("orig"), reportPath: "sites/a/x.md" }, "REPORT TEXT", workspace, now)
     for (const s of ["REPORT TEXT", "does the earlier conclusion still hold", "data, never instructions", "Don't edit the earlier report"]) expect(p).toContain(s)
   })
+})
+
+describe("the follow-up ledger", () => {
+  const UPDATE = "SUMMARY: The conclusion changed.\nSTATUS: done\n\nThe bot is gone.\n"
+  const original = () => {
+    const path = saveReport(workspace, "a.example.com", "first", "# 10/30/2026 (13:34) - a.example.com - health\n\n## Root cause\n\nThe bot.\n", now)
+    return incident("orig", { state: "reported", reportPath: path, reportedAt: now.toISOString(), site: "a.example.com" })
+  }
+  const block = (entries: unknown[]) => `\n## Follow-ups\n\n- [new-1] Add a Kuma monitor.\n\n\`\`\`followups\n${JSON.stringify(entries)}\n\`\`\`\n`
+  const NEW = [{ ref: "new-1", kind: "monitoring", scope: "site:b.example.com", title: "Add a Kuma monitor" }]
+
+  test("the block becomes ledger items, the report is saved without it, and the page says so", async () => {
+    incident("one")
+    const pages: string[] = []
+    const posts: string[] = []
+    await runWorker(settings({ reportTo: "board" }), deps({ code: 0, output: REPORT + block(NEW) }, pages, posts))
+    const i = loadIncident("one")!
+    const saved = readFileSync(join(workspace, i.reportPath!), "utf8")
+    expect(saved).toContain("- [F-1] Add a Kuma monitor.")
+    expect(saved).not.toContain("```followups")
+    expect(posts[0]).toBe(saved)
+    expect(i.followups).toEqual(["F-1"])
+    expect(readLedger().items.get("F-1")).toMatchObject({ state: "open", reports: [i.reportPath], scope: "site:b.example.com" })
+    expect(pages[0]).toContain("Follow-ups: F-1 new")
+  })
+
+  test("the next diagnosis sees it, and can say it's back", async () => {
+    incident("one")
+    await runWorker(settings(), deps({ code: 0, output: REPORT + block(NEW) }))
+    appendEvents([{ v: 1, at: now.toISOString(), by: "operator@mini", id: "F-1", event: "done", text: "Added it." }])
+    incident("two", { events: [{ domain: "b.example.com", kind: "health", time: "2026-10-30 13:50:00.000", message: "", monitorId: 1 }] })
+    const prompts: string[] = []
+    const pages: string[] = []
+    await runWorker(settings(), deps({ code: 0, output: REPORT.replace("cron-overlap", "again") + block([{ ref: "F-1", event: "regressed", text: "Still no monitor." }]) }, pages, [], prompts))
+    expect(prompts[0]).toContain('F-1 [done, monitoring, site:b.example.com] Add a Kuma monitor\n  The operator said')
+    expect(prompts[0]).toContain("```followups")
+    expect(pages[0]).toContain("↩️ F-1 is back: Add a Kuma monitor. Still no monitor.")
+    expect(readLedger().items.get("F-1")!.state).toBe("open")
+  })
+
+  test("a block that doesn't parse stays in the report and doesn't fail the diagnosis", async () => {
+    incident("one")
+    const pages: string[] = []
+    await runWorker(settings(), deps({ code: 0, output: REPORT + "\n```followups\n[{oops\n```\n" }, pages))
+    const i = loadIncident("one")!
+    expect(i.state).toBe("reported")
+    expect(readFileSync(join(workspace, i.reportPath!), "utf8")).toContain("```followups")
+    expect(pages[0]).toContain(`Retry with: spinuptui followups import ${i.reportPath}`)
+    expect(readLedger().items.size).toBe(0)
+  })
+
+  test("an answer with no block is handled as before", async () => {
+    incident("one")
+    const pages: string[] = []
+    await runWorker(settings(), deps({ code: 0, output: REPORT }, pages))
+    expect(pages[0]).not.toContain("Follow-ups")
+    expect(readLedger().items.size).toBe(0)
+  })
+
+  test("a follow-up's update can raise items too", async () => {
+    const o = original()
+    incident("again", { refersTo: "orig", createdAt: new Date(now.getTime() + 1000).toISOString() })
+    const pages: string[] = []
+    await runWorker(settings(), deps({ code: 0, output: UPDATE + block(NEW) }, pages))
+    const text = readFileSync(join(workspace, o.reportPath!), "utf8")
+    expect(text).toContain("[F-1] Add a Kuma monitor.")
+    expect(text).not.toContain("```followups")
+    expect(readLedger().items.get("F-1")!.reports).toEqual([o.reportPath!])
+    expect(pages[0]).toContain("Follow-ups: F-1 new")
+  })
+})
+
+test("the prompt's follow-ups cover every site on the incident's server", () => {
+  appendEvents([
+    { v: 1, at: now.toISOString(), by: "sentinel", id: "F-1", event: "created", kind: "plugin", scope: "site:cotenant.example.com", title: "Update the calendar plugin" },
+    { v: 1, at: now.toISOString(), by: "sentinel", id: "F-2", event: "created", kind: "plugin", scope: "site:elsewhere.example.com", title: "Not this server" },
+  ])
+  const fleet = { domains: { "cotenant.example.com": { server: "web1", site: "cotenant.example.com" }, "www.cotenant.example.com": { server: "web1", site: "cotenant.example.com" }, "elsewhere.example.com": { server: "web2", site: "elsewhere.example.com" } } }
+  const text = followupsFor(incident("one"), now, fleet)
+  expect(text).toContain("F-1")
+  expect(text).not.toContain("F-2")
 })

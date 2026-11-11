@@ -106,6 +106,31 @@ Setup shows the account before you choose a project, so you'll see if the wrong 
 Over SSH, or in an agent's shell, the login can't be confirmed even when it's fine, because those sessions can't read the Keychain. So you can still save the board by giving its project ID or any URL from the project, and the morning digest's Board line tells you whether it works.
 
 
+## What the reports tell you to do
+
+Every report ends with what to do about it, and Sentinel keeps those recommendations as a list, so they don't get lost between reports. Each one gets an ID (`F-41`), a kind (`nginx`, `monitoring`, `plugin`, `server`, `sentinel`, `decision`, `watch`, or `note` for something the agent did itself), a scope (a site, a server, or the whole fleet), and a state: open, done, won't fix or snoozed.
+
+- **The agent sees the list before it investigates:** the open, snoozed and recently closed items for the sites on that server, the server itself and the fleet, with your latest comment on each. It refers to an item already on record by its ID instead of writing it up again, and the report's bullets carry those IDs.
+- **Your decisions stick.** Mark something won't fix, with a reason, and Sentinel stops recommending it. If the evidence later argues for it, it says so once, as a comment on that item.
+- **A fix that didn't hold comes back.** If something marked done is back, the agent reopens it, and the page that announces the report says so. That's the only change the agent can make: closing, won't-fixing and snoozing are yours.
+- The page for each report lists the items it created or confirmed, and the digest has a line with what's open, by kind, and what changed.
+
+Work the list from the command line:
+
+```
+spinuptui followups list [--state open|done|wontfix|snoozed|all] [--kind <kind>] [--site <d>] [--server <host>]
+spinuptui followups show F-41
+spinuptui followups done F-41 "Added the monitor"
+spinuptui followups wontfix F-12 "Only paying clients get monitors"
+spinuptui followups snooze F-7 --until 2026-12-01
+spinuptui followups comment F-41 "Waiting on the client"
+spinuptui followups reopen F-41
+```
+
+**Where it's kept:** `~/SpinupTUI/sentinel/followups.jsonl`, wherever your workspace is, so it's backed up with your SpinupTUI folder. It's a log that's only ever appended to, one line per change, and a `.gitattributes` beside it lets git merge two machines' changes without a conflict. You can read it with `cat` or `jq`. Only the station creates items; any machine can comment on them or change their state.
+
+If the agent's list at the end of a report can't be read, the report is still saved, with the list left in it, and the page tells you. Fix the list in the report by hand and run `spinuptui followups import <report>`.
+
 ## The daily digest
 
 At 08:00 Sentinel sends one message: station health, the last 24 hours, and your checks. It's silent unless something needs you. A flag appears under **New** on the day it trips and under **Ongoing**, with its age, after that. If you've decided a flag is fine, `spinuptui sentinel expect ack <id>` turns it into a count. Preview it any time with `t` on the Modules tab or `spinuptui sentinel digest --dry-run`.
@@ -160,4 +185,5 @@ spinuptui sentinel diagnose <incident> | post <incident>
 spinuptui sentinel tick [--dry-run] | digest [--dry-run]
 spinuptui sentinel pause --for <time> | resume
 spinuptui sentinel expect list | add | check <id> | remove <id> | ack <id>
+spinuptui followups list | show | done | wontfix | snooze | comment | reopen | import
 ```
