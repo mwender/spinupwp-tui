@@ -104,7 +104,7 @@ describe("follow-ups", () => {
     return { ...i!, state: "reported", reportedAt: at.toISOString(), reportPath: "sites/a/incidents/x.md", closedAt: at.toISOString() }
   }
 
-  test("a repeat in the window is queued as a follow-up to the earlier report", () => {
+  test("a repeat in the window is queued as an update to the earlier report", () => {
     const earlier = reported(new Date(now.getTime() - 3_600_000))
     const r = apply({ incidents: [earlier], events: [ev("a.example.com")] })
     expect(r.created[0]).toMatchObject({ state: "queued", refersTo: earlier.id })
@@ -112,13 +112,13 @@ describe("follow-ups", () => {
     expect(r.pages[0]!.text).toContain("following up on sites/a/incidents/x.md")
   })
 
-  test("a third repeat follows up on the original, not on the follow-up", () => {
+  test("a third repeat follows up on the original, not on the update", () => {
     const earlier = reported(new Date(now.getTime() - 3_600_000))
     const second: Incident = { ...earlier, id: "second", refersTo: earlier.id, reportedAt: new Date(now.getTime() - 1_800_000).toISOString() }
     expect(apply({ incidents: [earlier, second], events: [ev("a.example.com")] }).created[0]!.refersTo).toBe(earlier.id)
   })
 
-  test("in shadow mode a follow-up is recorded, not queued", () => {
+  test("in shadow mode an update is recorded, not queued", () => {
     const r = apply({ incidents: [reported(new Date(now.getTime() - 3_600_000))], events: [ev("a.example.com")], shadow: true })
     expect(r.created[0]).toMatchObject({ state: "shadow" })
     expect(r.created[0]!.refersTo).toBeTruthy()

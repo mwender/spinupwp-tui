@@ -19,8 +19,9 @@ import { commitAndPush } from "./schedulerGit.ts"
 import { gitRootOf } from "./schedulerJobs.ts"
 import { agentCommand, jobEnv, outcomeOf, runProcess, type ProcResult } from "./schedulerRun.ts"
 import { diagnoseButton, startedToday, type Page } from "./sentinelIncidents.ts"
-import { diagnosisPrompt, followUpPrompt, parseAgentReport } from "./sentinelPrompt.ts"
-import { loadIncident, loadIncidents, loadTickState, saveIncident, saveTickState, transcriptsDir, workerLockPath, type Incident, type SentinelSettings } from "./sentinelState.ts"
+import { extractTodos, fillPlaceholders, todoNote, ledgerSection, planEntries, readLedger, relevantItems, withLedger } from "./todos.ts"
+import { diagnosisPrompt, updatePrompt, parseAgentReport } from "./sentinelPrompt.ts"
+import { loadFleet, loadIncident, loadIncidents, loadTickState, type Fleet, saveIncident, saveTickState, transcriptsDir, workerLockPath, type Incident, type SentinelSettings } from "./sentinelState.ts"
 import { MAX_ATTEMPTS, nextRetryAt, sendPage } from "./sentinelTick.ts"
 import { runSiteDoctor } from "./siteDoctor.ts"
 import { execSshCommand } from "./sshExec.ts"
@@ -120,9 +121,48 @@ function label(site: string | undefined, paged: string): string {
   return site && site !== paged ? `${site} (paged as ${paged})` : paged
 }
 
-function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, report: string, site: string, slug: string, summary: string): Page {
+// ---- to-dos ------------------------------------------------------------------------------
+
+// The to-dos block at the end of the agent's answer becomes ledger events, and
+// the report is saved without it. IDs are allocated, and the report saved, inside
+// the ledger's lock, so the [new-1] tags in the report can become the real IDs.
+//
+// Nothing here can fail a diagnosis: a block that doesn't parse stays in the saved
+// report, where `spinuptui todos import` can read it again.
+export function fileWithTodos(body: string, save: (body: string) => string, at: string): { path: string; body: string; note: string; created: string[] } {
+  const ex = extractTodos(body)
+  if (ex.entries === null) {
+    const path = save(body)
+    return { path, body, created: [], note: ex.error ? `⚠️ To-dos weren't recorded: ${ex.error}. Retry with: spinuptui todos import ${path}` : "" }
+  }
+  try {
+    return withLedger((ledger) => {
+      const planned = planEntries(ex.entries!, ledger.items, "", at)
+      const filled = fillPlaceholders(ex.text, planned.placeholders)
+      const path = save(filled)
+      const events = planned.events.map((e) => ("report" in e ? { ...e, report: path } : e))
+      return { events, result: { path, body: filled, note: todoNote(planned), created: planned.created } }
+    })
+  } catch (err) {
+    const path = save(body)
+    return { path, body, created: [], note: `⚠️ To-dos weren't recorded: ${(err as Error).message}. Retry with: spinuptui todos import ${path}` }
+  }
+}
+
+// The site that caused an incident isn't known until it's diagnosed, and it's
+// routinely not the one that paged, so the agent sees the items for every site on
+// the incident's server, not only the paging domains.
+export function todosFor(i: Incident, now: Date, fleet: Fleet = loadFleet()): string {
+  const onServer = i.server ? Object.entries(fleet.domains).filter(([d, e]) => e.server === i.server && d === e.site).map(([d]) => d) : []
+  const domains = [...new Set([...i.events.map((e) => e.domain), ...(i.site ? [i.site] : []), ...onServer])]
+  return ledgerSection(relevantItems(readLedger().items, domains, i.server, now), now)
+}
+
+function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, raw: string, site: string, slug: string, summary: string): { page: Page; report: string } {
   const now = deps.now()
-  const path = saveReport(s.workspace, site, slug, report, now)
+  const filed = fileWithTodos(raw, (b) => saveReport(s.workspace, site, slug, b, now), now.toISOString())
+  const path = filed.path
+  const report = filed.body
   const paged = i.events[0]!.domain
   if (site !== paged) pointTo(s.workspace, paged, path, now)
   i.state = "reported"
@@ -130,8 +170,9 @@ function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, report: stri
   i.reportPath = path
   i.reportedAt = now.toISOString()
   i.summary = summary
+  if (filed.created.length) i.todos = filed.created
   saveIncident(i)
-  return { text: `🧾 ${label(site, paged)}: ${summary}\n\nReport: ${path}`, silent: false }
+  return { page: { text: `🧾 ${label(site, paged)}: ${summary}\n\nReport: ${path}${filed.note ? `\n\n${filed.note}` : ""}`, silent: false }, report }
 }
 
 // An update goes into the original report, under a dated heading.
@@ -178,19 +219,19 @@ async function diagnose(i: Incident, s: SentinelSettings, deps: WorkerDeps): Pro
     await deps.page(failed ? { ...page, text: `${page.text}\n\n⚠️ Couldn't post it to the board: ${failed}\nRetry with: spinuptui sentinel post ${i.id}` } : page)
   }
 
-  // A follow-up needs its original's report. If the original never produced one,
+  // An update needs its original's report. If the original never produced one,
   // this is diagnosed from scratch instead.
   const original = i.refersTo ? loadIncident(i.refersTo) : null
   const prior = original?.reportPath && existsSync(join(s.workspace, original.reportPath)) ? original : null
-  if (prior) return followUp(i, prior, s, deps, deliver)
+  if (prior) return runUpdate(i, prior, s, deps, deliver)
 
   if (!s.agent) {
-    const report = templateReport(i, i.evidence)
-    await deliver(finish(i, s, deps, report, paged, `${i.events[0]!.kind}-${i.id.slice(9, 13)}`, `${i.events[0]!.kind} is down; the evidence is saved.`), report)
+    const done = finish(i, s, deps, templateReport(i, i.evidence), paged, `${i.events[0]!.kind}-${i.id.slice(9, 13)}`, `${i.events[0]!.kind} is down; the evidence is saved.`)
+    await deliver(done.page, done.report)
     return "next"
   }
 
-  const r = await deps.agent(diagnosisPrompt(i, s.workspace, deps.now()), s)
+  const r = await deps.agent(diagnosisPrompt(i, s.workspace, deps.now(), todosFor(i, deps.now())), s)
   if (typeof r === "string") {
     i.state = "blocked"
     i.why = r
@@ -275,23 +316,26 @@ async function afterRun(
   }
   const site = parsed.site && SAFE_SITE.test(parsed.site) ? parsed.site : paged
   const slug = safeSlug(parsed.slug ?? "") || `${i.events[0]!.kind}-${i.id.slice(9, 13)}`
-  await deliver(finish(i, s, deps, parsed.body, site, slug, parsed.summary), parsed.body)
+  const done = finish(i, s, deps, parsed.body, site, slug, parsed.summary)
+  await deliver(done.page, done.report)
   return "next"
 }
 
-async function followUp(i: Incident, original: Incident, s: SentinelSettings, deps: WorkerDeps, deliver: (page: Page, report: string, commentOn?: string) => Promise<void>): Promise<Step> {
+async function runUpdate(i: Incident, original: Incident, s: SentinelSettings, deps: WorkerDeps, deliver: (page: Page, report: string, commentOn?: string) => Promise<void>): Promise<Step> {
   const paged = i.events[0]!.domain
   const path = original.reportPath!
-  const finishUpdate = async (body: string, summary: string) => {
-    appendUpdate(s.workspace, path, body, deps.now())
+  const finishUpdate = async (raw: string, summary: string) => {
+    const filed = fileWithTodos(raw, (b) => (appendUpdate(s.workspace, path, b, deps.now()), path), deps.now().toISOString())
+    const body = filed.body
     i.state = "reported"
     i.site = original.site
     i.reportPath = path
     i.reportedAt = deps.now().toISOString()
     i.summary = summary
     i.update = body
+    if (filed.created.length) i.todos = filed.created
     saveIncident(i)
-    const page = { text: `🔁 ${label(original.site, paged)}: ${summary}\n\nUpdated: ${path}`, silent: false }
+    const page = { text: `🔁 ${label(original.site, paged)}: ${summary}\n\nUpdated: ${path}${filed.note ? `\n\n${filed.note}` : ""}`, silent: false }
     // Only a thread that exists can take a comment; otherwise the update stays in the file.
     if (original.postId) await deliver(page, body, original.postId)
     else {
@@ -304,7 +348,7 @@ async function followUp(i: Incident, original: Incident, s: SentinelSettings, de
     await finishUpdate(i.evidence ?? "", `${i.events[0]!.kind} is down again; the evidence is added to the report.`)
     return "next"
   }
-  const r = await deps.agent(followUpPrompt(i, original, readFileSync(join(s.workspace, path), "utf8"), s.workspace, deps.now()), s)
+  const r = await deps.agent(updatePrompt(i, original, readFileSync(join(s.workspace, path), "utf8"), s.workspace, deps.now(), todosFor(original, deps.now())), s)
   if (typeof r === "string") {
     i.state = "blocked"
     i.why = r
@@ -315,7 +359,7 @@ async function followUp(i: Incident, original: Incident, s: SentinelSettings, de
   const status = outcomeOf(true, r.code, r.timedOut, r.output)
   if (status === "auth") return lapsedLogin(i, s, deps)
   loginBack()
-  const parsed = status === "ok" || status === "blocked" ? parseAgentReport(r.output, { followUp: true }) : null
+  const parsed = status === "ok" || status === "blocked" ? parseAgentReport(r.output, { update: true }) : null
   if (!parsed) {
     mkdirSync(transcriptsDir(), { recursive: true })
     writeFileSync(join(transcriptsDir(), `${i.id}-${i.attempts}.log`), r.output, { mode: 0o600 })
@@ -360,10 +404,13 @@ export function realWorkerDeps(cfg: AppConfig, s: SentinelSettings): WorkerDeps 
       return commentOn ? commentOnBoard(board, commentOn, report) : postToBoard(board, report)
     },
     commit: async (set, message) => {
-      // Only Sentinel's own folder. A workspace elsewhere belongs to its owner.
+      // Only Sentinel's own folder. A workspace elsewhere belongs to its owner, but
+      // the to-do list always lives in Sentinel's folder and is always backed up.
       const work = moduleWorkDir("sentinel")
       const root = gitRootOf(work)
-      if (set.workspace === work && root) await commitAndPush(root, [relative(root, work)], message)
+      if (!root) return
+      const paths = set.workspace === work ? [relative(root, work)] : ["todos.jsonl", ".gitattributes"].filter((f) => existsSync(join(work, f))).map((f) => relative(root, join(work, f)))
+      if (paths.length) await commitAndPush(root, paths, message)
     },
     now: () => new Date(),
   }
