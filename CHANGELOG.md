@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.4.0-alpha.1] - 2026-11-11
+
+A pre-release on npm's `next` tag; `@latest` and Homebrew stay on 1.3.0.
+
 ### Added
 - **Sentinel keeps a list of what its reports tell you to do.** Each recommendation becomes a to-do with an ID, a kind, a scope and a state, and the agent sees the list before every diagnosis: it refers to items by ID instead of repeating them, stops recommending what you've marked won't fix, and reopens a fix that didn't hold. `spinuptui todos` lists them and marks them done, won't fix or snoozed, and the digest says what's open. It's kept as an append-only log in your SpinupTUI folder that merges cleanly between machines. See [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do).
 
@@ -1549,7 +1553,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.1...HEAD
+[1.4.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0...v1.4.0-alpha.1
 [1.3.0]: https://github.com/mwender/spinupwp-tui/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/mwender/spinupwp-tui/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/mwender/spinupwp-tui/compare/v1.2.0...v1.2.1
