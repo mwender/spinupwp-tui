@@ -4,7 +4,7 @@
 // so the app and the site can't drift. Run: bun run site:build
 // (SITE_DRAFTS=1 to include draft posts, for a local preview.)
 
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { MODULES, UPCOMING_MODULES } from "../src/modules/index.ts"
 import pkg from "../package.json"
@@ -19,8 +19,14 @@ const DOCS = `${REPO}/blob/main/docs`
 const nameOf = (id: string) => [...MODULES, ...UPCOMING_MODULES].find((m) => m.id === id)?.name ?? id
 
 // Stable releases only: a pre-release version shouldn't be the one the page
-// advertises. Until then the modules, which only exist in the pre-release, say so.
-const version = pkg.version.includes("-") ? null : pkg.version
+// advertises. While main carries an alpha, the page shows the newest stable
+// release from the changelog instead, so an alpha never relabels the site. Only
+// before the first stable release with modules (1.3.0) did they say "pre-release".
+function advertisedVersion(pkgVersion: string, changelog: string): string | null {
+  if (!pkgVersion.includes("-")) return pkgVersion
+  return /^## \[(\d+\.\d+\.\d+)\]/m.exec(changelog)?.[1] ?? null
+}
+const version = advertisedVersion(pkg.version, readFileSync(join(ROOT, "CHANGELOG.md"), "utf8"))
 
 const posts = loadPosts()
 const releases = await fetchReleases()
