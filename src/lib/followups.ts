@@ -357,7 +357,7 @@ export function planEntries(entries: BlockEntry[], items: Map<string, Followup>,
 export function followupNote(a: Applied): string {
   const parts: string[] = []
   if (a.created.length) parts.push(`${a.created.join(", ")} new`)
-  if (a.stillOpen.length) parts.push(`${a.stillOpen.join(", ")} still open`)
+  if (a.stillOpen.length) parts.push(`${[...new Set(a.stillOpen)].join(", ")} seen again`)
   const lines = parts.length ? [`Follow-ups: ${parts.join(" · ")}`] : []
   for (const r of a.regressed) lines.push(`↩️ ${r.id} is back: ${r.title}${r.text ? `. ${r.text}` : ""}`)
   if (a.warnings.length) lines.push(`⚠️ ${a.warnings.length} follow-up ${a.warnings.length === 1 ? "entry was" : "entries were"} skipped: ${a.warnings.slice(0, 3).join("; ")}`)
@@ -406,7 +406,7 @@ export function ledgerSection(list: Followup[], now: Date): string {
 
 export const BLOCK_INSTRUCTIONS = `After the report, end your answer with a fenced block, \`\`\`followups ... \`\`\`, holding a JSON list. One entry per follow-up in your Follow-ups section:
 
-- A new one: {"ref": "new-1", "kind": "...", "scope": "...", "title": "...", "detail": "..."}. Number them new-1, new-2, and so on, and tag the matching bullet in the report with [new-1], which Sentinel replaces with the real ID. kind is one of ${FOLLOWUP_KINDS.join(", ")}: monitoring is Uptime Kuma, plugin is plugin, theme or core code, server is the OS, PHP-FPM, Redis or swap, sentinel is tuning Sentinel or SpinupTUI, decision needs the operator's call, watch means check again if it recurs, and note is something you did yourself (it's recorded, never open). scope is "site:<domain>", "server:<server host>" or "fleet". title is one short line; detail says why.
+- A new one: {"ref": "new-1", "kind": "...", "scope": "...", "title": "...", "detail": "..."}. Number them new-1, new-2, and so on, and tag the matching bullet in the report with [new-1], which Sentinel replaces with the real ID. kind is one of ${FOLLOWUP_KINDS.join(", ")}: monitoring is Uptime Kuma, plugin is plugin, theme or core code, server is the OS, PHP-FPM, Redis or swap, sentinel is tuning Sentinel or SpinupTUI, decision needs the operator's call, watch means check again if it recurs, and note is something you did yourself (it's recorded, never open). Something you tried and couldn't do, such as an edit you weren't allowed to make, is not a note: it's a follow-up for a person, of the kind it concerns. scope is "site:<domain>", "server:<server host>" or "fleet". title is one short line; detail says why.
 - One already on record: {"ref": "F-12", "event": "still-open", "text": "what this incident adds"}, and tag the bullet [F-12]. Don't create a new item for something already on record.
 - One marked done whose problem is back: {"ref": "F-7", "event": "regressed", "text": "the evidence"}.
 
