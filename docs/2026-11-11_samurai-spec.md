@@ -22,12 +22,12 @@ Sentinel has been live since 2026-11-03. The workspace holds 223 incident report
 
 | Observation | What it decides |
 |---|---|
-| The same recommendation recurs across reports: a missed-beat tolerance on the `fatal` push monitor appears in at least five, "10 of web11's 13 sites are unmonitored" in four, an Astra Addon decision in four | A to-do belongs to a site, server or the fleet, not to a report. Reports reference it |
-| Agents already carry items forward by hand ("Still open from the 2026-10-06 knoxec.com report: …") | The agent wants this context; give it the ledger instead of making it reread old reports |
+| The same recommendation recurs across reports: a missed-beat tolerance on the `fatal` push monitor appears in at least five, "10 of this server's 13 sites are unmonitored" in four, a premium-plugin license decision in four | A to-do belongs to a site, server or the fleet, not to a report. Reports reference it |
+| Agents already carry items forward by hand ("Still open from the 2026-10-06 report on …") | The agent wants this context; give it the ledger instead of making it reread old reports |
 | Some agents already use `- [ ]` / `- [x]` | A checklist is the natural shape |
 | Some bullets aren't to-dos: "I added this event to SITE.md", "I didn't run the first-hop test" | Items need a kind for notes, which are recorded but never open |
 | Only 6 of 72 mention nginx; the largest group by far is Kuma monitoring (missing monitors, beat tolerance), then plugin and theme decisions, server ops (swap, sysstat, `pm.max_children`) and Sentinel/SpinupTUI tuning | The ledger and browser are worth building for their own sake. Samurai is one consumer, and its first version is narrow |
-| The canonical nginx example (mwender.com, 2026-11-08: deny `/wp-admin/includes/*.php` and `/wp-config-sample.php`) is on a Cloudflare-proxied site, logged from Cloudflare edge IPs, and the site isn't onboarded to nginx-deploy | Path rules first, IP rules only after real-IP is fixed, and onboarding is a real prerequisite (see Samurai) |
+| The canonical nginx example (a small site, 2026-11-08: deny `/wp-admin/includes/*.php` and `/wp-config-sample.php`) is on a Cloudflare-proxied site, logged from Cloudflare edge IPs, and the site isn't onboarded to nginx-deploy | Path rules first, IP rules only after real-IP is fixed, and onboarding is a real prerequisite (see Samurai) |
 
 ## Scope
 
@@ -61,12 +61,12 @@ A to-do is the result of its events, so this is what the TUI and CLI show, not w
 {
   "id": "T-41",
   "kind": "nginx",
-  "scope": { "type": "site", "domain": "mwender.com" },
+  "scope": { "type": "site", "domain": "example.com" },
   "title": "Deny direct requests to wp-admin/includes/*.php and wp-config-sample.php",
   "detail": "Scanners run core files directly; each one is a fatal and a page.",
   "fix": { "template": "deny-paths", "params": { "paths": ["~ ^/wp-admin/includes/.*\\.php$", "= /wp-config-sample.php"], "status": 403 } },
   "state": "open",
-  "reports": ["sites/mwender.com/incidents/2026-11-08-scanner-get-locale-fatal.md"],
+  "reports": ["sites/example.com/incidents/2026-11-08-scanner-get-locale-fatal.md"],
   "comments": [{ "at": "2026-11-11T15:02:00Z", "by": "operator@macbook", "text": "Do this before the next scan." }]
 }
 ```
@@ -84,7 +84,7 @@ A to-do is the result of its events, so this is what the TUI and CLI show, not w
 One JSON event per line, never edited or removed:
 
 ```
-{"v":1,"at":"2026-11-08T13:40:00Z","by":"sentinel","id":"T-41","event":"created","kind":"nginx","scope":"site:mwender.com","title":"…","fix":{…},"report":"sites/mwender.com/incidents/2026-11-08-scanner-get-locale-fatal.md"}
+{"v":1,"at":"2026-11-08T13:40:00Z","by":"sentinel","id":"T-41","event":"created","kind":"nginx","scope":"site:example.com","title":"…","fix":{…},"report":"sites/example.com/incidents/2026-11-08-scanner-get-locale-fatal.md"}
 {"v":1,"at":"2026-11-11T15:02:00Z","by":"operator@macbook","id":"T-41","event":"comment","text":"Do this before the next scan."}
 {"v":1,"at":"2026-11-12T09:10:00Z","by":"operator@macbook","id":"T-41","event":"done","text":"Samurai proposal P-3, verified"}
 ```
@@ -105,10 +105,10 @@ The agent's answer gains one fenced block after the report, which Sentinel parse
 ````
 ```todos
 [
-  { "ref": "new", "kind": "nginx", "scope": "site:mwender.com", "title": "…", "detail": "…", "fix": { "template": "deny-paths", "params": { … } } },
+  { "ref": "new", "kind": "nginx", "scope": "site:example.com", "title": "…", "detail": "…", "fix": { "template": "deny-paths", "params": { … } } },
   { "ref": "T-12", "event": "still-open", "text": "Third page in three days that a 2-miss tolerance would have absorbed." },
   { "ref": "T-7", "event": "regressed", "text": "Marked done 11-04, but the same fatal is back." },
-  { "ref": "new", "kind": "note", "scope": "server:web11.wenmarkdigital.com", "title": "Added SITE.md for web11" }
+  { "ref": "new", "kind": "note", "scope": "server:web1.example.com", "title": "Added SITE.md for web1" }
 ]
 ```
 ````
@@ -153,7 +153,7 @@ A new top-level tab, `7 Reports`, beside Modules. It has two lists, toggled with
 | `f` | Fix with Samurai: only on an item with a valid `fix`, on an onboarded site |
 | `Enter` | Jump to the newest report it appears in |
 
-The tab teaches itself in context: the legend shows only the keys that apply to the selected item, and `f` on an item without a handler explains why it isn't available, e.g. "mwender.com isn't set up for nginx deploys yet".
+The tab teaches itself in context: the legend shows only the keys that apply to the selected item, and `f` on an item without a handler explains why it isn't available, e.g. "example.com isn't set up for nginx deploys yet".
 
 Other places it surfaces, cheaply:
 
@@ -205,7 +205,7 @@ SpinupWP already ships `xmlrpc-protection.conf`, `uploads-directory-protection.c
 
 ### Eligibility
 
-A site is eligible when it has a Samurai mirror (below, or an existing nginx-deploy mirror, adopted), the gate on its server reports a compatible version, its allowlist includes `server/samurai.conf`, and `doctor` passes. Today that's no site: caseantiques.com and sfgmedicare.com have nginx-deploy mirrors and gates, but neither allowlists `server/samurai.conf` yet. `f` on an ineligible site opens guided setup instead of failing.
+A site is eligible when it has a Samurai mirror (below, or an existing nginx-deploy mirror, adopted), the gate on its server reports a compatible version, its allowlist includes `server/samurai.conf`, and `doctor` passes. Today that's no site: the two sites already on nginx-deploy have mirrors and gates, but neither allowlists `server/samurai.conf` yet. `f` on an ineligible site opens guided setup instead of failing.
 
 ### Guided setup
 
@@ -266,7 +266,7 @@ Each phase is useful alone and can ship as its own `1.4.0-alpha.N` on npm's `nex
 
 1. **Ledger and structured to-dos.** Prompt changes, parser, event log, fold and lock, the home repository's `.gitattributes`, the CLI, the digest section. Run it live for a few days to see whether agents use IDs and the block reliably before anything is built on it.
 2. **Report Browser.** The tab, both lists, the state actions, the site-details count. Then the back-fill.
-3. **Samurai v1.** The folded-in gate and guided setup first, then templates, propose/apply/rollback, verification and the `f` key. Tested first against nginx-deploy's sandbox, then live on wp.spinuptui.com (set up from scratch), then on caseantiques.com (migrated).
+3. **Samurai v1.** The folded-in gate and guided setup first, then templates, propose/apply/rollback, verification and the `f` key. Tested first against nginx-deploy's sandbox, then live on wp.spinuptui.com (set up from scratch), then on one of the two existing nginx-deploy sites (migrated).
 
 ## Testing
 
@@ -279,7 +279,7 @@ Each phase is useful alone and can ship as its own `1.4.0-alpha.N` on npm's `nex
 ## Open questions
 
 - **Folding in nginx-deploy (decision 7).** It's the proof of concept and stays private. Its gate, `install.sh` and client move into SpinupTUI in phase 3, with guided setup. Open: whether the gate keeps its name and paths (`/usr/local/sbin/spinupwp-nginx-deploy`), which makes migrating the two existing sites trivial, or is renamed for Samurai.
-- **Server- and fleet-scope fixes.** nginx-deploy is per site, and some to-dos are box-wide, such as venus's `before/zz-box-deny-scanners.conf`. v1 handles site scope only.
+- **Server- and fleet-scope fixes.** nginx-deploy is per site, and some to-dos are box-wide, such as one server's box-wide scanner deny in `before/`. v1 handles site scope only.
 - **Rule hygiene.** The tag in each rule's header makes hits countable. A digest line for rules that haven't fired in 30 days is a small addition once there are enough rules to matter.
 - **Where Sentinel's reports should live long-term.** The diagnostics workspace has no backup for `sites/`. Moving it into the private home repository was already noted as Sentinel's decision 4's cost.
 
