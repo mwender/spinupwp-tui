@@ -118,8 +118,8 @@ Usage:
   spinuptui sentinel setup | attach | status | list | pause | expect
                        Watch the fleet, work out what broke, write it up
                        (runs as Scheduler jobs; see docs/sentinel.md)
-  spinuptui followups list | show | done | wontfix | snooze | comment | reopen
-                       Work the follow-ups Sentinel's reports recommend
+  spinuptui todos list | show | done | wontfix | snooze | comment | reopen
+                       Work the to-dos Sentinel's reports recommend
   spinuptui home       Where the SpinupTUI folder (your jobs and reports) is
   spinuptui home sync --plan|--apply --github <name> | --remote <url> | --clone <url>
                        Share that folder across machines through a private git
@@ -333,9 +333,9 @@ if (command === "scheduler") {
   process.exit(await runScheduler(args.slice(args.indexOf("scheduler") + 1)))
 }
 
-if (command === "followups") {
-  const { runFollowups } = await import("./lib/cliFollowups.ts")
-  process.exit(await runFollowups(args.slice(args.indexOf("followups") + 1)))
+if (command === "todos") {
+  const { runTodos } = await import("./lib/cliTodos.ts")
+  process.exit(await runTodos(args.slice(args.indexOf("todos") + 1)))
 }
 
 if (command === "sentinel") {

@@ -19,7 +19,7 @@ import { commitAndPush } from "./schedulerGit.ts"
 import { gitRootOf } from "./schedulerJobs.ts"
 import { agentCommand, jobEnv, outcomeOf, runProcess, type ProcResult } from "./schedulerRun.ts"
 import { diagnoseButton, startedToday, type Page } from "./sentinelIncidents.ts"
-import { extractFollowups, fillPlaceholders, followupNote, ledgerSection, planEntries, readLedger, relevantItems, withLedger } from "./followups.ts"
+import { extractTodos, fillPlaceholders, todoNote, ledgerSection, planEntries, readLedger, relevantItems, withLedger } from "./todos.ts"
 import { diagnosisPrompt, updatePrompt, parseAgentReport } from "./sentinelPrompt.ts"
 import { loadFleet, loadIncident, loadIncidents, loadTickState, type Fleet, saveIncident, saveTickState, transcriptsDir, workerLockPath, type Incident, type SentinelSettings } from "./sentinelState.ts"
 import { MAX_ATTEMPTS, nextRetryAt, sendPage } from "./sentinelTick.ts"
@@ -121,19 +121,19 @@ function label(site: string | undefined, paged: string): string {
   return site && site !== paged ? `${site} (paged as ${paged})` : paged
 }
 
-// ---- follow-ups ---------------------------------------------------------------------------
+// ---- to-dos ------------------------------------------------------------------------------
 
-// The follow-ups block at the end of the agent's answer becomes ledger events, and
+// The to-dos block at the end of the agent's answer becomes ledger events, and
 // the report is saved without it. IDs are allocated, and the report saved, inside
 // the ledger's lock, so the [new-1] tags in the report can become the real IDs.
 //
 // Nothing here can fail a diagnosis: a block that doesn't parse stays in the saved
-// report, where `spinuptui followups import` can read it again.
-export function fileWithFollowups(body: string, save: (body: string) => string, at: string): { path: string; body: string; note: string; created: string[] } {
-  const ex = extractFollowups(body)
+// report, where `spinuptui todos import` can read it again.
+export function fileWithTodos(body: string, save: (body: string) => string, at: string): { path: string; body: string; note: string; created: string[] } {
+  const ex = extractTodos(body)
   if (ex.entries === null) {
     const path = save(body)
-    return { path, body, created: [], note: ex.error ? `⚠️ Follow-ups weren't recorded: ${ex.error}. Retry with: spinuptui followups import ${path}` : "" }
+    return { path, body, created: [], note: ex.error ? `⚠️ To-dos weren't recorded: ${ex.error}. Retry with: spinuptui todos import ${path}` : "" }
   }
   try {
     return withLedger((ledger) => {
@@ -141,18 +141,18 @@ export function fileWithFollowups(body: string, save: (body: string) => string, 
       const filled = fillPlaceholders(ex.text, planned.placeholders)
       const path = save(filled)
       const events = planned.events.map((e) => ("report" in e ? { ...e, report: path } : e))
-      return { events, result: { path, body: filled, note: followupNote(planned), created: planned.created } }
+      return { events, result: { path, body: filled, note: todoNote(planned), created: planned.created } }
     })
   } catch (err) {
     const path = save(body)
-    return { path, body, created: [], note: `⚠️ Follow-ups weren't recorded: ${(err as Error).message}. Retry with: spinuptui followups import ${path}` }
+    return { path, body, created: [], note: `⚠️ To-dos weren't recorded: ${(err as Error).message}. Retry with: spinuptui todos import ${path}` }
   }
 }
 
 // The site that caused an incident isn't known until it's diagnosed, and it's
 // routinely not the one that paged, so the agent sees the items for every site on
 // the incident's server, not only the paging domains.
-export function followupsFor(i: Incident, now: Date, fleet: Fleet = loadFleet()): string {
+export function todosFor(i: Incident, now: Date, fleet: Fleet = loadFleet()): string {
   const onServer = i.server ? Object.entries(fleet.domains).filter(([d, e]) => e.server === i.server && d === e.site).map(([d]) => d) : []
   const domains = [...new Set([...i.events.map((e) => e.domain), ...(i.site ? [i.site] : []), ...onServer])]
   return ledgerSection(relevantItems(readLedger().items, domains, i.server, now), now)
@@ -160,7 +160,7 @@ export function followupsFor(i: Incident, now: Date, fleet: Fleet = loadFleet())
 
 function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, raw: string, site: string, slug: string, summary: string): { page: Page; report: string } {
   const now = deps.now()
-  const filed = fileWithFollowups(raw, (b) => saveReport(s.workspace, site, slug, b, now), now.toISOString())
+  const filed = fileWithTodos(raw, (b) => saveReport(s.workspace, site, slug, b, now), now.toISOString())
   const path = filed.path
   const report = filed.body
   const paged = i.events[0]!.domain
@@ -170,7 +170,7 @@ function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, raw: string,
   i.reportPath = path
   i.reportedAt = now.toISOString()
   i.summary = summary
-  if (filed.created.length) i.followups = filed.created
+  if (filed.created.length) i.todos = filed.created
   saveIncident(i)
   return { page: { text: `🧾 ${label(site, paged)}: ${summary}\n\nReport: ${path}${filed.note ? `\n\n${filed.note}` : ""}`, silent: false }, report }
 }
@@ -231,7 +231,7 @@ async function diagnose(i: Incident, s: SentinelSettings, deps: WorkerDeps): Pro
     return "next"
   }
 
-  const r = await deps.agent(diagnosisPrompt(i, s.workspace, deps.now(), followupsFor(i, deps.now())), s)
+  const r = await deps.agent(diagnosisPrompt(i, s.workspace, deps.now(), todosFor(i, deps.now())), s)
   if (typeof r === "string") {
     i.state = "blocked"
     i.why = r
@@ -325,7 +325,7 @@ async function runUpdate(i: Incident, original: Incident, s: SentinelSettings, d
   const paged = i.events[0]!.domain
   const path = original.reportPath!
   const finishUpdate = async (raw: string, summary: string) => {
-    const filed = fileWithFollowups(raw, (b) => (appendUpdate(s.workspace, path, b, deps.now()), path), deps.now().toISOString())
+    const filed = fileWithTodos(raw, (b) => (appendUpdate(s.workspace, path, b, deps.now()), path), deps.now().toISOString())
     const body = filed.body
     i.state = "reported"
     i.site = original.site
@@ -333,7 +333,7 @@ async function runUpdate(i: Incident, original: Incident, s: SentinelSettings, d
     i.reportedAt = deps.now().toISOString()
     i.summary = summary
     i.update = body
-    if (filed.created.length) i.followups = filed.created
+    if (filed.created.length) i.todos = filed.created
     saveIncident(i)
     const page = { text: `🔁 ${label(original.site, paged)}: ${summary}\n\nUpdated: ${path}${filed.note ? `\n\n${filed.note}` : ""}`, silent: false }
     // Only a thread that exists can take a comment; otherwise the update stays in the file.
@@ -348,7 +348,7 @@ async function runUpdate(i: Incident, original: Incident, s: SentinelSettings, d
     await finishUpdate(i.evidence ?? "", `${i.events[0]!.kind} is down again; the evidence is added to the report.`)
     return "next"
   }
-  const r = await deps.agent(updatePrompt(i, original, readFileSync(join(s.workspace, path), "utf8"), s.workspace, deps.now(), followupsFor(original, deps.now())), s)
+  const r = await deps.agent(updatePrompt(i, original, readFileSync(join(s.workspace, path), "utf8"), s.workspace, deps.now(), todosFor(original, deps.now())), s)
   if (typeof r === "string") {
     i.state = "blocked"
     i.why = r
@@ -405,11 +405,11 @@ export function realWorkerDeps(cfg: AppConfig, s: SentinelSettings): WorkerDeps 
     },
     commit: async (set, message) => {
       // Only Sentinel's own folder. A workspace elsewhere belongs to its owner, but
-      // the follow-up ledger always lives in Sentinel's folder and is always backed up.
+      // the to-do list always lives in Sentinel's folder and is always backed up.
       const work = moduleWorkDir("sentinel")
       const root = gitRootOf(work)
       if (!root) return
-      const paths = set.workspace === work ? [relative(root, work)] : ["followups.jsonl", ".gitattributes"].filter((f) => existsSync(join(work, f))).map((f) => relative(root, join(work, f)))
+      const paths = set.workspace === work ? [relative(root, work)] : ["todos.jsonl", ".gitattributes"].filter((f) => existsSync(join(work, f))).map((f) => relative(root, join(work, f)))
       if (paths.length) await commitAndPush(root, paths, message)
     },
     now: () => new Date(),

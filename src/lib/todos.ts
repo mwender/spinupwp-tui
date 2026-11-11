@@ -1,6 +1,6 @@
-// The follow-up ledger: every recommendation in a Sentinel report becomes an item
+// The to-do list: every recommendation in a Sentinel report becomes an item
 // with an ID, a kind, a scope and a state, so it isn't lost and Sentinel remembers
-// what the operator decided (docs/2026-11-11_samurai-spec.md, "The follow-up ledger").
+// what the operator decided (docs/2026-11-11_samurai-spec.md, "The to-do list").
 //
 // Stored as an append-only event log, one JSON event per line. The current state is
 // a fold over the events. Writes only append, under a lock, and the home repository
@@ -13,9 +13,9 @@ import { dirname, join } from "node:path"
 import { moduleStateDir, moduleWorkDir } from "../modules/contract.ts"
 import { tryLock, type HeldLock } from "./flock.ts"
 
-export const FOLLOWUP_KINDS = ["nginx", "monitoring", "plugin", "server", "sentinel", "decision", "watch", "note"] as const
-export type FollowupKind = (typeof FOLLOWUP_KINDS)[number]
-export type FollowupState = "open" | "done" | "wontfix" | "snoozed"
+export const TODO_KINDS = ["nginx", "monitoring", "plugin", "server", "sentinel", "decision", "watch", "note"] as const
+export type TodoKind = (typeof TODO_KINDS)[number]
+export type TodoState = "open" | "done" | "wontfix" | "snoozed"
 
 // "site:example.com", "server:web1.example.com" or "fleet".
 export type Scope = string
@@ -32,8 +32,8 @@ interface Base {
   id: string
 }
 
-export type FollowupEvent =
-  | (Base & { event: "created"; kind: FollowupKind; scope: Scope; title: string; detail?: string; fix?: Fix; report?: string })
+export type TodoEvent =
+  | (Base & { event: "created"; kind: TodoKind; scope: Scope; title: string; detail?: string; fix?: Fix; report?: string })
   | (Base & { event: "report"; report: string; text?: string })
   | (Base & { event: "comment"; text: string })
   | (Base & { event: "done" | "wontfix" | "reopened" | "regressed"; text?: string; report?: string })
@@ -46,35 +46,35 @@ export interface Comment {
   text: string
 }
 
-export interface Followup {
+export interface Todo {
   id: string
-  kind: FollowupKind
+  kind: TodoKind
   scope: Scope
   title: string
   detail?: string
   fix?: Fix
-  state: FollowupState
+  state: TodoState
   until?: string
   reports: string[]
   comments: Comment[]
-  history: FollowupEvent[]
+  history: TodoEvent[]
   createdAt: string
   updatedAt: string
   changedAt: string // the last state change
 }
 
-export const ledgerPath = () => join(moduleWorkDir("sentinel"), "followups.jsonl")
-const lockPath = () => join(moduleStateDir("sentinel"), "followups.lock")
+export const ledgerPath = () => join(moduleWorkDir("sentinel"), "todos.jsonl")
+const lockPath = () => join(moduleStateDir("sentinel"), "todos.lock")
 
 // The line git's union merge driver needs, kept beside the log so it applies
 // wherever Sentinel's folder lives.
-const ATTRIBUTES = "followups.jsonl merge=union\n"
+const ATTRIBUTES = "todos.jsonl merge=union\n"
 
 // ---- reading ----------------------------------------------------------------------------
 
 export interface Ledger {
-  items: Map<string, Followup>
-  events: FollowupEvent[]
+  items: Map<string, Todo>
+  events: TodoEvent[]
   skipped: number // lines that didn't parse: a torn last line, or a bad merge
 }
 
@@ -85,12 +85,12 @@ export function readLedger(path = ledgerPath()): Ledger {
   } catch {
     return { items: new Map(), events: [], skipped: 0 }
   }
-  const events: FollowupEvent[] = []
+  const events: TodoEvent[] = []
   let skipped = 0
   for (const line of text.split("\n")) {
     if (!line.trim()) continue
     try {
-      const e = JSON.parse(line) as FollowupEvent
+      const e = JSON.parse(line) as TodoEvent
       if (e && typeof e.id === "string" && typeof e.at === "string" && typeof e.event === "string") events.push(e)
       else skipped++
     } catch {
@@ -102,9 +102,9 @@ export function readLedger(path = ledgerPath()): Ledger {
 
 // Timestamp order, not line order: a union merge can interleave two machines'
 // lines. Ties keep file order, which is append order on one machine.
-export function fold(events: FollowupEvent[]): Map<string, Followup> {
+export function fold(events: TodoEvent[]): Map<string, Todo> {
   const sorted = events.map((e, n) => ({ e, n })).sort((a, b) => a.e.at.localeCompare(b.e.at) || a.n - b.n)
-  const items = new Map<string, Followup>()
+  const items = new Map<string, Todo>()
   for (const { e } of sorted) {
     if (e.event === "created") {
       if (items.has(e.id)) continue // a duplicate create, from a bad merge: the first wins
@@ -142,7 +142,7 @@ export function fold(events: FollowupEvent[]): Map<string, Followup> {
   return items
 }
 
-function stateAfter(e: FollowupEvent): FollowupState | null {
+function stateAfter(e: TodoEvent): TodoState | null {
   switch (e.event) {
     case "done":
     case "fix-applied":
@@ -161,22 +161,22 @@ function stateAfter(e: FollowupEvent): FollowupState | null {
 }
 
 // A snooze that has run out reads as open again, without anyone writing an event.
-export function effectiveState(f: Followup, now: Date): FollowupState {
+export function effectiveState(f: Todo, now: Date): TodoState {
   if (f.state === "snoozed" && f.until && Date.parse(`${f.until}T23:59:59Z`) < now.getTime()) return "open"
   return f.state
 }
 
-export const isOpen = (f: Followup, now: Date) => effectiveState(f, now) === "open"
+export const isOpen = (f: Todo, now: Date) => effectiveState(f, now) === "open"
 
-const idNumber = (id: string) => Number(/^F-(\d+)$/.exec(id)?.[1] ?? 0)
+const idNumber = (id: string) => Number(/^T-(\d+)$/.exec(id)?.[1] ?? 0)
 
-export function nextIdNumber(items: Map<string, Followup>): number {
+export function nextIdNumber(items: Map<string, Todo>): number {
   let max = 0
   for (const id of items.keys()) max = Math.max(max, idNumber(id))
   return max + 1
 }
 
-export const sortById = (a: Followup, b: Followup) => idNumber(a.id) - idNumber(b.id)
+export const sortById = (a: Todo, b: Todo) => idNumber(a.id) - idNumber(b.id)
 
 // ---- writing ----------------------------------------------------------------------------
 
@@ -185,7 +185,7 @@ function waitLock(path: string, ms = 10_000): HeldLock {
   for (;;) {
     const l = tryLock(path)
     if (l) return l
-    if (Date.now() > until) throw new Error("the follow-up ledger is locked by another process")
+    if (Date.now() > until) throw new Error("the to-do list is locked by another process")
     Bun.sleepSync(50)
   }
 }
@@ -194,13 +194,13 @@ function prepare(path: string): void {
   mkdirSync(dirname(path), { recursive: true })
   const attrs = join(dirname(path), ".gitattributes")
   const have = existsSync(attrs) ? readFileSync(attrs, "utf8") : ""
-  if (!have.includes("followups.jsonl")) writeFileSync(attrs, have + (have && !have.endsWith("\n") ? "\n" : "") + ATTRIBUTES)
+  if (!have.includes("todos.jsonl")) writeFileSync(attrs, have + (have && !have.endsWith("\n") ? "\n" : "") + ATTRIBUTES)
 }
 
 // Runs `fn` against the current ledger while holding the lock, and appends what it
 // returns. Allocating IDs inside the lock is what keeps two writers from both
-// creating F-42.
-export function withLedger<T>(fn: (ledger: Ledger) => { events: FollowupEvent[]; result: T }, path = ledgerPath()): T {
+// creating T-42.
+export function withLedger<T>(fn: (ledger: Ledger) => { events: TodoEvent[]; result: T }, path = ledgerPath()): T {
   prepare(path)
   const lock = waitLock(path === ledgerPath() ? lockPath() : `${path}.lock`)
   try {
@@ -223,7 +223,7 @@ export function withLedger<T>(fn: (ledger: Ledger) => { events: FollowupEvent[];
   }
 }
 
-export function appendEvents(events: FollowupEvent[], path = ledgerPath()): void {
+export function appendEvents(events: TodoEvent[], path = ledgerPath()): void {
   withLedger(() => ({ events, result: undefined }), path)
 }
 
@@ -269,30 +269,30 @@ export interface Extracted {
   error?: string // the block was there but didn't parse
 }
 
-// The last ```followups fence in the answer. No block is fine: not every report
-// has follow-ups, and older agents don't write one.
-export function extractFollowups(text: string): Extracted {
-  const re = /^```followups[ \t]*\n([\s\S]*?)^```[ \t]*$/gm
+// The last ```todos fence in the answer. No block is fine: not every report
+// has to-dos, and older agents don't write one.
+export function extractTodos(text: string): Extracted {
+  const re = /^```todos[ \t]*\n([\s\S]*?)^```[ \t]*$/gm
   const m = [...text.matchAll(re)].pop()
   if (!m) return { text, entries: null }
   const stripped = (text.slice(0, m.index) + text.slice(m.index! + m[0].length)).replace(/\n{3,}/g, "\n\n").trimEnd() + "\n"
   try {
     const parsed = JSON.parse(m[1]!) as unknown
-    if (!Array.isArray(parsed)) return { text, entries: null, error: "the follow-ups block isn't a JSON list" }
+    if (!Array.isArray(parsed)) return { text, entries: null, error: "the to-dos block isn't a JSON list" }
     const entries = parsed.filter((e): e is BlockEntry => !!e && typeof e === "object" && typeof (e as BlockEntry).ref === "string")
     return { text: stripped, entries }
   } catch (err) {
-    return { text, entries: null, error: `the follow-ups block isn't valid JSON (${(err as Error).message})` }
+    return { text, entries: null, error: `the to-dos block isn't valid JSON (${(err as Error).message})` }
   }
 }
 
 export interface Applied {
-  events: FollowupEvent[]
+  events: TodoEvent[]
   created: string[]
   stillOpen: string[]
   regressed: { id: string; title: string; text: string }[]
   warnings: string[]
-  placeholders: Map<string, string> // "new-1" → "F-43"
+  placeholders: Map<string, string> // "new-1" → "T-43"
 }
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "")
@@ -300,17 +300,17 @@ const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice
 // Turns the agent's entries into events. The agent may create items, attach a
 // report to one, and reopen a done item whose problem is back. It never closes,
 // won't-fixes or snoozes anything: that's the operator's call.
-export function planEntries(entries: BlockEntry[], items: Map<string, Followup>, report: string, at: string): Applied {
+export function planEntries(entries: BlockEntry[], items: Map<string, Todo>, report: string, at: string): Applied {
   const out: Applied = { events: [], created: [], stillOpen: [], regressed: [], warnings: [], placeholders: new Map() }
   let n = nextIdNumber(items)
   const base = { v: 1 as const, at, by: "sentinel" }
   for (const e of entries) {
     const ref = e.ref.trim()
     if (/^new(-\w+)?$/i.test(ref)) {
-      const kind = str(e.kind, 20) as FollowupKind
+      const kind = str(e.kind, 20) as TodoKind
       const scope = str(e.scope, 120)
       const title = str(e.title, 200)
-      if (!FOLLOWUP_KINDS.includes(kind)) {
+      if (!TODO_KINDS.includes(kind)) {
         out.warnings.push(`skipped "${title || ref}": unknown kind ${String(e.kind)}`)
         continue
       }
@@ -322,7 +322,7 @@ export function planEntries(entries: BlockEntry[], items: Map<string, Followup>,
         out.warnings.push(`skipped ${ref}: no title`)
         continue
       }
-      const id = `F-${n++}`
+      const id = `T-${n++}`
       let fix: Fix | null = null
       if (e.fix !== undefined && e.fix !== null) {
         const v = validateFix(e.fix)
@@ -354,18 +354,18 @@ export function planEntries(entries: BlockEntry[], items: Map<string, Followup>,
 }
 
 // One or two lines for the page that announces the report.
-export function followupNote(a: Applied): string {
+export function todoNote(a: Applied): string {
   const parts: string[] = []
   if (a.created.length) parts.push(`${a.created.join(", ")} new`)
   if (a.stillOpen.length) parts.push(`${[...new Set(a.stillOpen)].join(", ")} seen again`)
-  const lines = parts.length ? [`Follow-ups: ${parts.join(" · ")}`] : []
+  const lines = parts.length ? [`To-dos: ${parts.join(" · ")}`] : []
   for (const r of a.regressed) lines.push(`↩️ ${r.id} is back: ${r.title}${r.text ? `. ${r.text}` : ""}`)
-  if (a.warnings.length) lines.push(`⚠️ ${a.warnings.length} follow-up ${a.warnings.length === 1 ? "entry was" : "entries were"} skipped: ${a.warnings.slice(0, 3).join("; ")}`)
+  if (a.warnings.length) lines.push(`⚠️ ${a.warnings.length} to-do ${a.warnings.length === 1 ? "entry was" : "entries were"} skipped: ${a.warnings.slice(0, 3).join("; ")}`)
   return lines.join("\n")
 }
 
 // The report tags new items by the agent's placeholder ([new-1]); once Sentinel
-// has assigned IDs, those become [F-43].
+// has assigned IDs, those become [T-43].
 export function fillPlaceholders(body: string, placeholders: Map<string, string>): string {
   if (!placeholders.size) return body
   return body.replace(/\[(new-\w+)\]/gi, (m, p: string) => {
@@ -382,7 +382,7 @@ const CLOSED_DAYS = 30
 // What the agent sees before it investigates: the items for this incident's sites,
 // its server and the fleet. Open and snoozed items, plus anything closed lately so
 // it can tell when a fix didn't hold.
-export function relevantItems(items: Map<string, Followup>, domains: string[], server: string | null, now: Date): Followup[] {
+export function relevantItems(items: Map<string, Todo>, domains: string[], server: string | null, now: Date): Todo[] {
   const scopes = new Set(["fleet", ...domains.map((d) => `site:${d.toLowerCase()}`), ...domains.map((d) => `server:${d.toLowerCase()}`)])
   if (server) scopes.add(`server:${server.toLowerCase()}`)
   const cutoff = now.getTime() - CLOSED_DAYS * 24 * 3_600_000
@@ -393,8 +393,8 @@ export function relevantItems(items: Map<string, Followup>, domains: string[], s
     .slice(0, PROMPT_CAP)
 }
 
-export function ledgerSection(list: Followup[], now: Date): string {
-  if (!list.length) return "There are no follow-ups on record yet for these sites, their server or the fleet."
+export function ledgerSection(list: Todo[], now: Date): string {
+  if (!list.length) return "There are no to-dos on record yet for these sites, their server or the fleet."
   const lines = list.map((f) => {
     const state = effectiveState(f, now)
     const label = state === "snoozed" && f.until ? `snoozed until ${f.until}` : state
@@ -404,11 +404,11 @@ export function ledgerSection(list: Followup[], now: Date): string {
   return lines.join("\n")
 }
 
-export const BLOCK_INSTRUCTIONS = `After the report, end your answer with a fenced block, \`\`\`followups ... \`\`\`, holding a JSON list. One entry per follow-up in your Follow-ups section:
+export const BLOCK_INSTRUCTIONS = `After the report, end your answer with a fenced block, \`\`\`todos ... \`\`\`, holding a JSON list: the to-do list Sentinel keeps for the operator. One entry per bullet in your Follow-ups section:
 
-- A new one: {"ref": "new-1", "kind": "...", "scope": "...", "title": "...", "detail": "..."}. Number them new-1, new-2, and so on, and tag the matching bullet in the report with [new-1], which Sentinel replaces with the real ID. kind is one of ${FOLLOWUP_KINDS.join(", ")}: monitoring is Uptime Kuma, plugin is plugin, theme or core code, server is the OS, PHP-FPM, Redis or swap, sentinel is tuning Sentinel or SpinupTUI, decision needs the operator's call, watch means check again if it recurs, and note is something you did yourself (it's recorded, never open). Something you tried and couldn't do, such as an edit you weren't allowed to make, is not a note: it's a follow-up for a person, of the kind it concerns. scope is "site:<domain>", "server:<server host>" or "fleet". title is one short line; detail says why.
-- One already on record: {"ref": "F-12", "event": "still-open", "text": "what this incident adds"}, and tag the bullet [F-12]. Don't create a new item for something already on record.
-- One marked done whose problem is back: {"ref": "F-7", "event": "regressed", "text": "the evidence"}.
+- A new one: {"ref": "new-1", "kind": "...", "scope": "...", "title": "...", "detail": "..."}. Number them new-1, new-2, and so on, and tag the matching bullet in the report with [new-1], which Sentinel replaces with the real ID. kind is one of ${TODO_KINDS.join(", ")}: monitoring is Uptime Kuma, plugin is plugin, theme or core code, server is the OS, PHP-FPM, Redis or swap, sentinel is tuning Sentinel or SpinupTUI, decision needs the operator's call, watch means check again if it recurs, and note is something you did yourself (it's recorded, never open). Something you tried and couldn't do, such as an edit you weren't allowed to make, is not a note: it's a to-do for a person, of the kind it concerns. scope is "site:<domain>", "server:<server host>" or "fleet". title is one short line; detail says why.
+- One already on record: {"ref": "T-12", "event": "still-open", "text": "what this incident adds"}, and tag the bullet [T-12]. Don't create a new item for something already on record.
+- One marked done whose problem is back: {"ref": "T-7", "event": "regressed", "text": "the evidence"}.
 
 Only for kind nginx, and only when the change is one of these, add a fix: {"template": "deny-paths", "params": {"paths": ["= /exact", "^~ /prefix/", "~ ^/regex\\\\.php$"], "status": 403}}, {"template": "gone-paths", "params": {"paths": [...]}}, {"template": "block-user-agent", "params": {"pattern": "..."}}, or {"template": "cloudflare-real-ip", "params": {}} when a proxied site's log shows only Cloudflare addresses. Any other nginx change has no fix; describe it in detail instead.
 

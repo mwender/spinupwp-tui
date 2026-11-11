@@ -109,7 +109,7 @@ export interface Incident {
   reportPath?: string
   reportedAt?: string
   summary?: string
-  followups?: string[] // ledger items this incident's report created
+  todos?: string[] // ledger items this incident's report created
   // Basecamp has no idempotency key: "posting" with no id means the outcome is
   // unknown, and nothing may repost it automatically.
   post?: "posting" | "posted" | "failed" | "unknown"

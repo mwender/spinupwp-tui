@@ -12,10 +12,10 @@ version; such changes are called out here.
 ## [Unreleased]
 
 ### Added
-- **Sentinel keeps a list of what its reports tell you to do.** Each recommendation becomes an item with an ID, a kind, a scope and a state, and the agent sees the list before every diagnosis: it refers to items by ID instead of repeating them, stops recommending what you've marked won't fix, and reopens a fix that didn't hold. `spinuptui followups` lists them and marks them done, won't fix or snoozed, and the digest says what's open. It's kept as an append-only log in your SpinupTUI folder that merges cleanly between machines. See [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do).
+- **Sentinel keeps a list of what its reports tell you to do.** Each recommendation becomes a to-do with an ID, a kind, a scope and a state, and the agent sees the list before every diagnosis: it refers to items by ID instead of repeating them, stops recommending what you've marked won't fix, and reopens a fix that didn't hold. `spinuptui todos` lists them and marks them done, won't fix or snoozed, and the digest says what's open. It's kept as an append-only log in your SpinupTUI folder that merges cleanly between machines. See [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do).
 
 ### Changed
-- **A repeat within 6 hours is now called an update**, in the digest's counts, `/incidents` and the docs: it's an update to the report you already have. Nothing about how repeats are handled has changed.
+- **A repeat within 6 hours is now called an update**, in the digest's counts, `/incidents` and the docs: it's an update to the report you already have, and "follow-up" stays Scheduler's word for a check that runs later. Nothing about how repeats are handled has changed.
 
 ## [1.3.0] - 2026-11-10
 

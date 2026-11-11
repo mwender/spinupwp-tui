@@ -108,7 +108,7 @@ Over SSH, or in an agent's shell, the login can't be confirmed even when it's fi
 
 ## What the reports tell you to do
 
-Every report ends with what to do about it, and Sentinel keeps those recommendations as a list, so they don't get lost between reports. Each one gets an ID (`F-41`), a kind (`nginx`, `monitoring`, `plugin`, `server`, `sentinel`, `decision`, `watch`, or `note` for something the agent did itself), a scope (a site, a server, or the whole fleet), and a state: open, done, won't fix or snoozed.
+Every report ends with what to do about it, and Sentinel keeps those recommendations as a to-do list, so they don't get lost between reports. Each to-do gets an ID (`T-41`), a kind (`nginx`, `monitoring`, `plugin`, `server`, `sentinel`, `decision`, `watch`, or `note` for something the agent did itself), a scope (a site, a server, or the whole fleet), and a state: open, done, won't fix or snoozed.
 
 - **The agent sees the list before it investigates:** the open, snoozed and recently closed items for the sites on that server, the server itself and the fleet, with your latest comment on each. It refers to an item already on record by its ID instead of writing it up again, and the report's bullets carry those IDs.
 - **Your decisions stick.** Mark something won't fix, with a reason, and Sentinel stops recommending it. If the evidence later argues for it, it says so once, as a comment on that item.
@@ -118,18 +118,18 @@ Every report ends with what to do about it, and Sentinel keeps those recommendat
 Work the list from the command line:
 
 ```
-spinuptui followups list [--state open|done|wontfix|snoozed|all] [--kind <kind>] [--site <d>] [--server <host>]
-spinuptui followups show F-41
-spinuptui followups done F-41 "Added the monitor"
-spinuptui followups wontfix F-12 "Only paying clients get monitors"
-spinuptui followups snooze F-7 --until 2026-12-01
-spinuptui followups comment F-41 "Waiting on the client"
-spinuptui followups reopen F-41
+spinuptui todos list [--state open|done|wontfix|snoozed|all] [--kind <kind>] [--site <d>] [--server <host>]
+spinuptui todos show T-41
+spinuptui todos done T-41 "Added the monitor"
+spinuptui todos wontfix T-12 "Only paying clients get monitors"
+spinuptui todos snooze T-7 --until 2026-12-01
+spinuptui todos comment T-41 "Waiting on the client"
+spinuptui todos reopen T-41
 ```
 
-**Where it's kept:** `~/SpinupTUI/sentinel/followups.jsonl`, wherever your workspace is, so it's backed up with your SpinupTUI folder. It's a log that's only ever appended to, one line per change, and a `.gitattributes` beside it lets git merge two machines' changes without a conflict. You can read it with `cat` or `jq`. Only the station creates items; any machine can comment on them or change their state.
+**Where it's kept:** `~/SpinupTUI/sentinel/todos.jsonl`, wherever your workspace is, so it's backed up with your SpinupTUI folder. It's a log that's only ever appended to, one line per change, and a `.gitattributes` beside it lets git merge two machines' changes without a conflict. You can read it with `cat` or `jq`. Only the station creates to-dos; any machine can comment on them or change their state.
 
-If the agent's list at the end of a report can't be read, the report is still saved, with the list left in it, and the page tells you. Fix the list in the report by hand and run `spinuptui followups import <report>`.
+If the agent's list at the end of a report can't be read, the report is still saved, with the list left in it, and the page tells you. Fix the list in the report by hand and run `spinuptui todos import <report>`.
 
 ## The daily digest
 
@@ -185,5 +185,5 @@ spinuptui sentinel diagnose <incident> | post <incident>
 spinuptui sentinel tick [--dry-run] | digest [--dry-run]
 spinuptui sentinel pause --for <time> | resume
 spinuptui sentinel expect list | add | check <id> | remove <id> | ack <id>
-spinuptui followups list | show | done | wontfix | snooze | comment | reopen | import
+spinuptui todos list | show | done | wontfix | snooze | comment | reopen | import
 ```
