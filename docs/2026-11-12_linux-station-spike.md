@@ -37,7 +37,14 @@ What worked well:
 What didn't:
 
 - **Container machines (`container machine`) wedged repeatedly in 1.7.1.** After a few execs, `machine run` stops returning (even `echo`), `machine stop` hangs, and the CLI ignores a single SIGTERM. The guest's `vminitd.log` shows `vminitd memory threshold exceeded` (about 80 MB against an 84 MB threshold) from the first 100 ms after boot, with the count climbing. Plain containers running the same image and workload never wedged. Recovery needed `launchctl remove` of every `com.apple.container.*` job and `container system start`; killing only the machine's runtime once left its disk "attachment invalid" until the whole service was reset. Worth an upstream issue with the logs; until then, prefer plain containers.
-- **DNS fails if something else holds port 53.** Containers get `nameserver 192.168.64.1`, and queries there were refused while Laravel Valet's dnsmasq was running (`listen-address=127.0.0.1` without `bind-interfaces`, so it binds port 53 on all interfaces). Passing `--dns 1.1.1.1` to `run`, `build` and `builder start` works around it. A machine rewrites `/etc/resolv.conf` on every boot.
+- **DNS fails if any local DNS server holds IPv4 port 53, even on loopback only.** Containers get `nameserver 192.168.64.1`, which macOS serves through mDNSResponder. When a container starts, mDNSResponder binds `*:53`, but if something already holds `127.0.0.1:53` (Laravel Valet's dnsmasq here; also WARP, Mullvad, dnscrypt-proxy, unbound) the IPv4 bind fails and only the IPv6 socket comes up. `lsof` shows mDNSResponder on `IPv6 … *:53` alone, and queries to `192.168.64.1` get "connection refused". Confirmed by stopping dnsmasq: DNS then works through `192.168.64.1` with no flags. This is [apple/container#402](https://github.com/apple/container/issues/402), open since mid-2025; the maintainers treat it as macOS behaviour. The persistent fix needs no sudo and leaves Valet alone: set default resolvers in `~/.config/container/config.toml`, then `container system stop && container system start`:
+
+  ```toml
+  [container.dns]
+  nameservers = ["1.1.1.1", "8.8.8.8"]
+  ```
+
+  That covers `run`, `build` and the builder. A container machine still rewrites `/etc/resolv.conf` to the gateway on every boot.
 - **Two shell traps when scripting it:** `container machine run` passes arguments oddly through `sh -c` (use a script file), and wrapping calls in `timeout` needs `-s KILL`.
 
 ## Not covered
@@ -49,6 +56,7 @@ What didn't:
 ## Reproduce
 
 ```bash
+# if a local DNS server holds 127.0.0.1:53, set [container.dns] nameservers first (see above)
 # image: ubuntu:24.04 + dbus dbus-user-session systemd sudo curl git unzip jq libsecret-tools gnome-keyring,
 # then `systemctl set-default multi-user.target` and mask the usual container-hostile units
 container build --dns 1.1.1.1 -t local/ubuntu-station:24.04 .
