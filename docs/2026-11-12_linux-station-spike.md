@@ -47,6 +47,17 @@ What didn't:
   That covers `run`, `build` and the builder. A container machine still rewrites `/etc/resolv.conf` to the gateway on every boot.
 - **Two shell traps when scripting it:** `container machine run` passes arguments oddly through `sh -c` (use a script file), and wrapping calls in `timeout` needs `-s KILL`.
 
+## Supported Linux hardware
+
+The floor is set by OpenTUI's native library, not by Bun or the distribution. Checked against the published `@opentui/core-linux-x64` 0.8.4 (`libopentui.so`):
+
+- **x64 CPUs need x86-64-v3 (AVX2, BMI2, FMA).** The library uses BMI2/FMA instructions throughout its main code (900+ sites), which a compiler only emits when targeting that level. Its AVX-512 code sits behind run-time CPU checks (it ran under Rosetta, which has no AVX-512). In practice: Intel Haswell (2013) or later, AMD Excavator (2015) or Ryzen. Low-power Intel chips only gained AVX2 with Alder Lake-N (N100/N150/N200/N305, 2023), so the Celeron J4125-class (Gemini Lake) chips in many Synology and QNAP NAS boxes are below the floor.
+- **arm64: any 64-bit ARM board on a 64-bit OS**, such as a Raspberry Pi 4 or 5. Verified natively in this spike.
+- **glibc 2.17 or later** (2012), which any current distribution has. Bun picks its own "baseline" build on older CPUs automatically, so it doesn't raise the floor.
+- **Recommended target:** a current LTS distribution (Ubuntu 24.04 tested here) with systemd, on an N100-class mini PC or better.
+
+Unverified: headless commands never import the renderer, so the Scheduler and Beacon may run on CPUs below the floor with only the TUI unavailable. Worth one test before we promise "headless only" support on older NAS hardware.
+
 ## Not covered
 
 - Real old Intel hardware. Rosetta emulates a modern CPU, so it won't catch a missing AVX/AVX2 instruction set; Bun ships "baseline" builds for those CPUs, and the first real NAS install should confirm the installer picks one.
