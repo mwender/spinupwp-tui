@@ -16,6 +16,7 @@ const TABS: { route: Route; key: string; label: string }[] = [
   { route: "search", key: "4", label: "Search" },
   { route: "events", key: "5", label: "Events" },
   { route: "modules", key: "6", label: "Modules" },
+  { route: "reports", key: "7", label: "Reports" },
 ]
 
 // A one-line "what is this view, and what can I do here" subtitle per tab —
@@ -28,6 +29,7 @@ const SUBTITLES: Record<Route, string> = {
   search: "Jump to any server or site by name  ·  Tab hands focus to the result's actions",
   events: "Recent deploys, reboots, and operations across your account",
   modules: "What keeps working after you close SpinupTUI  ·  ⏎ set up the selected module",
+  reports: "Sentinel's reports and the to-dos they leave you  ·  Tab switches lists  ·  ⏎ read or jump",
 }
 
 // SpinupWP allows 60 API requests a minute. Show what's left of this minute so

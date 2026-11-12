@@ -355,7 +355,7 @@ These can be set in `config.json` or via an environment variable:
 
 | Key | Action |
 | --- | --- |
-| `1`…`6` | Switch tabs: Dashboard · Servers · Stacks · Search · Events · Modules |
+| `1`…`7` | Switch tabs: Dashboard · Servers · Stacks · Search · Events · Modules · Reports |
 | `↑`/`↓` or `j`/`k` | Move selection |
 | `Enter` / `→` | Drill in (server → its sites) |
 | `←` / `Esc` | Go back / collapse |
@@ -397,7 +397,9 @@ These can be set in `config.json` or via an environment variable:
 | `l` | Beacon's listener: install it so the pager answers `/jobs`, see whether it's running, or remove it (Modules tab, Beacon) |
 | `f` | Your SpinupTUI folder: where jobs and reports live, and sharing it across machines (Modules tab, Scheduler) |
 | `h` | Station heartbeat: set up the Uptime Kuma push monitor, see the last ping, test or remove it (Modules tab, Scheduler) |
-| `r` | Refresh data from the API |
+| `Tab` / `⏎` | Reports tab: switch between reports and to-dos · read a report, or jump to a to-do's newest report |
+| `d` / `w` / `s` / `c` / `r` | Mark the selected to-do done, won't fix (with the reason Sentinel reads), snoozed to a date, add a comment, or reopen it (Reports tab, To-dos) |
+| `r` | Refresh data from the API (on the Reports tab: reload the reports, or reopen a to-do) |
 | `i` | Explain the current screen (what each pane and key does) |
 | `?` | Toggle the help overlay |
 | `q` / `Ctrl+C` | Quit |

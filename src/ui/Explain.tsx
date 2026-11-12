@@ -27,7 +27,7 @@ const GUIDES: Record<Route, Guide> = {
       ["Recent activity", "The latest deploys and operations"],
     ],
     actions: [
-      ["1–6", "Switch tabs"],
+      ["1–7", "Switch tabs"],
       ["r", "Refresh from the API"],
     ],
   },
@@ -91,7 +91,7 @@ const GUIDES: Record<Route, Guide> = {
     title: "Events",
     summary: "A live feed of deploys, reboots, and operations across your account.",
     actions: [
-      ["1–6", "Switch tabs"],
+      ["1–7", "Switch tabs"],
       ["r", "Refresh"],
     ],
   },
@@ -105,7 +105,24 @@ const GUIDES: Record<Route, Guide> = {
     actions: [
       ["⏎ / s", "Set up the selected module (Beacon: connect a Telegram bot)"],
       ["t", "Send a test page through Beacon"],
-      ["1–6", "Switch tabs"],
+      ["1–7", "Switch tabs"],
+    ],
+  },
+  reports: {
+    title: "Reports",
+    summary: "Every report Sentinel has written, and the to-do list they feed. Each recommendation in a report becomes a to-do with an ID, so it isn't lost, and what you decide here is what Sentinel reads before its next diagnosis.",
+    panes: [
+      ["Reports", "Newest first: when, which site, the monitor that paged, open to-dos, and the summary"],
+      ["To-dos", "Grouped by fleet, server and site. Open by default; v shows other states, t one kind"],
+      ["Right pane", "The selected report's summary and to-dos, or a to-do's detail, reports and history"],
+    ],
+    actions: [
+      ["Tab", "Switch between Reports and To-dos"],
+      ["⏎", "Read the report (Reports) · jump to the to-do's newest report (To-dos)"],
+      ["d / w / s / c / r", "Done · won't fix (Sentinel reads why) · snooze to a date · comment · reopen"],
+      ["o", "Open the report file"],
+      ["x", "Show every site again, after arriving from a site's details"],
+      ["1–7", "Switch tabs"],
     ],
   },
 }

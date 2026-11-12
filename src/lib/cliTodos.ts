@@ -5,10 +5,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
 import { loadConfig } from "../config.ts"
-import { moduleWorkDir } from "../modules/contract.ts"
-import { effectiveState, extractTodos, fillPlaceholders, TODO_KINDS, todoNote, planEntries, readLedger, sortById, withLedger, type Todo, type TodoEvent } from "./todos.ts"
-import { commitAndPush, stationName } from "./schedulerGit.ts"
-import { gitRootOf } from "./schedulerJobs.ts"
+import { effectiveState, extractTodos, fillPlaceholders, TODO_KINDS, todoNote, planEntries, readLedger, sortById, withLedger, type Todo } from "./todos.ts"
+import { changeTodo, commitLedger, operator, stateLabel, type TodoAction } from "./todoActions.ts"
 import { sentinelSettings } from "./sentinelState.ts"
 
 const USAGE = `Usage:
@@ -43,19 +41,12 @@ function fail(json: boolean, reason: string, message: string): number {
   return 1
 }
 
-const operator = () => `operator@${stationName()}`
-
 async function commit(message: string): Promise<void> {
-  const work = moduleWorkDir("sentinel")
-  const root = gitRootOf(work)
-  if (!root) return
-  const paths = ["todos.jsonl", ".gitattributes"].filter((f) => existsSync(join(work, f))).map((f) => relative(root, join(work, f)))
-  if (paths.length) await commitAndPush(root, paths, message).catch(() => null)
+  await commitLedger(message)
 }
 
 export function describeTodo(f: Todo, now = new Date()): string {
-  const state = effectiveState(f, now)
-  const label = state === "snoozed" && f.until ? `snoozed until ${f.until}` : state
+  const label = stateLabel(effectiveState(f, now), f.until)
   return `${f.id.padEnd(6)} ${label.padEnd(9)} ${f.kind.padEnd(10)} ${f.scope}\n       ${f.title}`
 }
 
@@ -112,32 +103,14 @@ export async function runTodos(argv: string[]): Promise<number> {
 
 async function change(sub: string, rawId: string | undefined, text: string, flags: Map<string, string>, json: boolean, now: Date): Promise<number> {
   if (!rawId) return fail(json, "usage", USAGE)
-  const id = rawId.toUpperCase()
-  if ((sub === "wontfix" || sub === "comment") && !text) return fail(json, "usage", sub === "wontfix" ? "A reason is required: Sentinel reads it before it recommends this again." : "Nothing to say.")
-  const until = flags.get("--until") ?? ""
-  if (sub === "snooze" && (!/^\d{4}-\d{2}-\d{2}$/.test(until) || Number.isNaN(Date.parse(until)))) return fail(json, "usage", "--until YYYY-MM-DD is required.")
-  const base = { v: 1 as const, at: now.toISOString(), by: operator(), id }
-  const result = withLedger<{ ok: true; f: Todo } | { ok: false; reason: string; message: string }>(({ items }) => {
-    const f = items.get(id)
-    if (!f) return { events: [], result: { ok: false, reason: "unknown_todo", message: `No to-do "${rawId}".` } }
-    const state = effectiveState(f, now)
-    let e: TodoEvent
-    if (sub === "comment") e = { ...base, event: "comment", text }
-    else if (sub === "snooze") e = { ...base, event: "snoozed", until, ...(text ? { text } : {}) }
-    else if (sub === "reopen") {
-      if (state === "open") return { events: [], result: { ok: false, reason: "already_open", message: `${id} is already open.` } }
-      e = { ...base, event: "reopened", ...(text ? { text } : {}) }
-    } else {
-      if (state === sub) return { events: [], result: { ok: false, reason: `already_${sub}`, message: `${id} is already ${sub}.` } }
-      e = { ...base, event: sub as "done" | "wontfix", ...(text ? { text } : {}) }
-    }
-    return { events: [e], result: { ok: true, f } }
-  })
-  if (!result.ok) return fail(json, result.reason, result.message)
+  const action = sub as TodoAction
+  const r = changeTodo(rawId, { action, text, until: flags.get("--until"), by: operator(), now })
+  if (!r.ok) return fail(json, r.reason, r.message)
+  const id = r.event.id
   await commit(`todos: ${id} ${sub}`)
   const after = readLedger().items.get(id)!
   if (json) console.log(JSON.stringify({ ok: true, followup: { ...after, state: effectiveState(after, now) } }))
-  else console.log(sub === "comment" ? `Comment added to ${id}.` : `${id} is now ${effectiveState(after, now)}${after.until && sub === "snooze" ? ` until ${after.until}` : ""}.`)
+  else console.log(sub === "comment" ? `Comment added to ${id}.` : `${id} is now ${stateLabel(effectiveState(after, now), after.until)}.`)
   return 0
 }
 
