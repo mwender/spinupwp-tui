@@ -47,6 +47,9 @@ SLUG: a-short-file-slug
 
 # MM/DD/YYYY (HH:MM) - <domain that paged> - <monitor kind>
 
+**Problem:** what went wrong, in plain words, for someone who reads nothing else.
+**Fix:** what to do about it, or "Nothing to do:" and why.
+
 ## Symptom
 
 ## Timeline
@@ -59,7 +62,7 @@ SLUG: a-short-file-slug
 
 ## Follow-ups
 
-Use UTC for the H1, from the first event. Scrub any credentials from what you quote.
+Use UTC for the H1, from the first event. The Problem and Fix lines come straight after it, each under 200 characters and one or two sentences: the reader is busy, and the sections below hold the detail. No monitor numbers, log paths or jargon in those two lines unless the fix needs them. Scrub any credentials from what you quote.
 ${todos === undefined ? "" : `\n${BLOCK_INSTRUCTIONS}\n`}
 If step 4 found one, answer with the SUMMARY line (say what came back and that the report already covers it), then STATUS: duplicate, then the existing report's path on the next line, and nothing after it.
 Use STATUS: blocked, then a line saying what a person must do, if something outside this incident stopped you (no SSH access, a permission you lack, a service refusing you). A finding, however bad, is never blocked.`
@@ -99,7 +102,12 @@ Your final message is the update, in exactly this shape:
 SUMMARY: one short paragraph (under 600 characters, plain text) that stands on its own in a chat message. Lead with whether the conclusion changed.
 STATUS: done
 
-Then the update in Markdown, with ### headings if you need them. No H1 or H2: it goes under a heading Sentinel adds.
+Then the update in Markdown. Start it with two lines, each under 200 characters and one or two plain sentences, as things stand after this update:
+
+**Problem:** what's going on now.
+**Fix:** what to do about it, or "Nothing to do:" and why.
+
+Then the detail, with ### headings if you need them. No H1 or H2: it goes under a heading Sentinel adds.
 ${todos === undefined ? "" : `\n${BLOCK_INSTRUCTIONS.replace("in your Follow-ups section", "this update raises or confirms")}\n`}
 Use STATUS: blocked, then a line saying what a person must do, if something outside this incident stopped you.`
 }

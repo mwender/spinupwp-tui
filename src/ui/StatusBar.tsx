@@ -34,11 +34,14 @@ export function StatusBar({
   message,
   messageColor,
   showGlobal = true,
+  omitGlobal = [],
 }: {
   hints: KeyHint[]
   message?: string
   messageColor?: string
   showGlobal?: boolean
+  // Global keys this view uses for something else (Reports' r is reopen).
+  omitGlobal?: string[]
 }) {
   return (
     <box
@@ -54,7 +57,7 @@ export function StatusBar({
       <HintGroup hints={hints} />
       {message && <text content={message} fg={messageColor ?? theme.brand} />}
       <box style={{ flexGrow: 1 }} />
-      {showGlobal && <HintGroup hints={GLOBAL_HINTS} dim />}
+      {showGlobal && <HintGroup hints={GLOBAL_HINTS.filter((h) => !omitGlobal.includes(h.key))} dim />}
     </box>
   )
 }

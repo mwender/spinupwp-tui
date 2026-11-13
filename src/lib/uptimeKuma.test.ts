@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { describeConnectError, registerMonitors, type KumaClient, type KumaMonitor } from "./uptimeKuma.ts"
+import { describeConnectError, fatalPushMonitorPayload, registerMonitors, type KumaClient, type KumaMonitor } from "./uptimeKuma.ts"
 
 // Shapes recorded from socket.io-client 4.8 under Bun (#75).
 function transportError(message: string, description: unknown) {
@@ -88,5 +88,14 @@ describe("registerMonitors health check window", () => {
     expect(edits).toHaveLength(1)
     expect(monitors.get(7)!.interval).toBe(300)
     expect(monitors.get(7)!.notificationIDList).toEqual({ 1: true })
+  })
+})
+
+describe("fatalPushMonitorPayload", () => {
+  // The cron beats every 60 s; a 60 s window raced Kuma's own check and paged on
+  // beats that were only late.
+  test("gives the minute cron a two-minute window, and keeps two retries", () => {
+    const p = fatalPushMonitorPayload("web1.example.com php-fatal", "tok")
+    expect(p).toMatchObject({ type: "push", interval: 120, retryInterval: 60, maxretries: 2 })
   })
 })

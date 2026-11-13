@@ -60,7 +60,7 @@ import { planDbSync, runDbSync, isDbSyncInFlight, type DbSyncProgress, type Sync
 import { planLocalSetup, runLocalSetup, isLocalSetupInFlight, type LocalSetupProgress, type LocalSetupPlanResult } from "../lib/localSetup.ts"
 import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
 
-export type Route = "dashboard" | "servers" | "stacks" | "search" | "events" | "modules"
+export type Route = "dashboard" | "servers" | "stacks" | "search" | "events" | "modules" | "reports"
 
 // Progress of a PHP-version upgrade, tracked in the store so it survives the
 // modal being closed. `status` mirrors the SpinupWP event status
@@ -532,6 +532,10 @@ interface StoreValue extends DataState {
   client: SpinupWPClientLike
   route: Route
   setRoute: (r: Route) => void
+  // The Reports tab, filtered to one site: set from a site's details, cleared in the tab.
+  reportsSite: string | null
+  setReportsSite: (domain: string | null) => void
+  openReportsFor: (domain: string) => void
   refresh: () => Promise<void>
   // When true, global keyboard shortcuts are suppressed (e.g. while typing in a search box).
   inputMode: boolean
@@ -1079,6 +1083,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [accountSlug],
   )
   const [route, setRoute] = useState<Route>("dashboard")
+  const [reportsSite, setReportsSite] = useState<string | null>(null)
+  const openReportsFor = useCallback((domain: string) => {
+    setReportsSite(domain.toLowerCase())
+    setRoute("reports")
+  }, [])
   const [inputMode, setInputMode] = useState(false)
   const [overlayOpen, setOverlayOpen] = useState(false)
   const [healthServer, setHealthServer] = useState<Server | null>(null)
@@ -4499,6 +4508,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     client,
     route,
     setRoute,
+    reportsSite,
+    setReportsSite,
+    openReportsFor,
     refresh,
     inputMode,
     setInputMode,

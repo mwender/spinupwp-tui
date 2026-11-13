@@ -25,7 +25,7 @@ Setup needs a Beacon channel, Scheduler's dispatcher and a Kuma connection, and 
 2. **You get a page right away.** It's silent when Kuma already paged you for those monitors, because Sentinel's job is the "why" that follows.
 3. **It gathers the evidence:** the events, the server and its sites, an HTTP check of each affected domain, and a read-only look at the load.
 4. **If you've set up an agent, it investigates,** read-only, through `ssh-exec`, and its report replaces the bare evidence.
-5. **You get the summary,** and the report is saved under `sites/<domain>/incidents/`. With a board set up, it's posted there too.
+5. **You get the gist,** and the report is saved under `sites/<domain>/incidents/`. With a board set up, it's posted there too. Every report opens with two plain lines, **Problem** and **Fix**, and the page leads with them, so you can stop there unless you want the detail.
 
 Without an agent you still get the page, the evidence as a write-up, and the digest.
 
@@ -115,7 +115,14 @@ Every report ends with what to do about it, and Sentinel keeps those recommendat
 - **A fix that didn't hold comes back.** If something marked done is back, the agent reopens it, and the page that announces the report says so. That's the only change the agent can make: closing, won't-fixing and snoozing are yours.
 - The page for each report lists the items it created or confirmed, and the digest has a line with what's open, by kind, and what changed.
 
-Work the list from the command line:
+Work the list on the **Reports** tab (`7`). It has two lists, and `Tab` switches between them:
+
+- **Reports:** every report in your workspace, newest first, with the site, the monitor that paged, how many of its to-dos are still open, and its summary. `⏎` reads the report in the right-hand pane, and `o` opens the file.
+- **To-dos:** grouped by fleet, server and site, open ones first. `v` shows other states and `t` one kind. The right-hand pane has the item's detail, every report it appears in, and its history. `d` marks it done, `w` won't fix (the reason is required, because Sentinel reads it), `s` snoozes it to a date, `c` adds a comment and `r` reopens it. The legend shows only the keys that apply to the selected item, and `⏎` jumps to its newest report.
+
+A site with open to-dos says so in its details on the Servers tab, and `⏎` on it opens the Reports tab filtered to that site. `x` shows every site again.
+
+Or work it from the command line:
 
 ```
 spinuptui todos list [--state open|done|wontfix|snoozed|all] [--kind <kind>] [--site <d>] [--server <host>]
@@ -126,6 +133,8 @@ spinuptui todos snooze T-7 --until 2026-12-01
 spinuptui todos comment T-41 "Waiting on the client"
 spinuptui todos reopen T-41
 ```
+
+A Claude session working on a to-do signs its changes `--as claude` (`claude@<machine>`), so its notes are kept apart from yours: Sentinel reads them as another agent's findings, and only you can mark something won't fix or snooze it.
 
 **Where it's kept:** `~/SpinupTUI/sentinel/todos.jsonl`, wherever your workspace is, so it's backed up with your SpinupTUI folder. It's a log that's only ever appended to, one line per change, and a `.gitattributes` beside it lets git merge two machines' changes without a conflict. You can read it with `cat` or `jq`. Only the station creates to-dos; any machine can comment on them or change their state.
 

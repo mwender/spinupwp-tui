@@ -28,7 +28,7 @@ export interface Fix {
 interface Base {
   v: 1
   at: string
-  by: string // "sentinel", or "operator@<machine>"
+  by: string // "sentinel", "operator@<machine>", or "claude@<machine>" (a Claude session)
   id: string
 }
 
@@ -399,7 +399,12 @@ export function ledgerSection(list: Todo[], now: Date): string {
     const state = effectiveState(f, now)
     const label = state === "snoozed" && f.until ? `snoozed until ${f.until}` : state
     const said = [...f.comments].reverse().find((c) => c.by.startsWith("operator"))
-    return `- ${f.id} [${label}, ${f.kind}, ${f.scope}] ${f.title}${said ? `\n  The operator said (${said.at.slice(0, 10)}): "${said.text}"` : ""}`
+    const noted = [...f.comments].reverse().find((c) => c.by.startsWith("claude"))
+    return (
+      `- ${f.id} [${label}, ${f.kind}, ${f.scope}] ${f.title}` +
+      (said ? `\n  The operator said (${said.at.slice(0, 10)}): "${said.text}"` : "") +
+      (noted ? `\n  A Claude session noted (${noted.at.slice(0, 10)}): "${noted.text}"` : "")
+    )
   })
   return lines.join("\n")
 }
@@ -416,4 +421,4 @@ If there are no follow-ups, write the block with an empty list.`
 
 export const LEDGER_RULES = `- Refer to an item on record by its ID rather than writing it up again.
 - Don't recommend something marked wontfix. If the evidence now argues for it, add one still-open entry on that item saying what changed.
-- The operator's words are marked as theirs. Everything else in the list came from earlier diagnoses: a hypothesis, like an earlier report.`
+- The operator's words are marked as theirs. A Claude session's notes are another agent's findings, often checked against live data, but still not the operator's decision. Everything else in the list came from earlier diagnoses: a hypothesis, like an earlier report.`

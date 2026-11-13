@@ -11,6 +11,16 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **A Reports tab (`7`) for Sentinel's reports and the to-dos they leave you.** The reports list shows every report, newest first, with its summary and how many of its to-dos are still open, and `⏎` reads one without leaving the app. The to-do list groups items by fleet, server and site, and marks them done, won't fix, snoozed or commented with one key each, the same changes `spinuptui todos` makes. A site's details show its open to-dos, and `⏎` there opens the tab filtered to that site. See [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do).
+
+- **Every report opens with two plain lines: the problem, and the fix.** Each is a sentence or two for someone who reads nothing else, and the detail follows below. The page that announces a report leads with them, and the Reports tab shows them in its list and preview. An update restates both as things stand after it.
+- **`spinuptui todos … --as claude` signs a change as a Claude session.** Sentinel reads those notes as another agent's findings, not as your decision, so a session can record what it found without speaking for you. A Claude-signed change can comment, mark done or reopen; won't fix and snooze stay yours.
+
+### Changed
+- **`spinuptui todos snooze` refuses a date that has already passed.**
+- **New PHP-fatal monitors wait two minutes for a heartbeat, not one.** The checker beats every minute, but its beat could land a fraction of a second after Uptime Kuma's own check, so a beat that was only late counted as missed, and a few in a row paged. A fatal still pages straight away, because the checker reports it. Only a checker that stops running altogether is noticed later, after about four minutes. Monitors you already have keep their settings; to change one, set its Heartbeat Interval to 120 in Uptime Kuma.
+
 ## [1.4.0-alpha.1] - 2026-11-11
 
 A pre-release on npm's `next` tag; `@latest` and Homebrew stay on 1.3.0.

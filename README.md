@@ -97,6 +97,7 @@
   morning digest covers what monitoring can't see, like a crawler that stopped
   arriving or a cache that stopped hitting. Bring your own agent for diagnosis,
   or use it without one. → [docs/sentinel.md](docs/sentinel.md)
+- **Reports** (`7`) — every report Sentinel has written, newest first, each opening with two plain lines: the problem and the fix. Its recommendations become a to-do list you work with one key each (done, won't fix, snooze, comment), and Sentinel reads your decisions before its next diagnosis. → [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do)
 - **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
   resolves a domain to a live SSH target with a live connectivity probe;
   `spinuptui ssh-exec <domain> -- <command>` runs a command over SSH, but only
@@ -355,7 +356,7 @@ These can be set in `config.json` or via an environment variable:
 
 | Key | Action |
 | --- | --- |
-| `1`…`6` | Switch tabs: Dashboard · Servers · Stacks · Search · Events · Modules |
+| `1`…`7` | Switch tabs: Dashboard · Servers · Stacks · Search · Events · Modules · Reports |
 | `↑`/`↓` or `j`/`k` | Move selection |
 | `Enter` / `→` | Drill in (server → its sites) |
 | `←` / `Esc` | Go back / collapse |
@@ -397,7 +398,9 @@ These can be set in `config.json` or via an environment variable:
 | `l` | Beacon's listener: install it so the pager answers `/jobs`, see whether it's running, or remove it (Modules tab, Beacon) |
 | `f` | Your SpinupTUI folder: where jobs and reports live, and sharing it across machines (Modules tab, Scheduler) |
 | `h` | Station heartbeat: set up the Uptime Kuma push monitor, see the last ping, test or remove it (Modules tab, Scheduler) |
-| `r` | Refresh data from the API |
+| `Tab` / `⏎` | Reports tab: switch between reports and to-dos · read a report, or jump to a to-do's newest report |
+| `d` / `w` / `s` / `c` / `r` | Mark the selected to-do done, won't fix (with the reason Sentinel reads), snoozed to a date, add a comment, or reopen it (Reports tab, To-dos) |
+| `r` | Refresh data from the API (on the Reports tab: reload the reports, or reopen a to-do) |
 | `i` | Explain the current screen (what each pane and key does) |
 | `?` | Toggle the help overlay |
 | `q` / `Ctrl+C` | Quit |

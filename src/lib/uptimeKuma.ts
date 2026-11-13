@@ -491,7 +491,12 @@ export function fatalPushMonitorPayload(name: string, pushToken: string): Record
     name,
     pushToken,
     description: "Server-wide PHP fatal sentinel: a root cron greps every site's error/debug log each minute for new PHP fatals and reports up/down. `msg` on a down beat lists the affected domain(s).",
-    interval: 60,
+    // The cron beats every minute, but its beat lands a second or two either side
+    // of Kuma's own once-a-minute check, so a 60 s window kept missing beats that
+    // were only late. Two minutes gives every beat a full minute of slack. A fatal
+    // still reports at once: the cron pushes it down. Only a cron that stops
+    // beating is noticed later, after about four minutes.
+    interval: 120,
     retryInterval: 60,
     maxretries: 2,
     upsideDown: false,

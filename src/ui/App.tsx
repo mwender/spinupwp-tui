@@ -43,6 +43,7 @@ import { DnsRecords } from "./views/DnsRecords.tsx"
 import { KumaSite } from "./views/KumaSite.tsx"
 import { Accounts } from "./views/Accounts.tsx"
 import { Modules } from "./views/Modules.tsx"
+import { Reports } from "./views/Reports.tsx"
 import { SentinelOverlay } from "./views/SentinelSetup.tsx"
 import { BeaconSetup } from "./views/BeaconSetup.tsx"
 import { SchedulerInstall } from "./views/SchedulerInstall.tsx"
@@ -249,7 +250,11 @@ export function App() {
         return store.setRoute("events")
       case "6":
         return store.setRoute("modules")
+      case "7":
+        return store.setRoute("reports")
       case "r":
+        // Reports uses r for reopen, and reloads its own files.
+        if (store.route === "reports") return
         return void store.refresh()
       case "?":
         return setShowHelp(true)
@@ -289,6 +294,7 @@ export function App() {
         {store.route === "search" && <Search rows={contentRows} />}
         {store.route === "events" && <Events rows={contentRows} />}
         {store.route === "modules" && <Modules rows={contentRows} />}
+        {store.route === "reports" && <Reports rows={contentRows} />}
       </box>
       {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
       {showExplain && <ExplainOverlay route={store.route} />}

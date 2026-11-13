@@ -6,6 +6,7 @@
 // permission can't lose a report, and nothing the agent read can make it publish
 // (docs/2026-10-30_sentinel-spec.md, "Diagnosis").
 
+import { inShort } from "./reports.ts"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import type { AppConfig } from "../config.ts"
@@ -158,6 +159,13 @@ export function todosFor(i: Incident, now: Date, fleet: Fleet = loadFleet()): st
   return ledgerSection(relevantItems(readLedger().items, domains, i.server, now), now)
 }
 
+// The page leads with the report's two lines when it has them: shorter than the
+// summary, and the same words the report opens with.
+function pageText(body: string, summary: string): string {
+  const s = inShort(body)
+  return s ? `${s.problem}\nFix: ${s.fix}` : summary
+}
+
 function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, raw: string, site: string, slug: string, summary: string): { page: Page; report: string } {
   const now = deps.now()
   const filed = fileWithTodos(raw, (b) => saveReport(s.workspace, site, slug, b, now), now.toISOString())
@@ -172,7 +180,7 @@ function finish(i: Incident, s: SentinelSettings, deps: WorkerDeps, raw: string,
   i.summary = summary
   if (filed.created.length) i.todos = filed.created
   saveIncident(i)
-  return { page: { text: `🧾 ${label(site, paged)}: ${summary}\n\nReport: ${path}${filed.note ? `\n\n${filed.note}` : ""}`, silent: false }, report }
+  return { page: { text: `🧾 ${label(site, paged)}: ${pageText(raw, summary)}\n\nReport: ${path}${filed.note ? `\n\n${filed.note}` : ""}`, silent: false }, report }
 }
 
 // An update goes into the original report, under a dated heading.
@@ -335,7 +343,7 @@ async function runUpdate(i: Incident, original: Incident, s: SentinelSettings, d
     i.update = body
     if (filed.created.length) i.todos = filed.created
     saveIncident(i)
-    const page = { text: `🔁 ${label(original.site, paged)}: ${summary}\n\nUpdated: ${path}${filed.note ? `\n\n${filed.note}` : ""}`, silent: false }
+    const page = { text: `🔁 ${label(original.site, paged)}: ${pageText(raw, summary)}\n\nUpdated: ${path}${filed.note ? `\n\n${filed.note}` : ""}`, silent: false }
     // Only a thread that exists can take a comment; otherwise the update stays in the file.
     if (original.postId) await deliver(page, body, original.postId)
     else {

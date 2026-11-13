@@ -6,6 +6,7 @@
 // selection in the focused pane. `o` opens the selected site in the browser.
 
 import { useEffect, useMemo, useState } from "react"
+import { openTodosForSite } from "../reportSource.ts"
 import { useKeyboard } from "@opentui/react"
 import { theme, statusColor, statusDot } from "../../lib/theme.ts"
 import { effectiveStack, stackColor, stackTag } from "../../lib/stack.ts"
@@ -24,7 +25,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, openInSpinupWP, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks, setDbBackupSite, setMediaFallbackSite, setEnableLocalSyncSite } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, openInSpinupWP, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks, setDbBackupSite, setMediaFallbackSite, setEnableLocalSyncSite, openReportsFor } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -72,9 +73,13 @@ export function Browser({ rows }: { rows: number }) {
         return focus === "servers" ? setServerIndex(0) : setSiteIndex(0)
       case "G":
         return focus === "servers" ? setServerIndex(sortedServers.length - 1) : setSiteIndex(sites.length - 1)
+      case "return":
+        // On a site with open to-dos, ⏎ opens them (the details pane says so).
+        if (focus === "sites" && sites[siteIndex] && openTodosForSite(sites[siteIndex].domain) > 0) return openReportsFor(sites[siteIndex].domain)
+        if (focus === "servers" && sites.length > 0) setFocus("sites")
+        return
       case "right":
       case "l":
-      case "return":
       case "tab":
         if (focus === "servers" && sites.length > 0) setFocus("sites")
         return
@@ -408,7 +413,7 @@ export function Browser({ rows }: { rows: number }) {
         {/* Detail pane */}
         <Panel title=" Details " width="32%">
           {focus === "sites" && focusedSite ? (
-            <SiteDetail site={focusedSite} serverName={server?.name ?? "—"} />
+            <SiteDetail site={focusedSite} serverName={server?.name ?? "—"} todoHint="⏎ shows them" />
           ) : server ? (
             <ServerDetail server={server} siteCount={sites.length} />
           ) : (

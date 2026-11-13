@@ -1,6 +1,7 @@
 // Detail panels for a server and a site. Shared by the Browser and Search views.
 
 import { useEffect } from "react"
+import { openTodosForSite } from "./reportSource.ts"
 import { theme, statusColor, diskColor } from "../lib/theme.ts"
 import { formatBytes, diskUsedPct, bar, formatDate, timeAgo, truncate } from "../lib/format.ts"
 import { Field, StatusBadge, ControlPanel, siteGroups, type ActionGroup } from "./components.tsx"
@@ -118,7 +119,9 @@ export const SERVER_CONTROL: ActionGroup[] = [
   { title: "Open", items: [["w", "In SpinupWP"]] },
 ]
 
-export function SiteDetail({ site, serverName }: { site: Site; serverName: string }) {
+// `todoHint` says how to get from here to the site's to-dos, which differs by view.
+export function SiteDetail({ site, serverName, todoHint = "see 7 Reports" }: { site: Site; serverName: string; todoHint?: string }) {
+  const openTodos = openTodosForSite(site.domain)
   const { probes, probingIds, isProbeStale, phpUpgrades, httpsToggles, purgeCacheProgress, localLinks, grantedKeyKinds, kumaStatus, kumaMonitorFor, kumaOps, localSync } = useStore()
   const isVanity = isVanityPair(site.domain, serverName)
   const reseedOp = kumaOps.get(site.id)
@@ -207,6 +210,7 @@ export function SiteDetail({ site, serverName }: { site: Site; serverName: strin
       <Field label="Granted" value={keyValue} valueColor={keyParts.length ? theme.good : theme.textFaint} />
       <Field label="Public dir" value={site.public_folder ?? "/"} />
       <Field label="Monitor" value={kumaValue} valueColor={kumaColor} />
+      {openTodos > 0 && <Field label="To-dos" value={`${openTodos} open · ${todoHint}`} valueColor={theme.warn} />}
       {isVanity && reseedOp?.status === "running" && <Field label="Refresh" value="publishing…" valueColor={theme.warn} />}
       {isVanity && reseedOp?.status === "error" && <Field label="Refresh" value={`failed: ${reseedOp.error ?? "unknown error"}`} valueColor={theme.bad} />}
       <Field label="Local" value={linkValue} valueColor={linkColor} />
