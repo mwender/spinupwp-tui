@@ -9,7 +9,8 @@ import { isDevMode } from "../dev/devMode.ts"
 import { FIXTURE_LEDGER, FIXTURE_REPORTS } from "../dev/reportFixtures.ts"
 import { openCountsBySite, parseReport, scanReports, withTodos, type ReportRow } from "../lib/reports.ts"
 import { changeTodo, commitLedger, planChange, type ChangeInput, type Changed } from "../lib/todoActions.ts"
-import { fold, ledgerPath, readLedger, type Ledger, type TodoEvent } from "../lib/todos.ts"
+import { fold, ledgerPath, readLedger, type Ledger, type Todo, type TodoEvent } from "../lib/todos.ts"
+import { loadSessions, openTodoSession, sessionName, type SessionResult, type TodoSessionRecord } from "../lib/todoSession.ts"
 import { loadIncidents, sentinelSettings } from "../lib/sentinelState.ts"
 
 export interface ReportSource {
@@ -21,6 +22,8 @@ export interface ReportSource {
   change(id: string, input: ChangeInput): Changed
   commit(message: string): Promise<string | null>
   stamp(): string // changes when the ledger does
+  session(f: Todo): Promise<SessionResult> // a Claude session for the to-do
+  sessions(): Record<string, TodoSessionRecord>
 }
 
 function diskSource(): ReportSource {
@@ -39,6 +42,8 @@ function diskSource(): ReportSource {
     file: (path) => join(workspace, path),
     change: (id, input) => changeTodo(id, input),
     commit: (message) => commitLedger(message),
+    session: (f) => openTodoSession(f, { cfg: loadConfig() }),
+    sessions: () => loadSessions(),
     stamp: () => {
       try {
         const s = statSync(ledgerPath())
@@ -51,6 +56,7 @@ function diskSource(): ReportSource {
 }
 
 const devEvents: TodoEvent[] = [...FIXTURE_LEDGER]
+const devSessions: Record<string, TodoSessionRecord> = {}
 
 function devSource(): ReportSource {
   const ledger = (): Ledger => ({ items: fold(devEvents), events: devEvents, skipped: 0 })
@@ -76,6 +82,15 @@ function devSource(): ReportSource {
       return p
     },
     commit: async () => null,
+    // Dev Mode never starts Claude: it pretends, after a moment.
+    session: async (f) => {
+      await new Promise((r) => setTimeout(r, 1500))
+      const known = devSessions[f.id]
+      const record = known ?? { todo: f.id, sessionId: `dev-${f.id}`, name: sessionName(f), workdir: "~/SpinupTUI/sentinel", url: "https://claude.ai/code/session_DEVMODE", startedAt: new Date().toISOString(), seenEvents: f.history.length }
+      devSessions[f.id] = record
+      return { ok: true, status: known ? "running" : "started", record }
+    },
+    sessions: () => devSessions,
     stamp: () => String(devEvents.length),
   }
 }

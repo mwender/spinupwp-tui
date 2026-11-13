@@ -136,6 +136,15 @@ spinuptui todos comment T-41 "Waiting on the client"
 spinuptui todos reopen T-41
 ```
 
+### Talk a to-do over with Claude
+
+Press `a` on a to-do, or run `spinuptui todos session T-12`, and SpinupTUI starts a Claude Code session for it on this machine, named `Samurai (T-12): <title>`. Open it from the Claude app's session list (it uses Remote Control) and carry on the conversation from any device. The session starts by reading the to-do's reports and tells you what it thinks the problem is, what it would do, and what it needs from you. It changes nothing until you say so.
+
+- **It runs where the work is:** Sentinel's folder, with the reports, every `SITE.md` and your `AGENTS.md`. For a site's plugin or nginx to-do, it runs in the site's linked local copy instead, if SpinupTUI knows one (`L` on the site).
+- **One conversation per to-do.** Press `a` again and you get the same session: the running one, or the old one resumed and told what has changed on the to-do since.
+- **Claude Code has to be allowed in that folder first.** The first time, SpinupTUI tells you to run `claude` there once and accept the trust prompt.
+- **It asks before each tool use**, in the Claude app. To let it work without asking, set `"sessionPermissionMode": "bypassPermissions"` under `sentinel` in `config.json`.
+
 A Claude session working on a to-do signs its changes `--as claude` (`claude@<machine>`), so its notes are kept apart from yours: Sentinel reads them as another agent's findings, and only you can mark something won't fix or snooze it.
 
 **Where it's kept:** `~/SpinupTUI/sentinel/todos.jsonl`, wherever your workspace is, so it's backed up with your SpinupTUI folder. It's a log that's only ever appended to, one line per change, and a `.gitattributes` beside it lets git merge two machines' changes without a conflict. You can read it with `cat` or `jq`. Only the station creates to-dos; any machine can comment on them or change their state.

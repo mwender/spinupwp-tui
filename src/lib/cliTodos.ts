@@ -7,6 +7,7 @@ import { isAbsolute, join, relative } from "node:path"
 import { loadConfig } from "../config.ts"
 import { effectiveState, extractTodos, fillPlaceholders, TODO_KINDS, todoNote, planEntries, readLedger, sortById, withLedger, type Todo } from "./todos.ts"
 import { changeTodo, commitLedger, signedBy, stateLabel, type TodoAction } from "./todoActions.ts"
+import { openTodoSession } from "./todoSession.ts"
 import { sentinelSettings } from "./sentinelState.ts"
 
 const USAGE = `Usage:
@@ -18,6 +19,9 @@ const USAGE = `Usage:
   spinuptui todos snooze <id> --until YYYY-MM-DD [comment]
   spinuptui todos comment <id> <text>
   spinuptui todos reopen <id> [comment]
+  spinuptui todos session <id> [--json]
+                           talk it through with Claude: starts a session you
+                           can open in the Claude app, or shows the running one
   spinuptui todos import <report> [--force]
                            record the to-dos block left in a report
 
@@ -98,6 +102,8 @@ export async function runTodos(argv: string[]): Promise<number> {
     case "comment":
     case "reopen":
       return change(sub, id, rest.join(" ").trim(), p.flags, json, now)
+    case "session":
+      return session(id, json, now)
     case "import":
       return importReport(id, p.flags.has("--force"), json, now)
   }
@@ -116,6 +122,21 @@ async function change(sub: string, rawId: string | undefined, text: string, flag
   const after = readLedger().items.get(id)!
   if (json) console.log(JSON.stringify({ ok: true, followup: { ...after, state: effectiveState(after, now) } }))
   else console.log(sub === "comment" ? `Comment added to ${id}.` : `${id} is now ${stateLabel(effectiveState(after, now), after.until)}.`)
+  return 0
+}
+
+async function session(rawId: string | undefined, json: boolean, now: Date): Promise<number> {
+  const f = rawId ? readLedger().items.get(rawId.toUpperCase()) : undefined
+  if (!f) return fail(json, "unknown_todo", `No to-do "${rawId ?? ""}".`)
+  if (!json) console.error(`Opening a Claude session for ${f.id}…`)
+  const r = await openTodoSession(f, { cfg: loadConfig(), now })
+  if (!r.ok) {
+    if (json) console.log(JSON.stringify(r))
+    else console.error(`${r.message}${r.remedy ? `\n${r.remedy}` : ""}`)
+    return 1
+  }
+  if (json) console.log(JSON.stringify({ ok: true, status: r.status, ...r.record }))
+  else console.log(`${r.status === "running" ? "Already running" : r.status === "resumed" ? "Resumed" : "Started"}: ${r.record.name}\n${r.record.url ?? "(no link yet: it's in the Claude app's session list)"}`)
   return 0
 }
 

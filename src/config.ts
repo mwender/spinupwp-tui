@@ -164,6 +164,10 @@ export interface SentinelStored {
   recurrenceHours?: number
   maxDiagnosesPerDay?: number
   diagnosis?: { agent?: "claude" | "codex" | null; model?: string | null; timeoutMin?: number; allow?: string | null }
+  // Claude sessions started from a to-do: Claude Code's --permission-mode.
+  // "default" asks before each tool use, in the Claude app; "bypassPermissions"
+  // doesn't ask.
+  sessionPermissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions"
 }
 
 export interface SchedulerStored {
