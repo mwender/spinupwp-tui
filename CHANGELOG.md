@@ -16,6 +16,7 @@ version; such changes are called out here.
 
 ### Changed
 - **`spinuptui todos snooze` refuses a date that has already passed.**
+- **New PHP-fatal monitors wait two minutes for a heartbeat, not one.** The checker beats every minute, but its beat could land a fraction of a second after Uptime Kuma's own check, so a beat that was only late counted as missed, and a few in a row paged. A fatal still pages straight away, because the checker reports it. Only a checker that stops running altogether is noticed later, after about four minutes. Monitors you already have keep their settings; to change one, set its Heartbeat Interval to 120 in Uptime Kuma.
 
 ## [1.4.0-alpha.1] - 2026-11-11
 
