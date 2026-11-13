@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.4.0-alpha.2] - 2026-11-13
+
+A pre-release on npm's `next` tag; `@latest` and Homebrew stay on 1.3.0.
+
 ### Added
 - **A Reports tab (`7`) for Sentinel's reports and the to-dos they leave you.** The reports list shows every report, newest first, with its summary and how many of its to-dos are still open, and `⏎` reads one without leaving the app. The to-do list groups items by fleet, server and site, and marks them done, won't fix, snoozed or commented with one key each, the same changes `spinuptui todos` makes. A site's details show its open to-dos, and `⏎` there opens the tab filtered to that site. See [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do).
 
@@ -1563,7 +1567,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.1...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.2...HEAD
+[1.4.0-alpha.2]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.1...v1.4.0-alpha.2
 [1.4.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0...v1.4.0-alpha.1
 [1.3.0]: https://github.com/mwender/spinupwp-tui/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/mwender/spinupwp-tui/compare/v1.2.1...v1.2.2
