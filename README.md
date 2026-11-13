@@ -97,6 +97,7 @@
   morning digest covers what monitoring can't see, like a crawler that stopped
   arriving or a cache that stopped hitting. Bring your own agent for diagnosis,
   or use it without one. → [docs/sentinel.md](docs/sentinel.md)
+- **Reports** (`7`) — every report Sentinel has written, newest first, each opening with two plain lines: the problem and the fix. Its recommendations become a to-do list you work with one key each (done, won't fix, snooze, comment), and Sentinel reads your decisions before its next diagnosis. → [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do)
 - **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
   resolves a domain to a live SSH target with a live connectivity probe;
   `spinuptui ssh-exec <domain> -- <command>` runs a command over SSH, but only
