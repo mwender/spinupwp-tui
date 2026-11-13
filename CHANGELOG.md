@@ -17,7 +17,6 @@ A pre-release on npm's `next` tag; `@latest` and Homebrew stay on 1.3.0.
 
 ### Added
 - **A Reports tab (`7`) for Sentinel's reports and the to-dos they leave you.** The reports list shows every report, newest first, with its summary and how many of its to-dos are still open, and `⏎` reads one without leaving the app. The to-do list groups items by fleet, server and site, and marks them done, won't fix, snoozed or commented with one key each, the same changes `spinuptui todos` makes. A site's details show its open to-dos, and `⏎` there opens the tab filtered to that site. See [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do).
-
 - **Every report opens with two plain lines: the problem, and the fix.** Each is a sentence or two for someone who reads nothing else, and the detail follows below. The page that announces a report leads with them, and the Reports tab shows them in its list and preview. An update restates both as things stand after it.
 - **`spinuptui todos … --as claude` signs a change as a Claude session.** Sentinel reads those notes as another agent's findings, not as your decision, so a session can record what it found without speaking for you. A Claude-signed change can comment, mark done or reopen; won't fix and snooze stay yours.
 
