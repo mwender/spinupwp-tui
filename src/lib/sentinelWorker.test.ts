@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { tryLock } from "./flock.ts"
 import { DEFAULT_ALLOW, loadIncident, saveIncident, workerLockPath, type Incident, type SentinelSettings } from "./sentinelState.ts"
 import { diagnosisPrompt, updatePrompt, parseAgentReport } from "./sentinelPrompt.ts"
-import { todosFor, postReport, runWorker, saveReport, type WorkerDeps } from "./sentinelWorker.ts"
+import { ensureWorkspaceIgnore, todosFor, postReport, runWorker, saveReport, type WorkerDeps } from "./sentinelWorker.ts"
 import { appendEvents, readLedger } from "./todos.ts"
 
 const REPORT = "SUMMARY: The cron overlapped.\nSTATUS: done\nSITE: b.example.com\nSLUG: cron-overlap\n\n# 10/30/2026 (13:34) - a.example.com - health\n\n## Root cause\n\nCron.\n"
@@ -340,4 +340,19 @@ test("the prompt's follow-ups cover every site on the incident's server", () => 
   const text = todosFor(incident("one"), now, fleet)
   expect(text).toContain("T-1")
   expect(text).not.toContain("T-2")
+})
+
+describe("ensureWorkspaceIgnore", () => {
+  test("keeps log excerpts and credentials out of git, adding only what's missing", () => {
+    const ws = mkdtempSync(join(tmpdir(), "sentinel-ws-"))
+    ensureWorkspaceIgnore(ws)
+    const first = readFileSync(join(ws, ".gitignore"), "utf8")
+    expect(first).toContain("sites/*/logs/\n.env\n")
+    ensureWorkspaceIgnore(ws)
+    expect(readFileSync(join(ws, ".gitignore"), "utf8")).toBe(first)
+    const other = mkdtempSync(join(tmpdir(), "sentinel-ws-"))
+    writeFileSync(join(other, ".gitignore"), "node_modules/\n.env")
+    ensureWorkspaceIgnore(other)
+    expect(readFileSync(join(other, ".gitignore"), "utf8")).toBe("node_modules/\n.env\nsites/*/logs/\n")
+  })
 })

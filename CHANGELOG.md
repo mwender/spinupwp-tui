@@ -11,6 +11,11 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Changed
+- **Sentinel's agent knows more without a playbook of its own.** Every site on the server is in scope for a diagnosis, whoever it belongs to, read-only, and the prompt explains SpinupWP's layout: where files and logs live, and which wp-cli commands work.
+- **Sentinel keeps log excerpts and `.env` files out of git.** Its folder gets a `.gitignore` for them, so pulled logs and credentials stay on the machine when the folder is shared.
+- **The docs say how to keep your own playbook** (`AGENTS.md`, plus a `notes/` folder) in Sentinel's folder, next to the reports.
+
 ## [1.4.0-alpha.2] - 2026-11-13
 
 A pre-release on npm's `next` tag; `@latest` and Homebrew stay on 1.3.0.

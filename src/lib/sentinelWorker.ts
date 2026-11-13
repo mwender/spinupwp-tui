@@ -88,6 +88,21 @@ export async function triage(i: Incident, cfg: AppConfig, client: SpinupWPClient
 const SAFE_SITE = /^[a-z0-9][a-z0-9.-]*\.[a-z0-9-]+$/i
 const safeSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60)
 
+// The agent may pull log excerpts into sites/<domain>/logs/, and a site's .env
+// holds credentials. Neither belongs in git, wherever the workspace is shared, so
+// the workspace carries its own ignore rules. Adds only the lines it's missing.
+const IGNORE = ["sites/*/logs/", ".env"]
+export function ensureWorkspaceIgnore(workspace: string): void {
+  const path = join(workspace, ".gitignore")
+  const have = existsSync(path) ? readFileSync(path, "utf8") : ""
+  const lines = new Set(have.split("\n").map((l) => l.trim()))
+  const missing = IGNORE.filter((l) => !lines.has(l))
+  if (!missing.length) return
+  mkdirSync(workspace, { recursive: true })
+  const head = have ? (have.endsWith("\n") ? "" : "\n") : "# Sentinel's folder: credentials and pulled log excerpts stay on this machine.\n"
+  appendFileSync(path, head + missing.join("\n") + "\n")
+}
+
 // Files the report under `site` and returns its path relative to the workspace.
 // `site` and `slug` came from the agent, so neither gets near a path unchecked.
 export function saveReport(workspace: string, site: string, slug: string, body: string, now: Date): string {
@@ -217,6 +232,7 @@ async function diagnose(i: Incident, s: SentinelSettings, deps: WorkerDeps): Pro
   i.attempts++
   i.startedAt = deps.now().toISOString()
   saveIncident(i)
+  ensureWorkspaceIgnore(s.workspace)
   i.evidence ??= await deps.triage(i).catch((err: Error) => `Triage failed: ${err.message}`)
   saveIncident(i)
 
