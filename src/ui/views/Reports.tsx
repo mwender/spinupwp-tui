@@ -18,6 +18,7 @@ import { reportSource } from "../reportSource.ts"
 import { wrapText, type ReportRow } from "../../lib/reports.ts"
 import { effectiveState, sortById, TODO_KINDS, type Ledger, type Todo, type TodoKind } from "../../lib/todos.ts"
 import { operator, stateLabel, type TodoAction } from "../../lib/todoActions.ts"
+import type { TodoSessionRecord } from "../../lib/todoSession.ts"
 
 type ListName = "reports" | "todos"
 type StateFilter = "open" | "snoozed" | "done" | "wontfix" | "all"
@@ -100,6 +101,8 @@ export function Reports({ rows }: { rows: number }) {
   const [prompt, setPrompt] = useState<Prompt | null>(null)
   const [promptError, setPromptError] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
+  const [starting, setStarting] = useState<string | null>(null) // a to-do whose Claude session is starting
+  const [sessions, setSessions] = useState<Record<string, TodoSessionRecord>>({})
   const [data, setData] = useState<{ ledger: Ledger; reports: ReportRow[]; stamp: string } | null>(null)
 
   const active = route === "reports"
@@ -110,6 +113,7 @@ export function Reports({ rows }: { rows: number }) {
     const ledger = src.ledger()
     stamp.current = src.stamp()
     setData({ ledger, reports: src.reports(ledger.items, new Date()), stamp: stamp.current })
+    setSessions(src.sessions())
   }
 
   // Load on opening the tab, and pick up changes from elsewhere (the worker, the
@@ -294,6 +298,7 @@ export function Reports({ rows }: { rows: number }) {
         case "s":
         case "c":
         case "f":
+        case "a":
           return say("Press Tab for the to-do list, where those keys act on the selected item.")
       }
       return
@@ -319,6 +324,21 @@ export function Reports({ rows }: { rows: number }) {
       }
       case "f":
         return todo && say(samuraiReason(todo), 6000)
+      case "a": {
+        if (!todo) return
+        if (starting) return say(`Still starting the session for ${starting}…`)
+        const f = todo
+        setStarting(f.id)
+        void src.session(f).then((r) => {
+          setStarting(null)
+          setSessions(src.sessions())
+          if (!r.ok) return say(`${r.message}${r.remedy ? ` ${r.remedy}` : ""}`, 15000)
+          const verb = r.status === "running" ? "is already running" : r.status === "resumed" ? "picked up where it left off" : "started"
+          toast.success(`${r.record.name} ${verb}`)
+          say(`${r.record.name} ${verb}. Open it from the Claude app's session list${r.record.url ? `, or ${r.record.url}` : ""}.`, 20000)
+        })
+        return
+      }
       case "return":
       case "right": {
         if (!todo) return
@@ -366,6 +386,7 @@ export function Reports({ rows }: { rows: number }) {
                 ...(todo.reports.length ? [{ key: "⏎", label: "its report" }] : []),
               ]
             : []),
+          ...(todo ? [{ key: "a", label: starting ? "starting Claude…" : sessions[todo.id] ? "its Claude session" : "ask Claude" }] : []),
           { key: "v", label: "state" },
           { key: "t", label: "kind" },
           ...(reportsSite ? [{ key: "x", label: "every site" }] : []),
@@ -438,7 +459,7 @@ export function Reports({ rows }: { rows: number }) {
               <text content="Sentinel writes a report for every incident it diagnoses. They appear here, newest first." fg={theme.textDim} />
             )
           ) : todo ? (
-            <Lines lines={todoDetail(todo, data.reports, now, paneWidth).slice(0, viewRows)} />
+            <Lines lines={[...(starting === todo.id ? [{ text: "Starting a Claude session… this can take a minute.", color: theme.accent }, blank] : []), ...todoDetail(todo, data.reports, now, paneWidth, sessions[todo.id])].slice(0, viewRows)} />
           ) : (
             <text content="Select a to-do to see why it's on the list, the reports it appears in, and its history." fg={theme.textDim} />
           )}
@@ -550,7 +571,7 @@ const historyLine = (e: Todo["history"][number]) => {
   return `${e.at.slice(0, 16).replace("T", " ")}  ${e.by}  ${what}${text}`
 }
 
-function todoDetail(f: Todo, reports: ReportRow[], now: Date, width: number): Line[] {
+function todoDetail(f: Todo, reports: ReportRow[], now: Date, width: number, session?: TodoSessionRecord): Line[] {
   const state = effectiveState(f, now)
   const known = new Set(reports.map((r) => r.path))
   return [
@@ -559,6 +580,13 @@ function todoDetail(f: Todo, reports: ReportRow[], now: Date, width: number): Li
     blank,
     ...(f.detail ? [...para(f.detail, width), blank] : []),
     ...(f.fix ? [{ text: `Fix: ${f.fix.template}`, color: theme.accent }, ...para(JSON.stringify(f.fix.params), width, theme.textDim, "  "), blank] : []),
+    ...(session
+      ? [
+          { text: `Claude session, since ${session.startedAt.slice(0, 16).replace("T", " ")} UTC (a reopens it):`, color: theme.textDim },
+          ...para(session.url ?? "in the Claude app's session list", width, theme.accent, "  "),
+          blank,
+        ]
+      : []),
     { text: f.reports.length === 1 ? "Report:" : `Reports (${f.reports.length}):`, color: theme.textDim },
     ...f.reports.flatMap((p) => para(`${p}${known.has(p) ? "" : "  (not found)"}`, width, known.has(p) ? theme.text : theme.textFaint)),
     blank,

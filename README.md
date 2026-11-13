@@ -399,6 +399,7 @@ These can be set in `config.json` or via an environment variable:
 | `f` | Your SpinupTUI folder: where jobs and reports live, and sharing it across machines (Modules tab, Scheduler) |
 | `h` | Station heartbeat: set up the Uptime Kuma push monitor, see the last ping, test or remove it (Modules tab, Scheduler) |
 | `Tab` / `⏎` | Reports tab: switch between reports and to-dos · read a report, or jump to a to-do's newest report |
+| `a` | Talk the selected to-do over with Claude: a session named `Samurai (T-n): …` that you open in the Claude app (Reports tab, To-dos) |
 | `d` / `w` / `s` / `c` / `r` | Mark the selected to-do done, won't fix (with the reason Sentinel reads), snoozed to a date, add a comment, or reopen it (Reports tab, To-dos) |
 | `r` | Refresh data from the API (on the Reports tab: reload the reports, or reopen a to-do) |
 | `i` | Explain the current screen (what each pane and key does) |

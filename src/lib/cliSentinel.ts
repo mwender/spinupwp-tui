@@ -2,6 +2,8 @@
 // command: --json prints one result object on stdout, progress goes to stderr,
 // failures use the { ok: false, reason, message, remedy? } shape and exit 1.
 
+import { reapTodoSessions } from "./todoSession.ts"
+import { readLedger } from "./todos.ts"
 import { loadConfig, saveConfig, type SentinelStored } from "../config.ts"
 import { SpinupWPClient } from "../api/client.ts"
 import { moduleWorkDir } from "../modules/contract.ts"
@@ -240,6 +242,8 @@ async function tickCmd(p: Parsed, json: boolean): Promise<number> {
   const dryRun = p.flags.has("--dry-run")
   if (!s.enabled && !dryRun) return fail(json, "not_configured", "Sentinel isn't set up.", "spinuptui sentinel setup --plan")
   const r = await tick(dryRun)
+  // To-dos' Claude sessions: stop the idle ones. Its own failure never fails the tick.
+  if (!dryRun) await reapTodoSessions(readLedger().items).catch(() => null)
   console.log(JSON.stringify(r))
   if (r.ok) return 0
   return r.needsPerson ? BLOCKED_EXIT : 1

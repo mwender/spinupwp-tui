@@ -120,6 +120,7 @@ const GUIDES: Record<Route, Guide> = {
       ["Tab", "Switch between Reports and To-dos"],
       ["⏎", "Read the report (Reports) · jump to the to-do's newest report (To-dos)"],
       ["d / w / s / c / r", "Done · won't fix (Sentinel reads why) · snooze to a date · comment · reopen"],
+      ["a", "Talk the selected to-do over with Claude: starts a session you open in the Claude app, or shows the one already running"],
       ["o", "Open the report file"],
       ["x", "Show every site again, after arriving from a site's details"],
       ["1–7", "Switch tabs"],
