@@ -67,9 +67,11 @@ expectations.json
 trends.csv
 ```
 
-If that folder is in a git repository, Sentinel commits only its own folder and pushes, after each report and each digest. Reports can quote logs, so treat them as private.
+If that folder is in a git repository, Sentinel commits only its own folder and pushes, after each report and each digest. Reports can quote logs, so treat them as private. Sentinel keeps a `.gitignore` there so that log excerpts the agent pulls (`sites/<domain>/logs/`) and any `.env` file stay on this machine.
 
-To use an existing playbook, set `--workspace <dir>`. The agent works from there, and an `AGENTS.md` in it is read first. A workspace elsewhere is never committed for you.
+**Your own playbook goes beside them.** Put an `AGENTS.md` in the folder and the agent reads it before every diagnosis, ahead of Sentinel's built-in guidance: who may be investigated, where your notes are, anything particular to your fleet. A `notes/` folder for what your fleet has learned works well, with `AGENTS.md` pointing to it.
+
+To keep an existing playbook where it is, set `--workspace <dir>`. The agent works from there instead. A workspace elsewhere is never committed for you.
 
 ## Post reports to a team board
 
