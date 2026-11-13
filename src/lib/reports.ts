@@ -12,6 +12,22 @@ import { join } from "node:path"
 import { isOpen, type Todo } from "./todos.ts"
 import type { Incident } from "./sentinelState.ts"
 
+// The two lines every report opens with since 2026-11-13: what went wrong, and
+// what to do. A report with updates may have several pairs; the last one is
+// where things stand.
+export interface InShort {
+  problem: string
+  fix: string
+}
+
+export function inShort(text: string): InShort | null {
+  const problems = [...text.matchAll(/^\*\*Problem:\*\*\s*(.+)$/gm)]
+  const fixes = [...text.matchAll(/^\*\*Fix:\*\*\s*(.+)$/gm)]
+  const problem = problems.at(-1)?.[1]
+  const fix = fixes.at(-1)?.[1]
+  return problem && fix ? { problem: plain(problem), fix: plain(fix) } : null
+}
+
 export interface ReportRow {
   path: string // relative to the workspace: sites/<site>/incidents/<file>.md
   site: string
@@ -19,6 +35,7 @@ export interface ReportRow {
   time: string // HH:MM as the report gives it, or ""
   kind: string
   summary: string
+  short: InShort | null
   todos: string[] // IDs of the items that list this report
   open: number // how many of those are open now
 }
@@ -83,6 +100,7 @@ export function parseReport(path: string, text: string, incident?: Incident): Re
     time,
     kind,
     summary: incident?.summary ? plain(incident.summary) : firstParagraph(text),
+    short: inShort(text),
     todos: [],
     open: 0,
   }

@@ -13,7 +13,15 @@ import { gitRootOf } from "./schedulerJobs.ts"
 export type TodoAction = "done" | "wontfix" | "snooze" | "comment" | "reopen"
 export const TODO_ACTIONS: readonly TodoAction[] = ["done", "wontfix", "snooze", "comment", "reopen"]
 
-export const operator = () => `operator@${stationName()}`
+// Who signed a change. The operator's words are what Sentinel defers to; a
+// Claude session's are another agent's findings, read like an earlier report.
+export type Signer = "operator" | "claude"
+export const signedBy = (who: Signer) => `${who}@${stationName()}`
+export const operator = () => signedBy("operator")
+
+// What a Claude session may change. Won't fix and snooze are decisions Sentinel
+// defers to, so only the operator makes them.
+export const CLAUDE_ACTIONS: readonly TodoAction[] = ["comment", "done", "reopen"]
 
 export interface ChangeInput {
   action: TodoAction
@@ -32,6 +40,7 @@ export const validDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.
 export function planChange(f: Todo, input: ChangeInput): Planned {
   const { action, now } = input
   const text = input.text.trim()
+  if (input.by.startsWith("claude@") && !CLAUDE_ACTIONS.includes(action)) return { ok: false, reason: "not_allowed", message: `Only the operator can mark a to-do ${action === "wontfix" ? "won't fix" : "snoozed"}.` }
   const base = { v: 1 as const, at: now.toISOString(), by: input.by, id: f.id }
   const state = effectiveState(f, now)
   switch (action) {

@@ -19,7 +19,7 @@ const report = (site: string, file: string, title: string, sections: Record<stri
 
 export const FIXTURE_REPORTS: FixtureReport[] = [
   {
-    ...report("shop.example.com", "2026-11-10-healthz-502-scanner-burst.md", "# 11/10/2026 (14:05) - shop.example.com - healthz", {
+    ...report("shop.example.com", "2026-11-10-healthz-502-scanner-burst.md", "# 11/10/2026 (14:05) - shop.example.com - healthz\n\n**Problem:** A scanner hammered core WordPress files for six minutes and filled the site's PHP pool, so pages returned 502.\n**Fix:** Deny those core paths at nginx, so a scan costs nothing.", {
       Symptom: "At 14:05 UTC the `healthz` monitor for shop.example.com returned 502 for three minutes. web1.example.com's PHP-FPM pool for the site was full: 20 of 20 children busy.",
       Timeline: "- 14:02: a scanner starts requesting `/wp-admin/includes/*.php` directly, about 40 a second.\n- 14:05: the pool fills and nginx returns 502.\n- 14:08: the scanner stops and the pool drains.",
       Evidence: "The access log shows 7,214 requests from one address in six minutes, all for core files that are never meant to be requested directly. Each one ran PHP and ended in a fatal.",

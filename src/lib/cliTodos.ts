@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { isAbsolute, join, relative } from "node:path"
 import { loadConfig } from "../config.ts"
 import { effectiveState, extractTodos, fillPlaceholders, TODO_KINDS, todoNote, planEntries, readLedger, sortById, withLedger, type Todo } from "./todos.ts"
-import { changeTodo, commitLedger, operator, stateLabel, type TodoAction } from "./todoActions.ts"
+import { changeTodo, commitLedger, signedBy, stateLabel, type TodoAction } from "./todoActions.ts"
 import { sentinelSettings } from "./sentinelState.ts"
 
 const USAGE = `Usage:
@@ -19,9 +19,12 @@ const USAGE = `Usage:
   spinuptui todos comment <id> <text>
   spinuptui todos reopen <id> [comment]
   spinuptui todos import <report> [--force]
-                           record the to-dos block left in a report`
+                           record the to-dos block left in a report
 
-const VALUE_FLAGS = new Set(["--state", "--kind", "--site", "--server", "--until"])
+  --as claude              sign a change as a Claude session, not as you
+                           (comment, done and reopen only)`
+
+const VALUE_FLAGS = new Set(["--state", "--kind", "--site", "--server", "--until", "--as"])
 
 function parse(list: string[]) {
   const positionals: string[] = []
@@ -104,7 +107,9 @@ export async function runTodos(argv: string[]): Promise<number> {
 async function change(sub: string, rawId: string | undefined, text: string, flags: Map<string, string>, json: boolean, now: Date): Promise<number> {
   if (!rawId) return fail(json, "usage", USAGE)
   const action = sub as TodoAction
-  const r = changeTodo(rawId, { action, text, until: flags.get("--until"), by: operator(), now })
+  const as = flags.get("--as") ?? "operator"
+  if (as !== "operator" && as !== "claude") return fail(json, "usage", "--as is operator or claude.")
+  const r = changeTodo(rawId, { action, text, until: flags.get("--until"), by: signedBy(as), now })
   if (!r.ok) return fail(json, r.reason, r.message)
   const id = r.event.id
   await commit(`todos: ${id} ${sub}`)

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { firstParagraph, isPointer, openCountsBySite, parseReport, withTodos, wrapText } from "./reports.ts"
+import { firstParagraph, inShort, isPointer, openCountsBySite, parseReport, withTodos, wrapText } from "./reports.ts"
 import { fold, type TodoEvent } from "./todos.ts"
 import type { Incident } from "./sentinelState.ts"
 import { planChange } from "./todoActions.ts"
@@ -98,5 +98,25 @@ describe("planChange", () => {
   test("an expired snooze reads as open: done works, reopen is refused", () => {
     expect(planChange(items.get("T-2")!, { ...base, action: "reopen" })).toMatchObject({ ok: false, reason: "already_open" })
     expect(planChange(items.get("T-2")!, { ...base, action: "done" })).toMatchObject({ ok: true })
+  })
+})
+
+describe("signed by Claude", () => {
+  const items = fold([ev({ at: "2026-11-10T00:00:00Z", id: "T-1", event: "created", kind: "monitoring", scope: "fleet", title: "a" })])
+  const base = { by: "claude@test", now: NOW, text: "why" }
+  test("may comment, mark done and reopen, but not won't fix or snooze", () => {
+    expect(planChange(items.get("T-1")!, { ...base, action: "comment" })).toMatchObject({ ok: true, event: { by: "claude@test" } })
+    expect(planChange(items.get("T-1")!, { ...base, action: "done" })).toMatchObject({ ok: true })
+    expect(planChange(items.get("T-1")!, { ...base, action: "wontfix" })).toMatchObject({ ok: false, reason: "not_allowed" })
+    expect(planChange(items.get("T-1")!, { ...base, action: "snooze", until: "2026-12-01" })).toMatchObject({ ok: false, reason: "not_allowed" })
+  })
+})
+
+describe("inShort", () => {
+  test("reads the Problem and Fix lines, the last pair winning after an update", () => {
+    const text = "# t\n\n**Problem:** It broke.\n**Fix:** Mend it.\n\n## Symptom\n\nx\n\n## Update\n\n**Problem:** It broke again, from `cron`.\n**Fix:** Nothing to do: it recovered.\n"
+    expect(inShort(text)).toEqual({ problem: "It broke again, from cron.", fix: "Nothing to do: it recovered." })
+    expect(inShort("# t\n\n**Problem:** only one line\n")).toBeNull()
+    expect(parseReport(P, text)!.short?.problem).toBe("It broke again, from cron.")
   })
 })

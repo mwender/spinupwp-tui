@@ -25,7 +25,7 @@ Setup needs a Beacon channel, Scheduler's dispatcher and a Kuma connection, and 
 2. **You get a page right away.** It's silent when Kuma already paged you for those monitors, because Sentinel's job is the "why" that follows.
 3. **It gathers the evidence:** the events, the server and its sites, an HTTP check of each affected domain, and a read-only look at the load.
 4. **If you've set up an agent, it investigates,** read-only, through `ssh-exec`, and its report replaces the bare evidence.
-5. **You get the summary,** and the report is saved under `sites/<domain>/incidents/`. With a board set up, it's posted there too.
+5. **You get the gist,** and the report is saved under `sites/<domain>/incidents/`. With a board set up, it's posted there too. Every report opens with two plain lines, **Problem** and **Fix**, and the page leads with them, so you can stop there unless you want the detail.
 
 Without an agent you still get the page, the evidence as a write-up, and the digest.
 
@@ -133,6 +133,8 @@ spinuptui todos snooze T-7 --until 2026-12-01
 spinuptui todos comment T-41 "Waiting on the client"
 spinuptui todos reopen T-41
 ```
+
+A Claude session working on a to-do signs its changes `--as claude` (`claude@<machine>`), so its notes are kept apart from yours: Sentinel reads them as another agent's findings, and only you can mark something won't fix or snooze it.
 
 **Where it's kept:** `~/SpinupTUI/sentinel/todos.jsonl`, wherever your workspace is, so it's backed up with your SpinupTUI folder. It's a log that's only ever appended to, one line per change, and a `.gitattributes` beside it lets git merge two machines' changes without a conflict. You can read it with `cat` or `jq`. Only the station creates to-dos; any machine can comment on them or change their state.
 

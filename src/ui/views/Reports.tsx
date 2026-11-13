@@ -394,7 +394,7 @@ export function Reports({ rows }: { rows: number }) {
                   <text content={`${truncate(r.site, 22).padEnd(22)} `} fg={sel ? theme.text : theme.textDim} wrapMode="none" style={{ flexShrink: 0 }} />
                   <text content={`${truncate(r.kind, 8).padEnd(8)} `} fg={theme.accent} wrapMode="none" style={{ flexShrink: 0 }} />
                   <text content={r.open ? `${r.open} open `.padStart(7) : "".padStart(7)} fg={theme.warn} wrapMode="none" style={{ flexShrink: 0 }} />
-                  <text content={r.summary} fg={sel ? theme.text : theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
+                  <text content={r.short?.problem ?? r.summary} fg={sel ? theme.text : theme.textFaint} wrapMode="none" style={{ flexGrow: 1, flexShrink: 1 }} />
                 </>
               )}
             />
@@ -524,7 +524,14 @@ function reportPreview(r: ReportRow, ledger: Ledger, now: Date, width: number): 
     { text: r.site, bold: true },
     { text: `${r.date}${r.time ? ` ${r.time}` : ""}  ·  ${r.kind || "monitor unknown"}`, color: theme.textDim },
     blank,
-    ...para(r.summary || "No summary.", width),
+    ...(r.short
+      ? [
+          ...para(`Problem: ${r.short.problem}`, width, theme.text, "         ").map((l, i) => (i === 0 ? { ...l, bold: true } : l)),
+          ...para(`Fix: ${r.short.fix}`, width, theme.good, "     "),
+          blank,
+          ...para(r.summary, width, theme.textDim),
+        ]
+      : para(r.summary || "No summary.", width)),
     blank,
     { text: todos.length ? `To-dos (${r.open} open):` : "No to-dos recorded for this report.", color: theme.textDim },
     ...todos.flatMap((f) => {
@@ -556,6 +563,6 @@ function todoDetail(f: Todo, reports: ReportRow[], now: Date, width: number): Li
     ...f.reports.flatMap((p) => para(`${p}${known.has(p) ? "" : "  (not found)"}`, width, known.has(p) ? theme.text : theme.textFaint)),
     blank,
     { text: "History:", color: theme.textDim },
-    ...f.history.flatMap((e) => para(historyLine(e), width, e.by.startsWith("operator") ? theme.text : theme.textDim, "  ")),
+    ...f.history.flatMap((e) => para(historyLine(e), width, e.by.startsWith("operator") ? theme.text : e.by.startsWith("claude") ? theme.purple : theme.textDim, "  ")),
   ]
 }
