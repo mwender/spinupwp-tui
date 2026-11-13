@@ -11,6 +11,10 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.4.0-alpha.3] - 2026-11-13
+
+A pre-release on npm's `next` tag; `@latest` and Homebrew stay on 1.3.0.
+
 ### Added
 - **Talk a to-do over with Claude (`a` on the Reports tab, or `spinuptui todos session <id>`).** It starts a Claude Code session for that to-do, named `Samurai (T-12): <title>`, that you open from the Claude app on any device. The session reads the to-do's reports first and says what it would do; it changes nothing until you agree, and records what it finds on the to-do signed as Claude. Pressing `a` again brings back the same conversation. See [docs/sentinel.md](docs/sentinel.md#talk-a-to-do-over-with-claude).
 - **Idle to-do sessions stop themselves.** Sentinel's tick stops one after 30 idle minutes once its to-do is closed, or a day while it's open, and the session says so when it closes its to-do. The conversation is kept for `a` to resume. A closed to-do's git worktree is removed once its work is on main, and kept otherwise.
@@ -1575,7 +1579,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.2...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.3...HEAD
+[1.4.0-alpha.3]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.2...v1.4.0-alpha.3
 [1.4.0-alpha.2]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.1...v1.4.0-alpha.2
 [1.4.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0...v1.4.0-alpha.1
 [1.3.0]: https://github.com/mwender/spinupwp-tui/compare/v1.2.2...v1.3.0
