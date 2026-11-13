@@ -59,6 +59,8 @@ const GITIGNORE = `# SpinupTUI folder: written by \`spinuptui home sync\`
 .DS_Store
 *.tmp
 .state/
+# Claude Code's session state and worktrees (a to-do's session can make one)
+.claude/
 `
 
 // Creates the folder and its README if either is missing. Never overwrites the

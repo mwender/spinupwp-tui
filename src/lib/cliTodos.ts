@@ -7,7 +7,7 @@ import { isAbsolute, join, relative } from "node:path"
 import { loadConfig } from "../config.ts"
 import { effectiveState, extractTodos, fillPlaceholders, TODO_KINDS, todoNote, planEntries, readLedger, sortById, withLedger, type Todo } from "./todos.ts"
 import { changeTodo, commitLedger, signedBy, stateLabel, type TodoAction } from "./todoActions.ts"
-import { openTodoSession } from "./todoSession.ts"
+import { loadSessions, openTodoSession, STOP_NOTE } from "./todoSession.ts"
 import { sentinelSettings } from "./sentinelState.ts"
 
 const USAGE = `Usage:
@@ -122,6 +122,8 @@ async function change(sub: string, rawId: string | undefined, text: string, flag
   const after = readLedger().items.get(id)!
   if (json) console.log(JSON.stringify({ ok: true, followup: { ...after, state: effectiveState(after, now) } }))
   else console.log(sub === "comment" ? `Comment added to ${id}.` : `${id} is now ${stateLabel(effectiveState(after, now), after.until)}.`)
+  // A Claude session closing its own to-do relays this, so the operator knows it will stop.
+  if (!json && as === "claude" && sub === "done" && loadSessions()[id]) console.log(STOP_NOTE(id))
   return 0
 }
 

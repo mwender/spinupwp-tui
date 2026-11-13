@@ -142,6 +142,8 @@ Press `a` on a to-do, or run `spinuptui todos session T-12`, and SpinupTUI start
 
 - **It runs where the work is:** Sentinel's folder, with the reports, every `SITE.md` and your `AGENTS.md`. For a site's plugin or nginx to-do, it runs in the site's linked local copy instead, if SpinupTUI knows one (`L` on the site).
 - **One conversation per to-do.** Press `a` again and you get the same session: the running one, or the old one resumed and told what has changed on the to-do since.
+- **Idle sessions are stopped for you.** Sentinel's tick stops a session once it has been idle for 30 minutes after its to-do is closed, or for a day while the to-do is open. A session that's working is never stopped. When a session marks its to-do done, it tells you this in its reply. A stopped session's conversation is kept, and `a` brings it back.
+- **Its worktree is cleaned up when its work is on main.** A session may work in a git worktree. Once the to-do is closed and the session stopped, the worktree is removed, but only when it has no uncommitted changes and every file it changed reads the same on the remote's main. Otherwise it's kept, and noted in Sentinel's `todo-sessions.log`.
 - **Claude Code has to be allowed in that folder first.** The first time, SpinupTUI tells you to run `claude` there once and accept the trust prompt.
 - **It asks before each tool use**, in the Claude app. To let it work without asking, set `"sessionPermissionMode": "bypassPermissions"` under `sentinel` in `config.json`.
 

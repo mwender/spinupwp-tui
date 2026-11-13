@@ -13,6 +13,7 @@ version; such changes are called out here.
 
 ### Added
 - **Talk a to-do over with Claude (`a` on the Reports tab, or `spinuptui todos session <id>`).** It starts a Claude Code session for that to-do, named `Samurai (T-12): <title>`, that you open from the Claude app on any device. The session reads the to-do's reports first and says what it would do; it changes nothing until you agree, and records what it finds on the to-do signed as Claude. Pressing `a` again brings back the same conversation. See [docs/sentinel.md](docs/sentinel.md#talk-a-to-do-over-with-claude).
+- **Idle to-do sessions stop themselves.** Sentinel's tick stops one after 30 idle minutes once its to-do is closed, or a day while it's open, and the session says so when it closes its to-do. The conversation is kept for `a` to resume. A closed to-do's git worktree is removed once its work is on main, and kept otherwise.
 
 ### Changed
 - **Sentinel's agent knows more without a playbook of its own.** Every site on the server is in scope for a diagnosis, whoever it belongs to, read-only, and the prompt explains SpinupWP's layout: where files and logs live, and which wp-cli commands work.

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AppConfig } from "../config.ts"
 import { fold, type TodoEvent } from "./todos.ts"
-import { isTrusted, loadSessions, openTodoSession, pickWorkdir, resumePrompt, sessionName, type ClaudeRunner } from "./todoSession.ts"
+import { isTrusted, loadSessions, openTodoSession, pickWorkdir, reapTodoSessions, resumePrompt, sessionName, type ClaudeRunner, type ReapDeps } from "./todoSession.ts"
 
 const NOW = new Date("2026-11-13T12:00:00Z")
 const ev = (e: Record<string, unknown>) => ({ v: 1, by: "sentinel", at: "2026-11-12T08:41:00Z", ...e }) as TodoEvent
@@ -111,5 +111,85 @@ describe("pickWorkdir and friends", () => {
   test("names and resume prompts", () => {
     expect(sessionName(items.get("T-2")!)).toBe("Samurai (T-2): Block a crawler")
     expect(resumePrompt(items.get("T-2")!, 1)).toBe("Picking T-2 back up. Where do things stand?")
+  })
+})
+
+describe("reapTodoSessions", () => {
+  const MIN = 60_000
+  function world(opts: { status?: string; idleMin: number; closed?: boolean; dirty?: boolean; onMain?: boolean }) {
+    const s = setup()
+    writeFileSync(s.statePath, JSON.stringify({ "T-1": { todo: "T-1", sessionId: "sess-1", shortId: "abc123", name: "n", workdir: s.workspace, url: null, startedAt: "x", seenEvents: 1 } }))
+    const evs = [ev({ id: "T-1", event: "created", kind: "monitoring", scope: "fleet", title: "t" })]
+    if (opts.closed) evs.push(ev({ id: "T-1", event: "done", at: "2026-11-13T02:22:00Z", by: "claude@x" }))
+    const ledger = fold(evs)
+    const stops: string[] = []
+    const gitCalls: string[][] = []
+    let alive = true
+    const runner: ClaudeRunner = {
+      async run(args) {
+        if (args[0] === "agents") return { code: 0, output: JSON.stringify([{ id: "abc123", sessionId: "sess-1", pid: alive ? 7 : undefined, status: opts.status ?? "idle" }]) }
+        if (args[0] === "stop") {
+          stops.push(args[1]!)
+          alive = false
+        }
+        return { code: 0, output: "" }
+      },
+      sleep: async () => {},
+    }
+    const deps: Partial<ReapDeps> = {
+      runner,
+      lastActivity: () => NOW.getTime() - opts.idleMin * MIN,
+      job: () => ({ worktreePath: "/wt", worktreeBranch: "worktree-x" }),
+      exists: () => true,
+      log: () => {},
+      git: async (args) => {
+        gitCalls.push(args)
+        if (args[0] === "status") return { code: 0, output: opts.dirty ? " M SITE.md\n" : "" }
+        if (args[0] === "rev-parse" && args.includes("origin/HEAD")) return { code: 0, output: "origin/main\n" }
+        if (args[0] === "rev-parse") return { code: 0, output: "/repo/.git\n" }
+        if (args[0] === "merge-base") return { code: 0, output: "base\n" }
+        if (args[0] === "diff" && args[1] === "--name-only") return { code: 0, output: "sentinel/sites/a/SITE.md\n" }
+        if (args[0] === "diff" && args[1] === "--quiet") return { code: opts.onMain === false ? 1 : 0, output: "" }
+        return { code: 0, output: "" }
+      },
+    }
+    return { s, ledger, deps, stops, gitCalls }
+  }
+
+  test("stops a closed to-do's session after 30 idle minutes and removes its spent worktree", async () => {
+    const w = world({ closed: true, idleMin: 31 })
+    const r = await reapTodoSessions(w.ledger, NOW, w.deps, w.s.statePath)
+    expect(r).toEqual({ stopped: ["T-1"], worktrees: ["/wt"] })
+    expect(w.stops).toEqual(["abc123"])
+    expect(w.gitCalls.some((a) => a[0] === "worktree" && a.includes("/wt"))).toBe(true)
+    expect(w.gitCalls.some((a) => a[0] === "branch" && a.includes("worktree-x"))).toBe(true)
+  })
+
+  test("leaves a closed to-do's session alone before 30 minutes, and an open one for a day", async () => {
+    for (const o of [{ closed: true, idleMin: 20 }, { idleMin: 23 * 60 }]) {
+      const w = world(o)
+      expect((await reapTodoSessions(w.ledger, NOW, w.deps, w.s.statePath)).stopped).toEqual([])
+    }
+    const w = world({ idleMin: 25 * 60 })
+    expect((await reapTodoSessions(w.ledger, NOW, w.deps, w.s.statePath)).stopped).toEqual(["T-1"])
+  })
+
+  test("never stops a session that's working", async () => {
+    const w = world({ closed: true, idleMin: 120, status: "busy" })
+    expect((await reapTodoSessions(w.ledger, NOW, w.deps, w.s.statePath)).stopped).toEqual([])
+  })
+
+  test("keeps a worktree with uncommitted changes, or with work that isn't on main", async () => {
+    for (const o of [{ dirty: true }, { onMain: false }]) {
+      const w = world({ closed: true, idleMin: 31, ...o })
+      const r = await reapTodoSessions(w.ledger, NOW, w.deps, w.s.statePath)
+      expect(r).toEqual({ stopped: ["T-1"], worktrees: [] })
+      expect(w.gitCalls.some((a) => a[0] === "worktree")).toBe(false)
+    }
+  })
+
+  test("an open to-do's worktree is never removed, even once its session is stopped", async () => {
+    const w = world({ idleMin: 25 * 60 })
+    expect(await reapTodoSessions(w.ledger, NOW, w.deps, w.s.statePath)).toEqual({ stopped: ["T-1"], worktrees: [] })
   })
 })
