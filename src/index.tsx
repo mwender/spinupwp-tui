@@ -114,7 +114,7 @@ Usage:
                        --expires <date> --created-by <who> -- <body>
                        Queue a follow-up for this station to run later and report
                        on through Beacon (\`spinuptui scheduler\` for the rest)
-  spinuptui scheduler list | status | install --plan|--apply
+  spinuptui scheduler list | show | cancel <id> | extend | run | status | install --plan|--apply
   spinuptui sentinel setup | attach | status | list | pause | expect
                        Watch the fleet, work out what broke, write it up
                        (runs as Scheduler jobs; see docs/sentinel.md)

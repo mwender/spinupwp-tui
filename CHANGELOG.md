@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Changed
+- **`spinuptui -h` lists `scheduler show`, `cancel`, `extend` and `run`.** They were only in `spinuptui scheduler`'s own usage, so removing a job wasn't discoverable from the top-level help.
+
 ## [1.4.0-alpha.3] - 2026-11-13
 
 A pre-release on npm's `next` tag; `@latest` and Homebrew stay on 1.3.0.
