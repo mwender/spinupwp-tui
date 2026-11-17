@@ -447,6 +447,21 @@ export function findCommand(path: string[], table: Command[] = COMMANDS): Comman
   return found
 }
 
+// Top-level commands a mistyped one was probably meant to be: within two edits,
+// or sharing its first three letters.
+export function nearCommands(word: string, table: Command[] = COMMANDS): string[] {
+  const distance = (a: string, b: string): number => {
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i)
+    for (let i = 1; i <= a.length; i++) {
+      const row = [i]
+      for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j]! + 1, row[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1))
+      prev = row
+    }
+    return prev[b.length]!
+  }
+  return table.filter((c) => !c.hidden && (distance(word, c.name) <= 2 || (word.length >= 3 && c.name.startsWith(word.slice(0, 3))))).map((c) => c.name)
+}
+
 // ---- help -------------------------------------------------------------------------
 
 const WIDTH = 79

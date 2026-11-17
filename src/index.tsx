@@ -19,7 +19,7 @@ import { runPullFiles, runPullDb } from "./lib/cliPull.ts"
 import { runBeacon, runModules } from "./lib/cliBeacon.ts"
 import { runOffline, runOnline } from "./lib/cliOffline.ts"
 import { runScheduler } from "./lib/cliScheduler.ts"
-import { renderCommandList } from "./lib/cliCommands.ts"
+import { nearCommands, renderCommandList } from "./lib/cliCommands.ts"
 
 const args = process.argv.slice(2)
 const positionals = args.filter((a) => !a.startsWith("-"))
@@ -297,6 +297,16 @@ if (command === "todos") {
 if (command === "sentinel") {
   const { runSentinel } = await import("./lib/cliSentinel.ts")
   process.exit(await runSentinel(args.slice(args.indexOf("sentinel") + 1)))
+}
+
+// Anything else on the command line is a mistake: a typo, or a command from a
+// newer release. Say so rather than launch the dashboard, which looks like a
+// hang when the caller is a script or a shell's rc file.
+if (command && command !== "login") {
+  const near = nearCommands(command)
+  console.error(`spinuptui: unknown command "${command}".${near.length ? ` Did you mean ${near.map((n) => `\`${n}\``).join(" or ")}?` : ""}`)
+  console.error(`Run \`spinuptui -h\` for the list (this is v${pkg.version}; a newer release may have it).`)
+  process.exit(1)
 }
 
 // `spinuptui login` forces the onboarding wizard even when a token already exists,

@@ -15,6 +15,7 @@ version; such changes are called out here.
 - **Tab completion for zsh, bash and fish (`spinuptui completion <shell>`).** Tab completes commands, subcommands and flags, the fixed values flags take, and the things SpinupTUI can look up: site domains and server names, Scheduler job ids and sources, Beacon channels, to-dos and Sentinel incidents. `spinuptui sch<Tab>` becomes `spinuptui scheduler`, and `scheduler cancel <Tab>` lists your jobs. Homebrew installs it; for a Bun install it's one line in your shell's rc file. See [docs/shell-completion.md](docs/shell-completion.md).
 
 ### Changed
+- **An unknown command is an error, not the dashboard.** `spinuptui shedule` used to open the dashboard; it now says the command is unknown, suggests `scheduler`, and exits 1. A script or shell rc file calling a command this version doesn't have fails at once instead of looking hung.
 - **`spinuptui -h` lists every module subcommand, including `scheduler cancel`.** The help and completion now come from one table of commands, so a subcommand can't appear in one and not the other; tests check that table against each module's own usage text.
 
 ## [1.4.0-alpha.3] - 2026-11-13

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { COMMANDS, EXPECT_TYPES, findCommand, renderCommandList, SCHEDULER_KINDS, TODO_KINDS, type Command, type Flag } from "./cliCommands.ts"
+import { COMMANDS, EXPECT_TYPES, findCommand, nearCommands, renderCommandList, SCHEDULER_KINDS, TODO_KINDS, type Command, type Flag } from "./cliCommands.ts"
 import { complete, formatCompletion, type Resolver } from "./cliComplete.ts"
 import * as scheduler from "./cliScheduler.ts"
 import * as beacon from "./cliBeacon.ts"
@@ -73,6 +73,15 @@ describe("the command table matches each module's usage", () => {
     const dispatched = [...src.matchAll(/command === "([a-z-]+)"/g)].map((x) => x[1]!)
     const names = COMMANDS.map((c) => c.name)
     for (const d of new Set(dispatched)) expect(names).toContain(d)
+  })
+})
+
+describe("unknown commands", () => {
+  test("suggest the near ones", () => {
+    expect(nearCommands("shedule")).toEqual(["scheduler"])
+    expect(nearCommands("completoin")).toEqual(["completion"])
+    expect(nearCommands("sentinal")).toEqual(["sentinel"])
+    expect(nearCommands("zzz")).toEqual([])
   })
 })
 
