@@ -59,6 +59,7 @@ import { planDbBackup, runDbBackup, isDbBackupInFlight, type DbBackupProgress, t
 import { planDbSync, runDbSync, isDbSyncInFlight, type DbSyncProgress, type SyncPlanResult } from "../lib/dbSync.ts"
 import { planLocalSetup, runLocalSetup, isLocalSetupInFlight, type LocalSetupProgress, type LocalSetupPlanResult } from "../lib/localSetup.ts"
 import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
+import { saveSiteIndex } from "../lib/siteIndex.ts"
 
 export type Route = "dashboard" | "servers" | "stacks" | "search" | "events" | "modules" | "reports"
 
@@ -1268,6 +1269,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const [srv, ste] = await Promise.all([client.listServers(), client.listSites()])
       setServers(srv)
       setSites(ste)
+      saveSiteIndex(srv, ste) // for shell completion (lib/siteIndex.ts)
       setLastUpdated(new Date())
       setReady(true)
       try {

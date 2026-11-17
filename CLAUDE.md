@@ -65,6 +65,13 @@ template). Never put client domains in any public artifact; anonymize.
 - Intrinsic elements are lowercase: `box`, `text`, `input`, `select`,
   `scrollbox`, `ascii-font`, etc. `<input>` style does not accept `height`.
 
+## CLI commands live in one table
+
+`src/lib/cliCommands.ts` is the table of every `spinuptui` command, subcommand
+and flag. `spinuptui -h` is rendered from it and shell completion walks it, so a
+new subcommand or flag goes there as well as in its module's parser and USAGE
+text. `cliCommands.test.ts` fails when the table and a module's usage disagree.
+
 ## Keyboard model
 
 `useKeyboard` is global — every mounted handler receives every key. To avoid

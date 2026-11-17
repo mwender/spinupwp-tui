@@ -38,7 +38,7 @@ import { beaconModule } from "../modules/beacon.ts"
 import { allModuleStatuses, UPCOMING_MODULES } from "../modules/index.ts"
 import type { ModuleStatus } from "../modules/contract.ts"
 
-const VALUE_FLAGS = new Set(["--to", "--env-file", "--bin", "--project", "--mention"])
+export const VALUE_FLAGS = new Set(["--to", "--env-file", "--bin", "--project", "--mention"])
 
 function parse(list: string[]): { positionals: string[]; flags: Map<string, string>; rest: string | null } {
   const dash = list.indexOf("--")
@@ -68,7 +68,7 @@ function fail(json: boolean, reason: string, message: string, remedy?: string): 
   return 1
 }
 
-const USAGE = `Usage:
+export const USAGE = `Usage:
   spinuptui beacon setup [<name>]   (guided, in a terminal)
   spinuptui beacon send [--to <channel>] [--silent] [--json] [<message> | -]
   spinuptui beacon add telegram <name> [--env-file <path>] [--default] [--no-test]

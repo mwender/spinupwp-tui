@@ -53,7 +53,7 @@ interface Parsed {
   server: string | null
 }
 
-const VALUE_FLAGS = new Set(["--site", "--server"])
+export const VALUE_FLAGS = new Set(["--site", "--server"])
 
 function parse(args: string[]): Parsed {
   const names: string[] = []

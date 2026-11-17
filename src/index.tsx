@@ -19,6 +19,7 @@ import { runPullFiles, runPullDb } from "./lib/cliPull.ts"
 import { runBeacon, runModules } from "./lib/cliBeacon.ts"
 import { runOffline, runOnline } from "./lib/cliOffline.ts"
 import { runScheduler } from "./lib/cliScheduler.ts"
+import { renderCommandList } from "./lib/cliCommands.ts"
 
 const args = process.argv.slice(2)
 const positionals = args.filter((a) => !a.startsWith("-"))
@@ -56,77 +57,32 @@ function badFlagValue(flags: Map<string, string>, name: string): boolean {
   return !v || v.startsWith("-")
 }
 
+// Shell completion comes first: the words being completed can include -h or
+// anything else the checks below would act on.
+if (args[0] === "__complete") {
+  const { complete, formatCompletion, resolveFromDisk } = await import("./lib/cliComplete.ts")
+  process.stdout.write(formatCompletion(await complete(args.slice(1), resolveFromDisk)))
+  process.exit(0)
+}
+
+if (command === "completion") {
+  const { completionScript, COMPLETION_HELP } = await import("./lib/cliComplete.ts")
+  const shell = args[args.indexOf("completion") + 1]
+  const script = shell && !shell.startsWith("-") ? completionScript(shell) : null
+  if (!script) {
+    ;(args.includes("-h") || args.includes("--help") ? console.log : console.error)(COMPLETION_HELP)
+    process.exit(args.includes("-h") || args.includes("--help") ? 0 : 1)
+  }
+  process.stdout.write(script)
+  process.exit(0)
+}
+
 if (args.includes("-h") || args.includes("--help") || command === "help") {
   const cfg = loadConfig()
   console.log(`SpinupTUI v${pkg.version} — terminal dashboard for your SpinupWP account
 
 Usage:
-  spinuptui            Launch the dashboard
-  spinuptui login      Set or update your saved API token
-  spinuptui where      Print the config file path and token source
-  spinuptui ssh <domain> [--server <name>]  Print SSH access info for a site
-                       (JSON)
-  spinuptui ssh-exec <domain> [--server <name>] -- <command>  Run a read-only
-                       command over SSH (JSON); denies anything that looks
-                       like a remote write
-  spinuptui siblings <domain> [--server <name>] [--probe]  List every site
-                       sharing a server with this one (JSON), flagging the
-                       server's vanity host and which sites Kuma watches.
-                       --probe also SSHes into each to report which ones this
-                       device's key can actually read.
-  spinuptui incidents <domain> | --all [--hours N]  Print Uptime Kuma
-                       down/up incidents for a site or the whole fleet (JSON)
-  spinuptui pull files <domain> [path] [--url <local url>] [--server <name>]
-                       Clone a site's code to a new local working copy and link
-                       it. Read-only on production; refuses a non-empty path.
-                       With exactly one localRoots entry configured, the path
-                       defaults to <that root>/<domain>.
-  spinuptui pull db <domain> [--url <local url>] [--server <name>] --yes
-                       Import production's database into the linked local copy,
-                       rewriting URLs. OVERWRITES your local database: needs
-                       both --yes and "localSync": true in the config.
-  spinuptui offline    List servers with sites offline (--json)
-  spinuptui offline <server>… | --all --yes
-                       Take every site on those servers offline: nginx stops
-                       answering, so no request reaches PHP. Files, databases
-                       and certificates are untouched. Without --yes, prints
-                       the plan and changes nothing.
-  spinuptui offline --site <domain> [--server <name>] --yes
-                       Just that site. Its server's other sites (and PHP) stay
-                       up, so this protects the site, not the server.
-  spinuptui online <server>… | --all | --site <domain> --yes
-                       Bring back exactly the sites \`offline\` took down.
-                       Servers are matched by exact name, IP or id.
-  spinuptui beacon setup  Guided Telegram setup: make a bot, find your chat,
-                       send a test (interactive; also in the app's Modules tab, 6)
-  spinuptui beacon send [--to <channel>] [--silent] [<message> | -]
-                       Page yourself through Beacon (Telegram). Reads the
-                       message from stdin when it's \`-\` or absent. Exit 0 sent,
-                       1 not configured / usage, 2 delivery failed.
-  spinuptui beacon add telegram <name> --env-file <path> [--default]
-                       Add a channel from a file holding TELEGRAM_BOT_TOKEN and
-                       TELEGRAM_CHAT_ID; sends a test message before saving.
-  spinuptui beacon test | status | remove <name>
-  spinuptui beacon listen | listener install --plan|--apply
-                       Let the pager answer: /jobs lists this station's scheduled
-                       jobs, with a button to extend any that expire soon
-  spinuptui scheduler add <id> --kind spinuptui|script|agent --when <time> | --every <schedule>
-                       --expires <date> --created-by <who> -- <body>
-                       Queue a follow-up for this station to run later and report
-                       on through Beacon (\`spinuptui scheduler\` for the rest)
-  spinuptui scheduler list | show | cancel <id> | extend | run | status | install --plan|--apply
-  spinuptui sentinel setup | attach | status | list | pause | expect
-                       Watch the fleet, work out what broke, write it up
-                       (runs as Scheduler jobs; see docs/sentinel.md)
-  spinuptui todos list | show | done | wontfix | snooze | comment | reopen
-                       Work the to-dos Sentinel's reports recommend
-  spinuptui home       Where the SpinupTUI folder (your jobs and reports) is
-  spinuptui home sync --plan|--apply --github <name> | --remote <url> | --clone <url>
-                       Share that folder across machines through a private git
-                       repository, or set it up from one on a second machine
-  spinuptui modules    List SpinupTUI's modules and their status (--json)
-  spinuptui --version  Print the version
-  spinuptui --help     Show this help
+${renderCommandList()}
 
 --server picks one site when a domain exists on more than one server (the
 ambiguity message lists them); it works on ssh, ssh-exec and both pull

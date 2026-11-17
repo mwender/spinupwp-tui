@@ -153,6 +153,8 @@ bun install -g spinuptui
 On first launch, if no token is configured you'll be guided through a short
 onboarding flow that validates your token and saves it locally.
 
+Tab completion for commands, flags, site domains and Scheduler jobs comes with the Homebrew install; with Bun, add `source <(spinuptui completion zsh)` to `~/.zshrc` (bash and fish: [docs/shell-completion.md](docs/shell-completion.md)).
+
 ### From source
 
 ```sh

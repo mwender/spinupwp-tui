@@ -126,6 +126,7 @@ Run these in order. Replace `X.Y.Z` with the new version.
    - Set `url` to `https://registry.npmjs.org/spinuptui/-/spinuptui-X.Y.Z.tgz` and `sha256` to the hash above, then commit and push the tap.
    - Check it from a neutral directory (`cd /` first — Homebrew's build sandbox can't read a cwd inside Dropbox and fails with a misleading "Failed to fix install linkage"): `brew update && brew upgrade spinuptui && brew test spinuptui`.
    - The formula runs `bun install --production --frozen-lockfile`, so the npm tarball **must include `bun.lock`** (it's in `package.json` `files`); `npm pack --dry-run` should list it.
+   - **Once, with the first stable release that has `spinuptui completion`:** add `generate_completions_from_executable(bin/"spinuptui", "completion")` as the last line of the formula's `install`, so Homebrew installs the zsh, bash and fish scripts. It runs `spinuptui completion zsh|bash|fish` at install time, so it would fail against any earlier version. Then check `ls $(brew --prefix)/share/zsh/site-functions/_spinuptui`.
 
 9. **Check spinuptui.com.** Publishing the GitHub release redeploys the site, so its changelog picks up the new release by itself (the Pages workflow re-runs on `main`). Check `https://spinuptui.com/changelog/` shows `vX.Y.Z` within a few minutes; if it doesn't, run the "Landing page" workflow by hand (`gh workflow run pages.yml --ref main`).
 

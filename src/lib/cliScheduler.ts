@@ -34,7 +34,7 @@ import { prepareWorkDir, tilde } from "./home.ts"
 import { applyStationPlan, connectHeartbeat, loadStationPlan, pagerProblem, removeHeartbeat, sendHeartbeat, stationPlanText, tickHeartbeat } from "./heartbeat.ts"
 import { git, gitPull, readClaim, removeClaim, stationName, writeClaim } from "./schedulerGit.ts"
 
-const VALUE_FLAGS = new Set([
+export const VALUE_FLAGS = new Set([
   "--source",
   "--kind",
   "--when",
@@ -71,7 +71,7 @@ const OPTIONAL_KEYS: [string, string][] = [
   ["sandbox", "--sandbox"],
 ]
 
-const USAGE = `Usage:
+export const USAGE = `Usage:
   spinuptui scheduler status [--json]
   spinuptui scheduler list [--source <name>] [--json]
   spinuptui scheduler show <id> [--source <name>]
