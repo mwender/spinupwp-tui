@@ -10,7 +10,7 @@ import { changeTodo, commitLedger, signedBy, stateLabel, type TodoAction } from 
 import { loadSessions, openTodoSession, STOP_NOTE } from "./todoSession.ts"
 import { sentinelSettings } from "./sentinelState.ts"
 
-const USAGE = `Usage:
+export const USAGE = `Usage:
   spinuptui todos list [--state open|done|wontfix|snoozed|all] [--kind <kind>]
                            [--site <domain>] [--server <host>] [--json]
   spinuptui todos show <id> [--json]
@@ -28,7 +28,7 @@ const USAGE = `Usage:
   --as claude              sign a change as a Claude session, not as you
                            (comment, done and reopen only)`
 
-const VALUE_FLAGS = new Set(["--state", "--kind", "--site", "--server", "--until", "--as"])
+export const VALUE_FLAGS = new Set(["--state", "--kind", "--site", "--server", "--until", "--as"])
 
 function parse(list: string[]) {
   const positionals: string[] = []

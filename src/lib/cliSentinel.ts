@@ -24,9 +24,9 @@ import { realDeps, sendPage, sentinelTick } from "./sentinelTick.ts"
 import { realWorkerDeps, runWorker } from "./sentinelWorker.ts"
 import { withKuma, type KumaMonitor } from "./uptimeKuma.ts"
 
-const VALUE_FLAGS = new Set(["--for", "--since", "--agent", "--workspace", "--report-to", "--type", "--domain", "--server", "--match", "--min", "--threshold", "--host", "--paths", "--log-glob", "--url", "--expect", "--label", "--note", "--expires"])
+export const VALUE_FLAGS = new Set(["--for", "--since", "--agent", "--workspace", "--report-to", "--type", "--domain", "--server", "--match", "--min", "--threshold", "--host", "--paths", "--log-glob", "--url", "--expect", "--label", "--note", "--expires"])
 
-const USAGE = `Usage:
+export const USAGE = `Usage:
   spinuptui sentinel setup [--plan | --apply] [--shadow] [--agent claude|codex|none]
                            [--workspace <dir>] [--report-to <board>]
   spinuptui sentinel attach --plan | --apply [--include-likely]

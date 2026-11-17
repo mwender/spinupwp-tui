@@ -4,7 +4,7 @@
 
 import { applySync, describeShare, ensureHome, homeStatus, planSync, tilde, type SyncOptions } from "./home.ts"
 
-const USAGE = `Usage:
+export const USAGE = `Usage:
   spinuptui home [--json]          where the SpinupTUI folder is, and whether it's shared
   spinuptui home sync --plan | --apply [--json]
         --github <name>            create a private GitHub repository for it (needs gh)
@@ -15,7 +15,7 @@ The SpinupTUI folder (~/SpinupTUI) holds your Scheduler jobs and reports and,
 later, other modules' work. Shared through a private git repository, you can
 queue jobs from any machine and read the reports anywhere.`
 
-const VALUE_FLAGS = new Set(["--github", "--remote", "--clone"])
+export const VALUE_FLAGS = new Set(["--github", "--remote", "--clone"])
 
 function fail(json: boolean, reason: string, message: string, remedy?: string): number {
   if (json) console.log(JSON.stringify({ ok: false, reason, message, ...(remedy ? { remedy } : {}) }))
