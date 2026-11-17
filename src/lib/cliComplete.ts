@@ -245,7 +245,7 @@ bash  add to ~/.bashrc:
 fish  run once:
         spinuptui completion fish > ~/.config/fish/completions/spinuptui.fish
 
-Homebrew installs the zsh, bash and fish scripts for you. Domains come from a
+Homebrew (from 1.4.0) installs the scripts for you. Domains come from a
 list the dashboard saves each time it loads your sites; when that list is more
 than 6 hours old, the first Tab refreshes it from the API.`
 

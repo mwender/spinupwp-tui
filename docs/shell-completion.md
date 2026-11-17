@@ -11,7 +11,7 @@ $ spinuptui ssh exa<Tab>              →  spinuptui ssh example.com
 
 ## Turning it on
 
-Homebrew installs the scripts for zsh, bash and fish, so there's nothing to do beyond having completion enabled in your shell (`compinit` in zsh, which most setups already run).
+From 1.4.0, Homebrew installs the scripts for zsh, bash and fish, so there's nothing to do beyond having completion enabled in your shell (`compinit` in zsh, which most setups already run).
 
 For a Bun or npm install, or a source checkout, add one line:
 

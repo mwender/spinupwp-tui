@@ -11,8 +11,12 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+## [1.4.0-alpha.4] - 2026-11-17
+
+A pre-release on npm's `next` tag; `@latest` and Homebrew stay on 1.3.0.
+
 ### Added
-- **Tab completion for zsh, bash and fish (`spinuptui completion <shell>`).** Tab completes commands, subcommands and flags, the fixed values flags take, and the things SpinupTUI can look up: site domains and server names, Scheduler job ids and sources, Beacon channels, to-dos and Sentinel incidents. `spinuptui sch<Tab>` becomes `spinuptui scheduler`, and `scheduler cancel <Tab>` lists your jobs. Homebrew installs it; for a Bun install it's one line in your shell's rc file. See [docs/shell-completion.md](docs/shell-completion.md).
+- **Tab completion for zsh, bash and fish (`spinuptui completion <shell>`).** Tab completes commands, subcommands and flags, the fixed values flags take, and the things SpinupTUI can look up: site domains and server names, Scheduler job ids and sources, Beacon channels, to-dos and Sentinel incidents. `spinuptui sch<Tab>` becomes `spinuptui scheduler`, and `scheduler cancel <Tab>` lists your jobs. For a Bun install it's one line in your shell's rc file; Homebrew will install it for you from the stable 1.4.0. See [docs/shell-completion.md](docs/shell-completion.md).
 
 ### Changed
 - **An unknown command is an error, not the dashboard.** `spinuptui shedule` used to open the dashboard; it now says the command is unknown, suggests `scheduler`, and exits 1. A script or shell rc file calling a command this version doesn't have fails at once instead of looking hung.
@@ -1586,7 +1590,8 @@ Initial tagged release.
 ### Notes
 - Read-only release: works with a SpinupWP **Read Only** API token.
 
-[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.3...HEAD
+[Unreleased]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.4...HEAD
+[1.4.0-alpha.4]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.3...v1.4.0-alpha.4
 [1.4.0-alpha.3]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.2...v1.4.0-alpha.3
 [1.4.0-alpha.2]: https://github.com/mwender/spinupwp-tui/compare/v1.4.0-alpha.1...v1.4.0-alpha.2
 [1.4.0-alpha.1]: https://github.com/mwender/spinupwp-tui/compare/v1.3.0...v1.4.0-alpha.1
