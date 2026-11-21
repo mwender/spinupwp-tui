@@ -351,7 +351,7 @@ export function buildRevokeScript(siteUser: string, domain: string, pubkeys: str
 // one shot `sudo -S -p '' bash -s`, so the password is read from stdin (-S) and
 // never appears in argv (so not in the remote `ps`/history). When `password` is
 // null the remote command runs without sudo (used for the read-only probe).
-async function runSshStdin(
+export async function runSshStdin(
   target: string,
   port: number | null,
   remoteCmd: string,
@@ -389,7 +389,7 @@ async function runSshStdin(
 }
 
 // Pull a meaningful last line out of ssh/sudo stderr for surfacing to the user.
-function lastErrorLine(stderr: string, fallback: string): string {
+export function lastErrorLine(stderr: string, fallback: string): string {
   const line = stderr.trim().split("\n").map((l) => l.trim()).filter(Boolean).pop()
   return line || fallback
 }

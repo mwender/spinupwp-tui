@@ -294,6 +294,11 @@ if (command === "todos") {
   process.exit(await runTodos(args.slice(args.indexOf("todos") + 1)))
 }
 
+if (command === "samurai") {
+  const { runSamurai } = await import("./lib/cliSamurai.ts")
+  process.exit(await runSamurai(args.slice(args.indexOf("samurai") + 1)))
+}
+
 if (command === "sentinel") {
   const { runSentinel } = await import("./lib/cliSentinel.ts")
   process.exit(await runSentinel(args.slice(args.indexOf("sentinel") + 1)))
