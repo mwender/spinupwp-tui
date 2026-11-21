@@ -32,7 +32,7 @@ export interface TodoSessionRecord {
 
 export type SessionResult =
   | { ok: true; status: "running" | "started" | "resumed"; record: TodoSessionRecord }
-  | { ok: false; reason: "not_trusted" | "no_claude" | "launch_failed"; message: string; remedy?: string }
+  | { ok: false; reason: "not_trusted" | "no_claude" | "launch_failed" | "not_logged_in"; message: string; remedy?: string }
 
 const statePath = () => join(moduleStateDir("sentinel"), "todo-sessions.json")
 
@@ -42,6 +42,13 @@ export function loadSessions(path = statePath()): Record<string, TodoSessionReco
   } catch {
     return {}
   }
+}
+
+function forgetSession(todo: string, path = statePath()): void {
+  const all = loadSessions(path)
+  if (!(todo in all)) return
+  delete all[todo]
+  writeFileSync(path, JSON.stringify(all, null, 2) + "\n")
 }
 
 function saveSession(r: TodoSessionRecord, path = statePath()): void {
@@ -183,15 +190,38 @@ async function agents(r: ClaudeRunner): Promise<Agent[]> {
 const SESSION_URL = /https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+/g
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g
 
-async function sessionUrl(r: ClaudeRunner, shortId: string, waitMs = 60_000): Promise<string | null> {
+// What Claude Code shows when a session has no usable login. A background
+// session in that state sits idle forever and never reaches the Claude app.
+const LOGIN_FAILED = /Login expired|Not logged in|Please run \/login|Invalid API key/i
+
+// Reads a new session's output until it shows its Remote Control link, or the
+// login error that means it will never do anything. Always reads at least once.
+async function watchStart(r: ClaudeRunner, shortId: string, waitMs = 60_000): Promise<{ url: string | null; loginFailed: boolean }> {
   const until = Date.now() + waitMs
-  while (Date.now() < until) {
+  for (;;) {
     const p = await r.run(["logs", shortId], homedir(), 30_000)
-    const found = p.output.replace(ANSI, "").match(SESSION_URL)
-    if (found?.length) return found.at(-1)!
+    const out = p.output.replace(ANSI, "")
+    if (LOGIN_FAILED.test(out)) return { url: null, loginFailed: true }
+    const found = out.match(SESSION_URL)
+    if (found?.length) return { url: found.at(-1)!, loginFailed: false }
+    if (Date.now() >= until) return { url: null, loginFailed: false }
     await r.sleep(3000)
   }
-  return null
+}
+
+// A session stuck without a login is stopped rather than left idle. One that
+// never got going (no link was ever seen) is forgotten, so the next press starts
+// a fresh one: resuming such a session was seen to keep failing after the login
+// was fine again. One that has worked before is kept for a later resume.
+async function loginFailure(r: ClaudeRunner, f: Todo, shortId: string, known: TodoSessionRecord | undefined, path?: string): Promise<SessionResult> {
+  await r.run(["stop", shortId], homedir(), 30_000)
+  if (!known?.url) forgetSession(f.id, path)
+  return {
+    ok: false,
+    reason: "not_logged_in",
+    message: `The session for ${f.id} stopped before doing anything: Claude Code on this machine had no usable login.`,
+    remedy: "Run `claude auth status` here. If it's logged out, run `claude` and log in with /login. If it says it's logged in, Claude Code was probably renewing its login just then: try again.",
+  }
 }
 
 export interface StartOptions {
@@ -228,8 +258,11 @@ export async function openTodoSession(f: Todo, opts: StartOptions): Promise<Sess
 
   const live = known ? (await agents(r)).find((a) => a.sessionId === known.sessionId) : undefined
   if (known && live?.pid) {
-    const url = known.url ?? (live.id ? await sessionUrl(r, live.id, 10_000) : null)
-    const record = { ...known, url }
+    // Only a session that never showed its link is checked: one that has been
+    // working may well discuss login errors in its own output.
+    const watched = live.id && !known.url ? await watchStart(r, live.id, 10_000) : { url: null, loginFailed: false }
+    if (watched.loginFailed) return loginFailure(r, f, live.id!, known, opts.statePath)
+    const record = { ...known, url: known.url ?? watched.url }
     saveSession(record, opts.statePath)
     return { ok: true, status: "running", record }
   }
@@ -271,13 +304,15 @@ export async function openTodoSession(f: Todo, opts: StartOptions): Promise<Sess
     sessionId = (await agents(r)).find((a) => a.id === short)?.sessionId ?? ""
     if (!sessionId) await r.sleep(2000)
   }
+  const watched = await watchStart(r, short)
+  if (watched.loginFailed) return loginFailure(r, f, short, known, opts.statePath)
   const record: TodoSessionRecord = {
     todo: f.id,
     sessionId: sessionId || known?.sessionId || short,
     shortId: short,
     name,
     workdir,
-    url: (await sessionUrl(r, short)) ?? known?.url ?? null,
+    url: watched.url ?? known?.url ?? null,
     startedAt: now.toISOString(),
     seenEvents: f.history.length,
   }
