@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { AppConfig } from "../config.ts"
 import { fold, type TodoEvent } from "./todos.ts"
-import { isTrusted, loadSessions, openTodoSession, pickWorkdir, reapTodoSessions, resumePrompt, sessionName, type ClaudeRunner, type ReapDeps } from "./todoSession.ts"
+import { isTrusted, loadSessions, openTodoSession, pickWorkdir, reapTodoSessions, resumePrompt, sessionAsksFirst, sessionName, systemPrompt, withSessionAsks, type ClaudeRunner, type ReapDeps } from "./todoSession.ts"
 
 const NOW = new Date("2026-11-13T12:00:00Z")
 const ev = (e: Record<string, unknown>) => ({ v: 1, by: "sentinel", at: "2026-11-12T08:41:00Z", ...e }) as TodoEvent
@@ -191,5 +191,25 @@ describe("reapTodoSessions", () => {
   test("an open to-do's worktree is never removed, even once its session is stopped", async () => {
     const w = world({ idleMin: 25 * 60 })
     expect(await reapTodoSessions(w.ledger, NOW, w.deps, w.s.statePath)).toEqual({ stopped: ["T-1"], worktrees: [] })
+  })
+})
+
+describe("whether sessions ask before each step", () => {
+  test("on unless the mode is bypassPermissions", () => {
+    expect(sessionAsksFirst({ sentinel: null })).toBe(true)
+    expect(sessionAsksFirst({ sentinel: { sessionPermissionMode: "default" } })).toBe(true)
+    expect(sessionAsksFirst({ sentinel: { sessionPermissionMode: "plan" } })).toBe(true)
+    expect(sessionAsksFirst({ sentinel: { sessionPermissionMode: "bypassPermissions" } })).toBe(false)
+  })
+  test("turning it off sets bypassPermissions; on drops the key and keeps the rest", () => {
+    expect(withSessionAsks({ mode: "live" }, false)).toEqual({ mode: "live", sessionPermissionMode: "bypassPermissions" })
+    expect(withSessionAsks({ mode: "live", sessionPermissionMode: "bypassPermissions" }, true)).toEqual({ mode: "live" })
+    expect(withSessionAsks(undefined, false)).toEqual({ sessionPermissionMode: "bypassPermissions" })
+  })
+  test("the prompt keeps the go-ahead rule whatever the mode", () => {
+    const f = { id: "T-1", kind: "note", scope: "fleet", title: "x", state: "open", history: [], reports: [] } as never
+    const text = systemPrompt(f, "/w", "/w", "spinuptui", new Date())
+    expect(text).toContain("waits for the operator's go-ahead")
+    expect(text).toContain("that go-ahead is the check before a change")
   })
 })

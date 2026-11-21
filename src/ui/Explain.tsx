@@ -121,6 +121,7 @@ const GUIDES: Record<Route, Guide> = {
       ["⏎", "Read the report (Reports) · jump to the to-do's newest report (To-dos)"],
       ["d / w / s / c / r", "Done · won't fix (Sentinel reads why) · snooze to a date · comment · reopen"],
       ["a", "Talk the selected to-do over with Claude: starts a session you open in the Claude app, or shows the one already running"],
+      ["p", "Whether those sessions ask you in the Claude app before every step, or investigate on their own and ask only before changing anything"],
       ["o", "Open the report file"],
       ["x", "Show every site again, after arriving from a site's details"],
       ["1–7", "Switch tabs"],

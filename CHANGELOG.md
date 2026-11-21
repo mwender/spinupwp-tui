@@ -11,6 +11,9 @@ version; such changes are called out here.
 
 ## [Unreleased]
 
+### Added
+- **Choose whether to-do sessions ask before every step (`p` on the Reports tab's To-dos).** "Claude asks: every step" is the default, as before. Switch to "Claude asks: before changes" and a session started with `a` investigates without a prompt for each command, and still asks you in the conversation before it changes a server, a monitor, DNS or a site. It applies to the next session you start or resume, and replaces editing `sessionPermissionMode` in `config.json` by hand.
+
 ## [1.4.0-alpha.4] - 2026-11-17
 
 A pre-release on npm's `next` tag; `@latest` and Homebrew stay on 1.3.0.
