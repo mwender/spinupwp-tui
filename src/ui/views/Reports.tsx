@@ -103,6 +103,7 @@ export function Reports({ rows }: { rows: number }) {
   const [flash, setFlash] = useState<string | null>(null)
   const [starting, setStarting] = useState<string | null>(null) // a to-do whose Claude session is starting
   const [sessions, setSessions] = useState<Record<string, TodoSessionRecord>>({})
+  const [asks, setAsks] = useState(() => src.asksFirst()) // do Claude sessions prompt before each tool use?
   const [data, setData] = useState<{ ledger: Ledger; reports: ReportRow[]; stamp: string } | null>(null)
 
   const active = route === "reports"
@@ -299,6 +300,7 @@ export function Reports({ rows }: { rows: number }) {
         case "c":
         case "f":
         case "a":
+        case "p":
           return say("Press Tab for the to-do list, where those keys act on the selected item.")
       }
       return
@@ -324,6 +326,20 @@ export function Reports({ rows }: { rows: number }) {
       }
       case "f":
         return todo && say(samuraiReason(todo), 6000)
+      case "p": {
+        const next = !asks
+        void src.setAsksFirst(next).then((err) => {
+          if (err) return say(`Couldn't save the setting: ${err}`, 10000)
+          setAsks(next)
+          say(
+            next
+              ? "Claude sessions will ask in the Claude app before each step again. A session that's already running keeps the mode it started with."
+              : "Claude sessions will investigate without asking, and still ask you in the conversation before changing anything. A session that's already running keeps the mode it started with; the next one you start or resume uses this.",
+            12000,
+          )
+        })
+        return
+      }
       case "a": {
         if (!todo) return
         if (starting) return say(`Still starting the session for ${starting}…`)
@@ -387,6 +403,7 @@ export function Reports({ rows }: { rows: number }) {
               ]
             : []),
           ...(todo ? [{ key: "a", label: starting ? "starting Claude…" : sessions[todo.id] ? "its Claude session" : "ask Claude" }] : []),
+          { key: "p", label: asks ? "Claude asks: every step" : "Claude asks: before changes" },
           { key: "v", label: "state" },
           { key: "t", label: "kind" },
           ...(reportsSite ? [{ key: "x", label: "every site" }] : []),

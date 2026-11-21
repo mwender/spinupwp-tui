@@ -4,13 +4,13 @@
 
 import { readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
-import { loadConfig } from "../config.ts"
+import { loadConfig, saveConfig } from "../config.ts"
 import { isDevMode } from "../dev/devMode.ts"
 import { FIXTURE_LEDGER, FIXTURE_REPORTS } from "../dev/reportFixtures.ts"
 import { openCountsBySite, parseReport, scanReports, withTodos, type ReportRow } from "../lib/reports.ts"
 import { changeTodo, commitLedger, planChange, type ChangeInput, type Changed } from "../lib/todoActions.ts"
 import { fold, ledgerPath, readLedger, type Ledger, type Todo, type TodoEvent } from "../lib/todos.ts"
-import { loadSessions, openTodoSession, sessionName, type SessionResult, type TodoSessionRecord } from "../lib/todoSession.ts"
+import { loadSessions, openTodoSession, sessionAsksFirst, sessionName, withSessionAsks, type SessionResult, type TodoSessionRecord } from "../lib/todoSession.ts"
 import { loadIncidents, sentinelSettings } from "../lib/sentinelState.ts"
 
 export interface ReportSource {
@@ -24,6 +24,8 @@ export interface ReportSource {
   stamp(): string // changes when the ledger does
   session(f: Todo): Promise<SessionResult> // a Claude session for the to-do
   sessions(): Record<string, TodoSessionRecord>
+  asksFirst(): boolean // do sessions prompt before each tool use?
+  setAsksFirst(asks: boolean): Promise<string | null> // an error message, or null
 }
 
 function diskSource(): ReportSource {
@@ -44,6 +46,15 @@ function diskSource(): ReportSource {
     commit: (message) => commitLedger(message),
     session: (f) => openTodoSession(f, { cfg: loadConfig() }),
     sessions: () => loadSessions(),
+    asksFirst: () => sessionAsksFirst(loadConfig()),
+    setAsksFirst: async (asks) => {
+      try {
+        await saveConfig({ sentinel: withSessionAsks(loadConfig().sentinel, asks) })
+        return null
+      } catch (e) {
+        return (e as Error).message
+      }
+    },
     stamp: () => {
       try {
         const s = statSync(ledgerPath())
@@ -57,6 +68,7 @@ function diskSource(): ReportSource {
 
 const devEvents: TodoEvent[] = [...FIXTURE_LEDGER]
 const devSessions: Record<string, TodoSessionRecord> = {}
+let devAsks = true
 
 function devSource(): ReportSource {
   const ledger = (): Ledger => ({ items: fold(devEvents), events: devEvents, skipped: 0 })
@@ -91,6 +103,11 @@ function devSource(): ReportSource {
       return { ok: true, status: known ? "running" : "started", record }
     },
     sessions: () => devSessions,
+    asksFirst: () => devAsks,
+    setAsksFirst: async (asks) => {
+      devAsks = asks
+      return null
+    },
     stamp: () => String(devEvents.length),
   }
 }
