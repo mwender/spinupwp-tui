@@ -27,13 +27,13 @@ const items = fold([
 ])
 
 // A fake `claude`: records each call and answers like the real one.
-function fakeClaude(opts: { live?: boolean; launch?: string } = {}) {
+function fakeClaude(opts: { live?: boolean; launch?: string; logs?: string } = {}) {
   const calls: { args: string[]; cwd: string }[] = []
   const runner: ClaudeRunner = {
     async run(args, cwd) {
       calls.push({ args, cwd })
       if (args[0] === "agents") return { code: 0, output: JSON.stringify([{ id: "abc123", sessionId: "sess-real", pid: opts.live ? 42 : undefined }]) }
-      if (args[0] === "logs") return { code: 0, output: "Remote Control: \x1b[1mhttps://claude.ai/code/session_XYZ123\x1b[0m" }
+      if (args[0] === "logs") return { code: 0, output: opts.logs ?? "Remote Control: \x1b[1mhttps://claude.ai/code/session_XYZ123\x1b[0m" }
       return { code: 0, output: opts.launch ?? "Session backgrounded · abc123" }
     },
     sleep: async () => {},
@@ -42,6 +42,34 @@ function fakeClaude(opts: { live?: boolean; launch?: string } = {}) {
 }
 
 describe("openTodoSession", () => {
+  test("stops and forgets a new session that has no login, and says so", async () => {
+    const s = setup()
+    const { calls, runner } = fakeClaude({ logs: "\x1b[33m⏺ Login expired · Please run /login\x1b[0m" })
+    const r = await openTodoSession(items.get("T-1")!, { ...s, now: NOW, runner })
+    expect(r).toMatchObject({ ok: false, reason: "not_logged_in" })
+    expect(calls.some((c) => c.args[0] === "stop" && c.args[1] === "abc123")).toBe(true)
+    expect(loadSessions(s.statePath)["T-1"]).toBeUndefined()
+  })
+
+  test("a stuck session that's still running is stopped, not reported as running", async () => {
+    const s = setup()
+    writeFileSync(s.statePath, JSON.stringify({ "T-1": { todo: "T-1", sessionId: "sess-real", shortId: "abc123", name: "x", workdir: s.workspace, url: null, startedAt: NOW.toISOString(), seenEvents: 1 } }))
+    const { calls, runner } = fakeClaude({ live: true, logs: "Not logged in · run /login" })
+    const r = await openTodoSession(items.get("T-1")!, { ...s, now: NOW, runner })
+    expect(r).toMatchObject({ ok: false, reason: "not_logged_in" })
+    expect(calls.some((c) => c.args[0] === "stop")).toBe(true)
+    expect(loadSessions(s.statePath)["T-1"]).toBeUndefined()
+  })
+
+  test("a resumed session that worked before is kept when the login fails", async () => {
+    const s = setup()
+    writeFileSync(s.statePath, JSON.stringify({ "T-1": { todo: "T-1", sessionId: "sess-old", shortId: "old1", name: "x", workdir: s.workspace, url: "https://claude.ai/code/session_OLD", startedAt: NOW.toISOString(), seenEvents: 1 } }))
+    const { runner } = fakeClaude({ logs: "Login expired" })
+    const r = await openTodoSession(items.get("T-1")!, { ...s, now: NOW, runner })
+    expect(r).toMatchObject({ ok: false, reason: "not_logged_in" })
+    expect(loadSessions(s.statePath)["T-1"]?.sessionId).toBe("sess-old")
+  })
+
   test("starts a named Remote Control session in Sentinel's folder and remembers it", async () => {
     const s = setup()
     const { calls, runner } = fakeClaude()
