@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+#
+# spinuptui-nginx: the root-owned gate SpinupTUI's Samurai deploys a site's
+# custom nginx rules through, on a SpinupWP server.
+#
+# Installed at /usr/local/sbin/spinuptui-nginx by install.sh (beside this file)
+# and run via sudo by the `spinuptui-nginx` user, and nothing else. Each site
+# gets its own SSH keys, pinned by a forced command in that user's
+# authorized_keys to this script with the site's name as the first argument,
+# so a key can only ever act on its own site. The second argument is the
+# command the client sent (SSH_ORIGINAL_COMMAND):
+#
+#   export    tar of the live site config dir on stdout (read-only). Symlinks to
+#             SpinupWP's /etc/nginx/global files are followed, so their content
+#             is included. TLS material (*.pem, *.key, *.crt, ...) is left out:
+#             SpinupWP can leave certificates and private keys in the site dir,
+#             and they must never leave the server this way
+#   test      run `nginx -t` (read-only)
+#   allowed   print this site's allowlist (read-only)
+#   version   print the gate version (read-only)
+#   hash      print the SHA-256 of this installed script (read-only), so the
+#             client can check it is exactly the gate it shipped
+#   deploy    tar on stdin -> install allowlisted files -> nginx -t -> reload,
+#             restoring the previous files if the test or reload fails
+#
+# Only files on the site's root-owned allowlist
+# (/etc/spinuptui/nginx/sites/<site>.allowed) can be written, so SpinupWP's
+# own files are never touched. Nothing is ever deleted, except a brand-new file
+# on rollback.
+#
+# Derived from a private proof of concept that ran on production SpinupWP
+# servers from 2026-10. Any change here changes GATE_SHA256 in ../gate.ts,
+# which the tests check, so it can't ship by accident.
+
+set -euo pipefail
+
+# --- paths (the sandbox test rewrites this block) ---
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+SITES_ROOT=/etc/nginx/sites-available
+CONF_ROOT=/etc/spinuptui/nginx
+BACKUP_ROOT=/var/backups/spinuptui/nginx
+LOCK_ROOT=/run
+REQUIRE_ROOT=1
+# --- end paths ---
+
+VERSION=2.0.0
+MAX_BYTES=1048576
+KEEP_BACKUPS=30
+# Never exported. Matched against every path in the site dir, at any depth.
+TLS_EXCLUDES=('*.pem' '*.key' '*.crt' '*.csr' '*.p12' '*.pfx')
+
+umask 022
+
+log() { echo "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+load_site() {
+  SITE=$1
+  [[ "$SITE" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || die "invalid site name '$SITE'"
+  SITE_DIR="$SITES_ROOT/$SITE"
+  ALLOW_FILE="$CONF_ROOT/sites/$SITE.allowed"
+  [[ -d "$SITE_DIR" ]] || die "no nginx config dir at $SITE_DIR"
+  [[ -f "$ALLOW_FILE" ]] || die "site '$SITE' is not registered (no $ALLOW_FILE)"
+
+  ALLOWED=()
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%%#*}
+    line=${line//[[:space:]]/}
+    [[ -n "$line" ]] && ALLOWED+=("$line")
+  done < "$ALLOW_FILE"
+}
+
+is_allowed() {
+  local f
+  for f in ${ALLOWED[@]+"${ALLOWED[@]}"}; do
+    [[ "$f" == "$1" ]] && return 0
+  done
+  return 1
+}
+
+install_changed() {
+  local name
+  for name in "${changed[@]}"; do
+    if [[ -e "$SITE_DIR/$name" ]]; then
+      mkdir -p "$backup/$(dirname "$name")" || return 1
+      cp -p "$SITE_DIR/$name" "$backup/$name" || return 1
+    fi
+    install -o root -g root -m 644 "$tmp/x/$name" "$SITE_DIR/$name" || return 1
+  done
+}
+
+rollback() {
+  local name
+  log "Rolling back..."
+  for name in "${changed[@]}"; do
+    if [[ -f "$backup/$name" ]]; then
+      install -o root -g root -m 644 "$backup/$name" "$SITE_DIR/$name"
+    else
+      rm -f "$SITE_DIR/$name"
+    fi
+  done
+  if nginx -t >&2; then
+    log "Rollback complete; previous config is in place and tests clean."
+  else
+    log "WARNING: config still fails nginx -t after rollback. nginx was NOT reloaded; the running config is unchanged."
+  fi
+}
+
+prune_backups() {
+  local dir="$BACKUP_ROOT/$SITE" old
+  ls -1 "$dir" | sort -r | tail -n +$((KEEP_BACKUPS + 1)) | while IFS= read -r old; do
+    [[ "$old" =~ ^[0-9]{8}-[0-9]{6}$ ]] && rm -rf -- "${dir:?}/$old"
+  done
+}
+
+do_deploy() {
+  exec 9>"$LOCK_ROOT/spinuptui-nginx.lock"
+  flock -n 9 || die "another deploy is running on this server"
+
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+
+  head -c $((MAX_BYTES + 1)) > "$tmp/in.tar"
+  (( $(wc -c < "$tmp/in.tar") <= MAX_BYTES )) || die "payload larger than $MAX_BYTES bytes"
+  tar -tf "$tmp/in.tar" > "$tmp/list" || die "payload is not a readable tar archive"
+
+  local name
+  local -a incoming=()
+  while IFS= read -r name; do
+    [[ -z "$name" || "$name" == */ ]] && continue
+    is_allowed "$name" || die "refusing '$name': not on the allowlist for $SITE"
+    incoming+=("$name")
+  done < "$tmp/list"
+  (( ${#incoming[@]} > 0 )) || die "payload contains no deployable files"
+
+  mkdir "$tmp/x"
+  tar -xf "$tmp/in.tar" -C "$tmp/x" --no-same-owner --no-same-permissions -- "${incoming[@]}"
+
+  changed=()
+  for name in "${incoming[@]}"; do
+    [[ -f "$tmp/x/$name" && ! -L "$tmp/x/$name" ]] || die "'$name' is not a regular file"
+    [[ -d "$SITE_DIR/$(dirname "$name")" ]] || die "'$(dirname "$name")/' does not exist in $SITE_DIR"
+    cmp -s "$tmp/x/$name" "$SITE_DIR/$name" 2>/dev/null || changed+=("$name")
+  done
+
+  if (( ${#changed[@]} == 0 )); then
+    log "No changes: all ${#incoming[@]} file(s) already match the server."
+    exit 0
+  fi
+
+  backup="$BACKUP_ROOT/$SITE/$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$backup"
+  chmod 700 "$BACKUP_ROOT"
+
+  if ! install_changed; then
+    rollback
+    die "could not install files"
+  fi
+
+  if ! nginx -t >&2; then
+    rollback
+    die "nginx -t failed; nothing was reloaded"
+  fi
+
+  if ! systemctl reload nginx; then
+    rollback
+    systemctl reload nginx || true
+    die "nginx reload failed"
+  fi
+
+  log "Deployed ${#changed[@]} file(s) to $SITE and reloaded nginx:"
+  for name in "${changed[@]}"; do log "  $name"; done
+  log "Previous versions saved in $backup"
+  prune_backups || true
+}
+
+if [[ "$REQUIRE_ROOT" == 1 ]]; then
+  [[ "$(id -u)" -eq 0 ]] || die "must run as root (via sudo)"
+fi
+
+self_hash() {
+  local me
+  me=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
+  if command -v sha256sum >/dev/null; then sha256sum "$me" | cut -d' ' -f1; else shasum -a 256 "$me" | cut -d' ' -f1; fi
+}
+
+[[ $# -eq 2 ]] || die "usage: spinuptui-nginx <site> <export|test|allowed|version|hash|deploy>"
+load_site "$1"
+
+case "$2" in
+  export)  tar -C "$SITE_DIR" "${TLS_EXCLUDES[@]/#/--exclude=}" -chf - . ;;
+  test)    nginx -t >&2 ;;
+  allowed) printf '%s\n' ${ALLOWED[@]+"${ALLOWED[@]}"} ;;
+  version) echo "$VERSION" ;;
+  hash)    self_hash ;;
+  deploy)  do_deploy ;;
+  *)       die "unknown command '$2' (expected: export | test | allowed | version | hash | deploy)" ;;
+esac
