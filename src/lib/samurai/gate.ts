@@ -46,9 +46,9 @@ export function installerText(): string {
 // What a server's gate reported, against what this SpinupTUI ships.
 export type GateCheck = { ok: true } | { ok: false; reason: "missing" | "version" | "hash"; message: string }
 
-export function checkGate(reported: { version: string | null; hash: string | null }): GateCheck {
+export function checkGate(reported: { version: string | null; hash: string | null }, expectedHash = GATE_SHA256): GateCheck {
   if (!reported.version) return { ok: false, reason: "missing", message: "The spinuptui-nginx gate isn't installed on this server." }
   if (reported.version.trim() !== GATE_VERSION) return { ok: false, reason: "version", message: `The server's gate is version ${reported.version.trim()}; this SpinupTUI needs ${GATE_VERSION}. Run Samurai's setup for the site again to upgrade it.` }
-  if (reported.hash?.trim() !== GATE_SHA256) return { ok: false, reason: "hash", message: "The server's gate isn't the one SpinupTUI installed: its contents differ. Samurai won't push through it until setup is run again." }
+  if (reported.hash?.trim() !== expectedHash) return { ok: false, reason: "hash", message: "The server's gate isn't the one SpinupTUI installed: its contents differ. Samurai won't push through it until setup is run again." }
   return { ok: true }
 }

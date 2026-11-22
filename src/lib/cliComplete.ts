@@ -134,6 +134,10 @@ export const resolveFromDisk: Resolver = async (source) => {
         const { loadIncidents } = await import("./sentinelState.ts")
         return loadIncidents().map((i) => ({ value: i.id, about: `${i.key} · ${i.state}` }))
       }
+      case "proposal": {
+        const { listProposals } = await import("./samurai/fix.ts")
+        return listProposals().map((p) => ({ value: p.id, about: `${p.status} · ${p.todoId} · ${p.domain}` }))
+      }
       case "expectation": {
         const { loadExpectations } = await import("./sentinelExpect.ts")
         return loadExpectations().map((e) => ({ value: e.id, about: e.type }))

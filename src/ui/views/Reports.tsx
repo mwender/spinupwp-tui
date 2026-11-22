@@ -13,6 +13,8 @@ import { Panel } from "../components.tsx"
 import { List } from "../List.tsx"
 import { StatusBar, type KeyHint } from "../StatusBar.tsx"
 import { setUpHere } from "../../lib/samurai/setup.ts"
+import { devSetUp } from "./SamuraiSetup.tsx"
+import { isDevMode } from "../../dev/devMode.ts"
 import { useStore } from "../store.tsx"
 import { toast } from "../toast.ts"
 import { reportSource } from "../reportSource.ts"
@@ -85,15 +87,23 @@ function actionsFor(f: Todo, now: Date): TodoAction[] {
 function samuraiReason(f: Todo): string {
   if (f.kind !== "nginx") return `${f.id} is ${f.kind} work. Samurai only applies nginx fixes, so this one is done by hand.`
   if (!f.fix) return `No Samurai template covers ${f.id}, so it's an nginx change made by hand.`
-  return `${f.id} has a ${f.fix.template} fix ready, and its site is set up for Samurai. Applying the fix from here arrives in a later version.`
+  if (!f.scope.startsWith("site:")) return `${f.id} is about ${f.scope}; Samurai applies fixes to one site at a time.`
+  return `${f.id} isn't open, so Samurai leaves it alone.`
 }
+
+// The to-do's last event is Samurai's fix going in, and it hasn't been undone.
+const samuraiApplied = (f: Todo) => [...f.history].reverse().find((e) => e.event === "fix-applied" || e.event === "fix-rolled-back")?.event === "fix-applied"
 
 // The site an nginx to-do with a fix is about, when Samurai would need setting
 // up there first; null when f should just explain.
-const siteNeedingSetup = (f: Todo): string | null => (f.kind === "nginx" && f.fix && f.scope.startsWith("site:") && !setUpHere(f.scope.slice(5)) ? f.scope.slice(5) : null)
+const siteNeedingSetup = (f: Todo): string | null => {
+  if (f.kind !== "nginx" || !f.fix || !f.scope.startsWith("site:")) return null
+  const domain = f.scope.slice(5)
+  return (isDevMode() ? devSetUp.has(domain) : setUpHere(domain)) ? null : domain
+}
 
 export function Reports({ rows }: { rows: number }) {
-  const { route, inputMode, overlayOpen, setInputMode, reportsSite, setReportsSite, sites: accountSites, setSamuraiSetupSite } = useStore()
+  const { route, inputMode, overlayOpen, setInputMode, reportsSite, setReportsSite, sites: accountSites, setSamuraiSetupSite, samuraiFix, setSamuraiFix } = useStore()
   const { width } = useTerminalDimensions()
   const src = reportSource()
   const [list, setList] = useState<ListName>("reports")
@@ -115,6 +125,13 @@ export function Reports({ rows }: { rows: number }) {
   const now = new Date()
 
   const stamp = useRef("")
+  // Samurai changes the to-do's state; show it when its screen closes.
+  const fixOpen = samuraiFix !== null
+  useEffect(() => {
+    if (!fixOpen && data) load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixOpen])
+
   const load = () => {
     const ledger = src.ledger()
     stamp.current = src.stamp()
@@ -332,10 +349,19 @@ export function Reports({ rows }: { rows: number }) {
       case "f": {
         if (!todo) return
         const domain = siteNeedingSetup(todo)
-        if (!domain) return say(samuraiReason(todo), 6000)
-        const site = accountSites.find((s) => s.domain === domain)
-        if (!site) return say(`${domain} isn't a site in this SpinupWP account, so Samurai can't be set up for it from here.`, 8000)
-        return setSamuraiSetupSite(site)
+        if (domain) {
+          const site = accountSites.find((s) => s.domain === domain)
+          if (!site) return say(`${domain} isn't a site in this SpinupWP account, so Samurai can't be set up for it from here.`, 8000)
+          return setSamuraiSetupSite(site)
+        }
+        if (samuraiApplied(todo)) return say(`Samurai's fix for ${todo.id} is in place. Press u to roll it back.`, 6000)
+        if (todo.kind === "nginx" && todo.fix && effectiveState(todo, new Date()) === "open" && todo.scope.startsWith("site:")) return setSamuraiFix({ todo, mode: "apply" })
+        return say(samuraiReason(todo), 6000)
+      }
+      case "u": {
+        if (!todo) return
+        if (!samuraiApplied(todo)) return say(`Samurai hasn't applied a fix for ${todo.id} that's still in place, so there's nothing to roll back.`, 6000)
+        return setSamuraiFix({ todo, mode: "rollback" })
       }
       case "p": {
         const next = !asks
@@ -413,7 +439,8 @@ export function Reports({ rows }: { rows: number }) {
                 ...(todo.reports.length ? [{ key: "⏎", label: "its report" }] : []),
               ]
             : []),
-          ...(todo && siteNeedingSetup(todo) ? [{ key: "f", label: "set up Samurai" }] : []),
+          ...(todo && siteNeedingSetup(todo) ? [{ key: "f", label: "set up Samurai" }] : todo?.kind === "nginx" && todo.fix && !samuraiApplied(todo) && effectiveState(todo, now) === "open" ? [{ key: "f", label: "apply fix" }] : []),
+          ...(todo && samuraiApplied(todo) ? [{ key: "u", label: "roll back fix" }] : []),
           ...(todo ? [{ key: "a", label: starting ? "starting Claude…" : sessions[todo.id] ? "its Claude session" : "ask Claude" }] : []),
           { key: "p", label: asks ? "Claude asks: every step" : "Claude asks: before changes" },
           { key: "v", label: "state" },

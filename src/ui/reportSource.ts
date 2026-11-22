@@ -24,6 +24,7 @@ export interface ReportSource {
   stamp(): string // changes when the ledger does
   session(f: Todo): Promise<SessionResult> // a Claude session for the to-do
   sessions(): Record<string, TodoSessionRecord>
+  record(event: TodoEvent): void // Dev Mode: Samurai's pretend outcomes (on disk, lib/samurai writes the ledger itself)
   asksFirst(): boolean // do sessions prompt before each tool use?
   setAsksFirst(asks: boolean): Promise<string | null> // an error message, or null
 }
@@ -46,6 +47,7 @@ function diskSource(): ReportSource {
     commit: (message) => commitLedger(message),
     session: (f) => openTodoSession(f, { cfg: loadConfig() }),
     sessions: () => loadSessions(),
+    record: () => {},
     asksFirst: () => sessionAsksFirst(loadConfig()),
     setAsksFirst: async (asks) => {
       try {
@@ -103,6 +105,7 @@ function devSource(): ReportSource {
       return { ok: true, status: known ? "running" : "started", record }
     },
     sessions: () => devSessions,
+    record: (e) => void devEvents.push(e),
     asksFirst: () => devAsks,
     setAsksFirst: async (asks) => {
       devAsks = asks
