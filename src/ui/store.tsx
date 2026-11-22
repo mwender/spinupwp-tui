@@ -579,6 +579,9 @@ interface StoreValue extends DataState {
   // The site whose take-offline overlay (O) is open, or null.
   siteOfflineSite: Site | null
   setSiteOfflineSite: (s: Site | null) => void
+  // The site whose Samurai setup screen is open (F on a site, f on an nginx to-do).
+  samuraiSetupSite: Site | null
+  setSamuraiSetupSite: (s: Site | null) => void
   // The site whose purge-cache overlay is open, or null.
   purgeCacheSite: Site | null
   setPurgeCacheSite: (s: Site | null) => void
@@ -724,6 +727,8 @@ interface StoreValue extends DataState {
   showReleaseNotes: () => void
   // Per-server sudo user (persisted, username only) for privileged writes.
   sudoUserFor: (serverId: number) => string | undefined
+  // The connected (in-memory) sudo password for a server, if any.
+  sudoPasswordFor: (serverId: number) => string | undefined
   // Sudo "connection" on a server: validate the sudo user + password against the
   // live server, then hold them for the session so every privileged action on that
   // server just works (the explicit ● connected model). The password is in-memory only.
@@ -1100,6 +1105,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [httpsToggles, setHttpsToggles] = useState<Map<number, HttpsToggleProgress>>(new Map())
   const [purgeCacheSite, setPurgeCacheSite] = useState<Site | null>(null)
   const [siteOfflineSite, setSiteOfflineSite] = useState<Site | null>(null)
+  const [samuraiSetupSite, setSamuraiSetupSite] = useState<Site | null>(null)
   const [purgeCacheProgress, setPurgeCacheProgress] = useState<Map<number, PurgeCacheProgress>>(new Map())
   const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
   const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
@@ -2000,6 +2006,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // ---- Privileged SSH-key grant (sudo write-over-SSH) -------------------
 
   const sudoUserFor = useCallback((serverId: number) => sudoUsers.get(serverId), [sudoUsers])
+  const sudoPasswordFor = useCallback((serverId: number) => sudoPwRef.current.get(serverId), [])
 
   // Persist per-server sudo metadata: the username + the keychain-saved flag (the
   // password itself never touches disk — it's in-memory + optionally the Keychain).
@@ -4538,6 +4545,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setPurgeCacheSite,
     siteOfflineSite,
     setSiteOfflineSite,
+    samuraiSetupSite,
+    setSamuraiSetupSite,
     purgeCacheProgress,
     startPurgeCache,
     clearPurgeCache,
@@ -4635,6 +4644,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dismissReleaseNotes,
     showReleaseNotes,
     sudoUserFor,
+    sudoPasswordFor,
     sudoConnectServer,
     setSudoConnectServer,
     isSudoConnected,

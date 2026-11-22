@@ -9,6 +9,7 @@ import * as home from "./cliHome.ts"
 import * as todos from "./cliTodos.ts"
 import * as sentinel from "./cliSentinel.ts"
 import * as offline from "./cliOffline.ts"
+import * as samurai from "./cliSamurai.ts"
 import { KINDS } from "./schedulerJobs.ts"
 import { TODO_KINDS as LEDGER_KINDS } from "./todos.ts"
 import { EXPECT_TYPES as SENTINEL_EXPECT_TYPES } from "./sentinelExpect.ts"
@@ -27,6 +28,7 @@ const MODULES: { name: string; usage: string; valueFlags: Set<string> }[] = [
   { name: "home", usage: home.USAGE, valueFlags: home.VALUE_FLAGS },
   { name: "todos", usage: todos.USAGE, valueFlags: todos.VALUE_FLAGS },
   { name: "sentinel", usage: sentinel.USAGE, valueFlags: sentinel.VALUE_FLAGS },
+  { name: "samurai", usage: samurai.USAGE, valueFlags: samurai.VALUE_FLAGS },
 ]
 
 describe("the command table matches each module's usage", () => {

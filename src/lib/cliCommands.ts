@@ -372,6 +372,19 @@ export const COMMANDS: Command[] = [
     help: [{ about: "Watch the fleet, work out what broke, write it up (runs as Scheduler jobs; see docs/sentinel.md)" }],
   },
   {
+    name: "samurai",
+    about: "Fix what Sentinel finds at the nginx layer, with your approval",
+    subs: [
+      {
+        name: "setup",
+        about: "Install the spinuptui-nginx gate for a site and prove it",
+        args: [{ name: "domain", values: "site" }],
+        flags: [server, plan, apply, json],
+      },
+    ],
+    help: [{ usage: "samurai setup <domain> --plan|--apply", about: "Set a site up for Samurai's nginx rules: install the gate through the server's sudo user, copy the site's nginx config here, and prove it end to end" }],
+  },
+  {
     name: "todos",
     about: "Work the to-dos Sentinel's reports recommend",
     subs: [
