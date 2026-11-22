@@ -79,7 +79,7 @@ const T2 = () => todo("T-2", { template: "block-user-agent", params: { pattern: 
 const ledgerState = (id: string) => fold(readLedger(ledger).events).get(id)
 const created = (f: Todo): TodoEvent => ({ v: 1, at: "2026-11-22T00:00:00Z", by: "sentinel", id: f.id, event: "created", kind: f.kind, scope: f.scope, title: f.title, fix: f.fix })
 const pages: string[] = []
-const ctx = (fetcher: Fetcher) => ({ target, by: "operator@test", fetcher, dir: proposals, ledgerPath: ledger, page: async (t: string) => void pages.push(t) })
+const ctx = (fetcher: Fetcher) => ({ target, by: "operator@test", fetcher, dir: proposals, ledgerPath: ledger, page: async (t: string) => void pages.push(t), sleep: async () => {} })
 
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "samurai-fix-"))

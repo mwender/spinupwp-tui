@@ -18,6 +18,7 @@ export type ValueSource =
   | "todo" // to-do ids
   | "incident" // Sentinel incident ids
   | "expectation" // Sentinel expectation ids
+  | "proposal" // Samurai proposal ids
   | "file" // the shell's own file completion
   | "dir" // the shell's own directory completion
 
@@ -381,8 +382,14 @@ export const COMMANDS: Command[] = [
         args: [{ name: "domain", values: "site" }],
         flags: [server, plan, apply, json],
       },
+      { name: "propose", about: "Show exactly what applying a to-do's fix would change", args: [todo], flags: [json] },
+      { name: "apply", about: "Apply a proposal as shown, then check it from outside", args: [{ name: "proposal", values: "proposal" }], flags: [{ name: "--hash", value: "hash", about: "the hash `propose` printed" }, json] },
+      { name: "rollback", about: "Take an applied fix's rule out again", args: [{ name: "proposal", values: "proposal" }], flags: [json] },
+      { name: "list", about: "Every proposal, applied or not", flags: [json] },
     ],
-    help: [{ usage: "samurai setup <domain> --plan|--apply", about: "Set a site up for Samurai's nginx rules: install the gate through the server's sudo user, copy the site's nginx config here, and prove it end to end" }],
+    help: [{ usage: "samurai setup <domain> --plan|--apply", about: "Set a site up for Samurai's nginx rules: install the gate through the server's sudo user, copy the site's nginx config here, and prove it end to end" },
+      { usage: "samurai propose <todo> | apply <proposal> --hash <hash> | rollback <proposal> | list", about: "Apply an nginx to-do's fix: propose shows exactly what changes, apply does it and checks it from outside, rollback takes it out" },
+    ],
   },
   {
     name: "todos",

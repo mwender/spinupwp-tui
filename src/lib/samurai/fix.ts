@@ -145,9 +145,13 @@ export type Fetcher = (url: string, init: RequestInit) => Promise<Response>
 
 // A status, or "refused" when the connection was closed without an answer (an
 // nginx 444) or Cloudflare reports the origin closed it.
+//
+// Every probe opens its own connection. nginx reloads gracefully: an old
+// worker keeps serving a connection it already has with the old config, so a
+// reused connection can answer as if the rule weren't there (seen live).
 export async function probe(domain: string, path: string, userAgent = "SpinupTUI-Samurai/1 (verify)", fetcher: Fetcher = fetch): Promise<number | "refused"> {
   try {
-    const r = await fetcher(`https://${domain}${path}`, { redirect: "manual", headers: { "user-agent": userAgent }, signal: AbortSignal.timeout(20_000) })
+    const r = await fetcher(`https://${domain}${path}`, { redirect: "manual", keepalive: false, headers: { "user-agent": userAgent, connection: "close" }, signal: AbortSignal.timeout(20_000) })
     return [520, 521, 522, 525].includes(r.status) ? "refused" : r.status
   } catch {
     return "refused"
@@ -262,6 +266,7 @@ export interface ApplyContext {
   dir?: string
   ledgerPath?: string
   page?: (text: string) => Promise<void> // Beacon, when a fix had to be rolled back
+  sleep?: (ms: number) => Promise<void> // tests skip the settle pauses
 }
 
 async function git(dir: string, ...args: string[]): Promise<{ code: number; out: string }> {
@@ -297,11 +302,22 @@ function appendEvent(todoId: string, event: Omit<TodoEvent, "v" | "at" | "by" | 
   withLedger(() => ({ events: [{ v: 1, at: at.toISOString(), by, id: todoId, ...event } as TodoEvent], result: null }), path)
 }
 
-async function runChecks(p: Proposal, before: Map<string, number | "refused">, fetcher?: Fetcher): Promise<CheckResult[]> {
-  const out: CheckResult[] = []
-  for (const c of p.rendered.checks) {
+// After a reload, nginx's old workers can take a moment to finish. The checks
+// start after a short pause, and a check that fails is tried once more a few
+// seconds later before it counts.
+export const SETTLE_MS = { first: 2_000, retry: 5_000 }
+
+async function runChecks(p: Proposal, before: Map<string, number | "refused">, fetcher?: Fetcher, sleep: (ms: number) => Promise<void> = Bun.sleep): Promise<CheckResult[]> {
+  const one = async (c: Check) => {
     const ua = c.expect === "same-as-before" ? (c.userAgent ?? BROWSER_UA) : c.userAgent
-    out.push(judge(c, await probe(p.domain, c.path, ua, fetcher), before.get(`${c.path}|${c.userAgent ?? ""}`)))
+    return judge(c, await probe(p.domain, c.path, ua, fetcher), before.get(`${c.path}|${c.userAgent ?? ""}`))
+  }
+  await sleep(SETTLE_MS.first)
+  const out: CheckResult[] = []
+  for (const c of p.rendered.checks) out.push(await one(c))
+  if (out.some((r) => !r.ok)) {
+    await sleep(SETTLE_MS.retry)
+    for (let i = 0; i < out.length; i++) if (!out[i]!.ok) out[i] = await one(p.rendered.checks[i]!)
   }
   return out
 }
@@ -343,7 +359,7 @@ export async function applyProposal(id: string, hash: string, todo: Todo | undef
   }
 
   onStage(`Checking ${p.domain} from outside, after`)
-  const verification = await runChecks(p, before, ctx.fetcher)
+  const verification = await runChecks(p, before, ctx.fetcher, ctx.sleep)
   const bad = verification.filter((v) => !v.ok)
   if (bad.length) {
     onStage("A check failed: rolling back")
@@ -386,6 +402,7 @@ export async function rollbackProposal(id: string, ctx: ApplyContext, onStage: (
   onStage(`Removing ${p.todoId}'s rule and pushing through the gate`)
   const w = await writeAndDeploy(p.domain, ctx.target, renderFile(appliedBlocks(p.domain, all, p.id)), `Samurai: roll back ${p.todoId} (proposal ${p.id})`)
   if (!w.ok) return { ok: false, reason: "deploy_failed", message: `nginx refused the change, so the rule is still in place: ${w.message}` }
+  await (ctx.sleep ?? Bun.sleep)(SETTLE_MS.first)
   const verification = [judge(home, await probe(p.domain, "/", BROWSER_UA, ctx.fetcher), before)]
   const rolled: Proposal = { ...p, status: "rolled-back", rolledBackAt: now().toISOString() }
   saveProposal(rolled, ctx.dir)
