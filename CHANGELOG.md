@@ -12,6 +12,7 @@ version; such changes are called out here.
 ## [Unreleased]
 
 ### Added
+- **Samurai setup (`F` on a site, `f` on an nginx to-do, or `spinuptui samurai setup <domain>`).** The first part of Samurai, which will apply the nginx fixes Sentinel's reports recommend. Setup installs a small root-owned gate on the server through your sudo connection, registers the site so the gate may write only its own `server/samurai.conf`, makes this machine's deploy key, copies the site's nginx config here, and proves the path by pushing an empty rules file through `nginx -t` and checking the site from outside. Every step and every path it writes is shown before it runs. See [docs/samurai.md](docs/samurai.md).
 - **Choose whether to-do sessions ask before every step (`p` on the Reports tab's To-dos).** "Claude asks: every step" is the default, as before. Switch to "Claude asks: before changes" and a session started with `a` investigates without a prompt for each command, and still asks you in the conversation before it changes a server, a monitor, DNS or a site. It applies to the next session you start or resume, and replaces editing `sessionPermissionMode` in `config.json` by hand.
 
 ### Fixed

@@ -30,6 +30,12 @@ export const samuraiDir = () => moduleStateDir("samurai")
 export const keyPath = (domain: string) => join(samuraiDir(), "keys", domain)
 export const mirrorDir = (domain: string) => join(samuraiDir(), "mirrors", domain)
 
+// Whether this machine has done setup for a site: its deploy key and its
+// mirror both exist. The server side is checked when it's used.
+export function setUpHere(domain: string): boolean {
+  return existsSync(`${keyPath(domain)}.pub`) && existsSync(join(mirrorDir(domain), ".git"))
+}
+
 export interface SetupContext {
   domain: string
   site: Site

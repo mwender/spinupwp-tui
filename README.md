@@ -98,6 +98,7 @@
   arriving or a cache that stopped hitting. Bring your own agent for diagnosis,
   or use it without one. → [docs/sentinel.md](docs/sentinel.md)
 - **Reports** (`7`) — every report Sentinel has written, newest first, each opening with two plain lines: the problem and the fix. Its recommendations become a to-do list you work with one key each (done, won't fix, snooze, comment), and Sentinel reads your decisions before its next diagnosis. → [docs/sentinel.md](docs/sentinel.md#what-the-reports-tell-you-to-do)
+- **Samurai** (`F` on a site, `f` on an nginx to-do) — applies the nginx fixes Sentinel's reports recommend, through a small root-owned gate that may only write the site's own rules file and tests every change with `nginx -t`. Guided setup installs it per site through your sudo connection. → [docs/samurai.md](docs/samurai.md)
 - **Non-interactive CLI subcommands for external tooling** — `spinuptui ssh <domain>`
   resolves a domain to a live SSH target with a live connectivity probe;
   `spinuptui ssh-exec <domain> -- <command>` runs a command over SSH, but only
@@ -391,6 +392,7 @@ These can be set in `config.json` or via an environment variable:
 | `C` | Clone a server's sites to a new/existing destination (Servers tab; needs a Read/Write token + sudo) |
 | `S` | Connect sudo on a server for privileged writes — optionally remembered in the macOS Keychain (Servers tab) |
 | `K` | Grant / revoke an SSH key on a site, or every site on the server (Servers / Search; needs sudo connected) |
+| `F` | Samurai: set the site up for nginx rules, or re-check its setup (Servers / Search; needs sudo connected for the first run) |
 | `w` | Open the selected server/site in the SpinupWP web app |
 | `/` | Jump to global search |
 | `A` | Accounts — switch, add, rename, or remove SpinupWP accounts (from anywhere) |

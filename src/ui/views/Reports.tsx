@@ -12,6 +12,7 @@ import { openUrl } from "../../lib/open.ts"
 import { Panel } from "../components.tsx"
 import { List } from "../List.tsx"
 import { StatusBar, type KeyHint } from "../StatusBar.tsx"
+import { setUpHere } from "../../lib/samurai/setup.ts"
 import { useStore } from "../store.tsx"
 import { toast } from "../toast.ts"
 import { reportSource } from "../reportSource.ts"
@@ -84,11 +85,15 @@ function actionsFor(f: Todo, now: Date): TodoAction[] {
 function samuraiReason(f: Todo): string {
   if (f.kind !== "nginx") return `${f.id} is ${f.kind} work. Samurai only applies nginx fixes, so this one is done by hand.`
   if (!f.fix) return `No Samurai template covers ${f.id}, so it's an nginx change made by hand.`
-  return `${f.id} has a ${f.fix.template} fix ready. Samurai, which applies it, arrives in a later version.`
+  return `${f.id} has a ${f.fix.template} fix ready, and its site is set up for Samurai. Applying the fix from here arrives in a later version.`
 }
 
+// The site an nginx to-do with a fix is about, when Samurai would need setting
+// up there first; null when f should just explain.
+const siteNeedingSetup = (f: Todo): string | null => (f.kind === "nginx" && f.fix && f.scope.startsWith("site:") && !setUpHere(f.scope.slice(5)) ? f.scope.slice(5) : null)
+
 export function Reports({ rows }: { rows: number }) {
-  const { route, inputMode, overlayOpen, setInputMode, reportsSite, setReportsSite } = useStore()
+  const { route, inputMode, overlayOpen, setInputMode, reportsSite, setReportsSite, sites: accountSites, setSamuraiSetupSite } = useStore()
   const { width } = useTerminalDimensions()
   const src = reportSource()
   const [list, setList] = useState<ListName>("reports")
@@ -324,8 +329,14 @@ export function Reports({ rows }: { rows: number }) {
         setKindFilter(next)
         return say(next ? `Showing ${next} to-dos.` : "Showing every kind.", 1500)
       }
-      case "f":
-        return todo && say(samuraiReason(todo), 6000)
+      case "f": {
+        if (!todo) return
+        const domain = siteNeedingSetup(todo)
+        if (!domain) return say(samuraiReason(todo), 6000)
+        const site = accountSites.find((s) => s.domain === domain)
+        if (!site) return say(`${domain} isn't a site in this SpinupWP account, so Samurai can't be set up for it from here.`, 8000)
+        return setSamuraiSetupSite(site)
+      }
       case "p": {
         const next = !asks
         void src.setAsksFirst(next).then((err) => {
@@ -402,6 +413,7 @@ export function Reports({ rows }: { rows: number }) {
                 ...(todo.reports.length ? [{ key: "⏎", label: "its report" }] : []),
               ]
             : []),
+          ...(todo && siteNeedingSetup(todo) ? [{ key: "f", label: "set up Samurai" }] : []),
           ...(todo ? [{ key: "a", label: starting ? "starting Claude…" : sessions[todo.id] ? "its Claude session" : "ask Claude" }] : []),
           { key: "p", label: asks ? "Claude asks: every step" : "Claude asks: before changes" },
           { key: "v", label: "state" },

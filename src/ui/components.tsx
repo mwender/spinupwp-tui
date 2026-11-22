@@ -464,6 +464,7 @@ export function siteGroups(isWordpress: boolean, isVanity: boolean): ActionGroup
   remote.push(["P", "Purge cache"])
   remote.push(["M", "Monitoring"])
   remote.push(["O", "Take offline"])
+  remote.push(["F", "Nginx rules"])
   return [
     { title: "Open", items: [["o", "In browser"], ["w", "In SpinupWP"]] },
     { title: "Remote", items: remote },

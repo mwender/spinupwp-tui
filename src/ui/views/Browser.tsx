@@ -25,7 +25,7 @@ type Focus = "servers" | "sites"
 
 export function Browser({ rows }: { rows: number }) {
   const store = useStore()
-  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, openInSpinupWP, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks, setDbBackupSite, setMediaFallbackSite, setEnableLocalSyncSite, openReportsFor } = store
+  const { servers, sitesForServer, route, inputMode, overlayOpen, setHealthServer, setWpInventorySite, runProbe, probes, openInSpinupWP, setPhpUpgradeSite, phpUpgrades, setHttpsToggleSite, setPurgeCacheSite, setSiteOfflineSite, setSamuraiSetupSite, setGrantKeySite, setSudoConnectServer, isSudoConnected, setServerActionsServer, serverOps, setLocalLinkSite, openLocalTerminal, openLocalUrl, sshSite, setDnsInventoryServer, setNewServerSource, setNewServerOpen, setVanityServer, vanityJob, beginClone, isServerOsEol, setKumaSite, kumaConfigured, startKumaSetup, startVanityReseed, setDbSyncSite, localSync, localLinks, setDbBackupSite, setMediaFallbackSite, setEnableLocalSyncSite, openReportsFor } = store
 
   const [serverIndex, setServerIndex] = useState(0)
   const [siteIndex, setSiteIndex] = useState(0)
@@ -137,6 +137,10 @@ export function Browser({ rows }: { rows: number }) {
         // Take the selected site offline, or bring it back. The whole server's
         // version is in the server actions menu (a).
         if (focus === "sites" && sites[siteIndex]) setSiteOfflineSite(sites[siteIndex])
+        return
+      case "F":
+        // Samurai: set the selected site up for nginx rules, or re-check it.
+        if (focus === "sites" && sites[siteIndex]) setSamuraiSetupSite(sites[siteIndex])
         return
       case "M":
         // Uptime Kuma monitoring for the selected site (connect on first use).
