@@ -76,6 +76,7 @@ export function SamuraiSetup() {
     setPhase({ at: "running", plan, lines })
     void (async () => {
       const r = isDevMode() ? await devApply(ctx.domain, add) : await applySetup(plan, ctx, add)
+      if (isDevMode() && r.ok) devSetUp.add(ctx.domain)
       if (!live.current) return
       if (r.ok) setPhase({ at: "done", plan, result: r, lines: [...lines] })
       else setPhase({ at: "failed", plan, message: r.message, remedy: r.remedy, lines: [...lines] })
@@ -220,6 +221,9 @@ export function SamuraiSetup() {
 }
 
 // ---- Dev Mode -----------------------------------------------------------------
+
+// Sites Dev Mode pretended to set up this session, so f moves on to the fix.
+export const devSetUp = new Set<string>()
 
 function devPlan(site: Site, server: Server): Ready {
   const ip = server.ip_address ?? "203.0.113.10"

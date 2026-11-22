@@ -60,6 +60,7 @@ import { planDbSync, runDbSync, isDbSyncInFlight, type DbSyncProgress, type Sync
 import { planLocalSetup, runLocalSetup, isLocalSetupInFlight, type LocalSetupProgress, type LocalSetupPlanResult } from "../lib/localSetup.ts"
 import { planMediaFallback, type MediaFallbackResult } from "../lib/mediaFallback.ts"
 import { saveSiteIndex } from "../lib/siteIndex.ts"
+import type { Todo } from "../lib/todos.ts"
 
 export type Route = "dashboard" | "servers" | "stacks" | "search" | "events" | "modules" | "reports"
 
@@ -582,6 +583,9 @@ interface StoreValue extends DataState {
   // The site whose Samurai setup screen is open (F on a site, f on an nginx to-do).
   samuraiSetupSite: Site | null
   setSamuraiSetupSite: (s: Site | null) => void
+  // The to-do whose Samurai fix is being applied or rolled back (f / u in Reports).
+  samuraiFix: { todo: Todo; mode: "apply" | "rollback" } | null
+  setSamuraiFix: (v: { todo: Todo; mode: "apply" | "rollback" } | null) => void
   // The site whose purge-cache overlay is open, or null.
   purgeCacheSite: Site | null
   setPurgeCacheSite: (s: Site | null) => void
@@ -1106,6 +1110,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [purgeCacheSite, setPurgeCacheSite] = useState<Site | null>(null)
   const [siteOfflineSite, setSiteOfflineSite] = useState<Site | null>(null)
   const [samuraiSetupSite, setSamuraiSetupSite] = useState<Site | null>(null)
+  const [samuraiFix, setSamuraiFix] = useState<{ todo: Todo; mode: "apply" | "rollback" } | null>(null)
   const [purgeCacheProgress, setPurgeCacheProgress] = useState<Map<number, PurgeCacheProgress>>(new Map())
   const [serverActionsServer, setServerActionsServer] = useState<Server | null>(null)
   const [serverOps, setServerOps] = useState<Map<number, ServerOpProgress>>(new Map())
@@ -4547,6 +4552,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSiteOfflineSite,
     samuraiSetupSite,
     setSamuraiSetupSite,
+    samuraiFix,
+    setSamuraiFix,
     purgeCacheProgress,
     startPurgeCache,
     clearPurgeCache,
