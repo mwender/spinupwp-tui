@@ -13,6 +13,11 @@ export interface GateTarget {
   ip: string
   port: number | null
   keyPath: string // this machine's private deploy key for the site
+  // Tests only: run this instead of ssh, with the gate command appended (the
+  // sandbox runs the real gate script locally).
+  command?: string[]
+  // Tests only: the sandbox's gate is a rewritten copy, so its hash differs.
+  gateSha256?: string
 }
 
 export interface GateResult {
@@ -43,7 +48,7 @@ export function gateSshArgs(t: GateTarget, command: string): string[] {
 export async function gateCall(t: GateTarget, command: "export" | "test" | "allowed" | "version" | "hash" | "deploy", stdin?: Uint8Array, timeoutMs = 60_000): Promise<GateResult> {
   let proc: ReturnType<typeof spawn>
   try {
-    proc = spawn(gateSshArgs(t, command), { stdout: "pipe", stderr: "pipe", stdin: stdin ? "pipe" : "ignore" })
+    proc = spawn(t.command ? [...t.command, command] : gateSshArgs(t, command), { stdout: "pipe", stderr: "pipe", stdin: stdin ? "pipe" : "ignore" })
   } catch (e) {
     return { code: -1, stdout: new Uint8Array(), stderr: `Failed to launch ssh: ${(e as Error).message}` }
   }
